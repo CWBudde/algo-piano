@@ -59,6 +59,11 @@ function updateStatus(message) {
 function generateKeyboard() {
     const keyboard = document.getElementById('piano-keyboard');
 
+    // Create a container for the keys
+    const keysContainer = document.createElement('div');
+    keysContainer.className = 'keys-container';
+    keyboard.appendChild(keysContainer);
+
     // Generate 2 octaves starting from C4 (MIDI note 60)
     const startNote = 60; // C4
     const numOctaves = 2;
@@ -67,6 +72,8 @@ function generateKeyboard() {
     const blackKeyOffsets = [1, 3, 6, 8, 10]; // C# D# F# G# A#
     const computerKeys = ['A', 'W', 'S', 'E', 'D', 'F', 'T', 'G', 'Y', 'H', 'U', 'J', 'K'];
 
+    const whiteKeyWidth = 50;
+    const whiteKeyMargin = 1;
     let whiteKeyIndex = 0;
 
     // Generate white keys first
@@ -79,7 +86,6 @@ function generateKeyboard() {
             const key = document.createElement('div');
             key.className = 'key white';
             key.dataset.note = midiNote;
-            key.style.left = `${whiteKeyIndex * 52}px`;
 
             const label = document.createElement('div');
             label.className = 'key-label';
@@ -88,13 +94,12 @@ function generateKeyboard() {
             }
             key.appendChild(label);
 
-            keyboard.appendChild(key);
+            keysContainer.appendChild(key);
             whiteKeyIndex++;
         }
     }
 
     // Generate black keys on top
-    whiteKeyIndex = 0;
     for (let octave = 0; octave < numOctaves; octave++) {
         for (let i = 0; i < 12; i++) {
             if (blackKeyOffsets.includes(i)) {
@@ -107,7 +112,8 @@ function generateKeyboard() {
 
                 // Position black keys between white keys
                 const whiteKeysBefore = whiteKeyPattern.filter(n => n < i).length;
-                key.style.left = `${whiteKeysBefore * 52 + 36 + octave * 7 * 52}px`;
+                const leftPos = (whiteKeysBefore + octave * 7) * (whiteKeyWidth + whiteKeyMargin * 2) + whiteKeyWidth - 16;
+                key.style.left = `${leftPos}px`;
 
                 const label = document.createElement('div');
                 label.className = 'key-label';
@@ -116,7 +122,7 @@ function generateKeyboard() {
                 }
                 key.appendChild(label);
 
-                keyboard.appendChild(key);
+                keysContainer.appendChild(key);
             }
         }
     }

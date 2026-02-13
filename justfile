@@ -50,3 +50,24 @@ ci: check-formatted test lint check-tidy
 # Clean build artifacts
 clean:
     rm -f coverage.out coverage.html
+
+# Render one octave of WAV files with auto-stop at decay threshold
+render-octave root="60" out_dir="out/octave" preset="assets/presets/default.json" sample_rate="48000" velocity="100":
+    mkdir -p "{{out_dir}}"
+    start="{{root}}"
+    end=$((start + 11))
+    for note in $(seq "$start" "$end"); do \
+        out="{{out_dir}}/note_$note.wav"; \
+        echo "Rendering $out"; \
+        go run ./cmd/piano-render \
+            --preset "{{preset}}" \
+            --note "$note" \
+            --velocity "{{velocity}}" \
+            --sample-rate "{{sample_rate}}" \
+            --decay-dbfs -90 \
+            --decay-hold-blocks 6 \
+            --min-duration 0.5 \
+            --max-duration 30 \
+            --release-after 0.12 \
+            --output "$out"; \
+    done

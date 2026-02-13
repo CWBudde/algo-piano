@@ -1,0 +1,24 @@
+{
+  "output_gain": 1.0,
+  "ir_wav_path": "../ir/default_96k.wav",
+  "resonance_enabled": true,
+  "resonance_gain": 0.00025,
+  "resonance_per_note_filter": true,
+  "per_note": {
+    "21": {
+      "loss": 0.9996,
+      "inharmonicity": 0.02,
+      "strike_position": 0.19
+    },
+    "60": {
+      "loss": 0.9990,
+      "inharmonicity": 0.12,
+      "strike_position": 0.18
+    },
+    "88": {
+      "loss": 0.9970,
+      "inharmonicity": 0.34,
+      "strike_position": 0.15
+    }
+  }
+}

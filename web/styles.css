@@ -80,6 +80,12 @@ header p {
     justify-content: center;
     position: relative;
     height: 250px;
+    align-items: flex-start;
+}
+
+.keys-container {
+    position: relative;
+    display: flex;
 }
 
 .key {
@@ -96,7 +102,8 @@ header p {
     border: 1px solid #333;
     border-radius: 0 0 5px 5px;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-    margin: 0 2px;
+    margin: 0 1px;
+    flex-shrink: 0;
 }
 
 .key.white:hover {
