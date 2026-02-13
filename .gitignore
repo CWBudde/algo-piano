@@ -24,7 +24,6 @@ tests/*.wav
 
 # Go
 vendor/
-go.sum
 internal/cpu/cpu.go
 internal/bytealg/bytealg.go
 
