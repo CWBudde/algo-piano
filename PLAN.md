@@ -189,6 +189,59 @@ Conventions used in this plan:
 
 ---
 
+## Phase 8A — Reference distance harness (C4 calibration baseline) ✓
+
+- [x] Add objective distance tooling
+  - [x] Add `analysis` package with multi-metric audio distance:
+    - [x] time-domain RMSE
+    - [x] envelope RMSE (dB)
+    - [x] log-spectral RMSE (dB)
+    - [x] decay-slope mismatch (dB/s)
+  - [x] Add automatic lag estimation/alignment before scoring
+- [x] Add CLI tool `cmd/piano-distance`
+  - [x] Compare `reference/*.wav` against rendered model output
+  - [x] Support candidate render controls (`release-after`, decay threshold, min/max duration)
+  - [x] Optional JSON output for machine-readable tuning loops
+- [x] Establish first baseline against `reference/c4.wav`
+  - [x] Baseline (2026-02-13):
+    - [x] `Distance score`: `0.6147`
+    - [x] `Similarity`: `8.55%`
+    - [x] `Envelope RMSE`: `15.708 dB`
+    - [x] `Spectral RMSE`: `23.756 dB`
+    - [x] `Decay slope diff`: `7.858 dB/s`
+
+**Done when:** we can quantify model-vs-reference mismatch with reproducible numbers. ✓
+
+---
+
+## Phase 8B — Distance-guided timbre matching (C4 first, then scale out)
+
+- [ ] Add render-control fitting loop (before touching physical params)
+  - [ ] Grid/coordinate search over `velocity`, `release-after`, and output gain to reduce avoidable mismatch
+  - [ ] Persist best control settings with score snapshot
+- [ ] Add physically-meaningful fitting passes for note parameters
+  - [ ] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
+  - [ ] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
+  - [ ] Inharmonicity pass: fit dispersion/inharmonicity via partial-frequency error
+- [ ] Strengthen distance metrics for piano realism
+  - [ ] Add partial-ratio/tristimulus mismatch metric for harmonic balance
+  - [ ] Add attack-transient metric (onset rise + first 80 ms spectral centroid trajectory)
+  - [ ] Add segment-wise decay metric (early/mid/late slope instead of single global slope)
+- [ ] Regression guardrails
+  - [ ] Add acceptance thresholds for C4 (e.g. target score + per-metric caps)
+  - [ ] CI check that rejects large regressions in distance metrics
+- [ ] Add metaheuristic optimizer integration (`github.com/CWBudde/mayfly`)
+  - [ ] Define optimization vector and bounds (hammer, loss, dispersion, strike position, release controls)
+  - [ ] Wrap `cmd/piano-distance`/`analysis.Compare` as objective function (weighted multi-metric score)
+  - [ ] Run Mayfly on C4 first with fixed random seed + checkpointed best candidate
+  - [ ] Add constrained multi-note run (e.g. C3/C4/C5) with shared + per-note parameter blocks
+  - [ ] Persist best-fit preset to `assets/presets/fitted-c4.json` (and later `fitted-v1.json`)
+  - [ ] Add optimizer budget controls (max evals / time limit) for reproducible tuning sessions
+
+**Done when:** C4 distance and sub-metrics improve materially and remain stable across changes.
+
+---
+
 ## Phase 9 — Tests + benchmarks (keep realtime honest)
 
 - [ ] Unit tests
