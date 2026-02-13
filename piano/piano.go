@@ -1,11 +1,17 @@
 package piano
 
 import (
+	"fmt"
 	"math"
+	"os"
 
 	"github.com/cwbudde/algo-approx"
 	dspconv "github.com/cwbudde/algo-dsp/dsp/conv"
+	dspresample "github.com/cwbudde/algo-dsp/dsp/resample"
+	"github.com/cwbudde/wav"
 )
+
+const DefaultIRWavPath = "assets/ir/default_96k.wav"
 
 // Piano is the global engine managing voice allocation and polyphony
 type Piano struct {
@@ -23,6 +29,9 @@ func NewPiano(sampleRate int, maxPolyphony int, params *Params) *Piano {
 		voices:     make([]*Voice, 0, maxPolyphony),
 		params:     params,
 		convolver:  NewSoundboardConvolver(sampleRate),
+	}
+	if params != nil && params.IRWavPath != "" {
+		_ = p.convolver.SetIRFromWAV(params.IRWavPath)
 	}
 	return p
 }
@@ -623,6 +632,64 @@ func (c *SoundboardConvolver) SetIR(leftIR []float32, rightIR []float32) {
 	c.Reset()
 }
 
+// SetIRFromWAV loads a mono/stereo IR from WAV.
+// If source sample-rate differs from convolver sample-rate, IR channels are resampled.
+func (c *SoundboardConvolver) SetIRFromWAV(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	dec := wav.NewDecoder(f)
+	if !dec.IsValidFile() {
+		return fmt.Errorf("invalid wav file: %s", path)
+	}
+	buf, err := dec.FullPCMBuffer()
+	if err != nil {
+		return err
+	}
+	if buf == nil || buf.Format == nil || buf.Format.NumChannels < 1 {
+		return fmt.Errorf("invalid wav buffer: %s", path)
+	}
+
+	numCh := buf.Format.NumChannels
+	srcRate := buf.Format.SampleRate
+	if srcRate <= 0 {
+		return fmt.Errorf("invalid wav sample-rate: %d", srcRate)
+	}
+	frames := len(buf.Data) / numCh
+	if frames == 0 {
+		return fmt.Errorf("empty wav data: %s", path)
+	}
+
+	left := make([]float32, frames)
+	right := make([]float32, frames)
+	if numCh == 1 {
+		for i := 0; i < frames; i++ {
+			v := buf.Data[i]
+			left[i] = v
+			right[i] = v
+		}
+	} else {
+		for i := 0; i < frames; i++ {
+			left[i] = buf.Data[i*numCh]
+			right[i] = buf.Data[i*numCh+1]
+		}
+	}
+
+	left, err = c.resampleIfNeeded(left, srcRate)
+	if err != nil {
+		return err
+	}
+	right, err = c.resampleIfNeeded(right, srcRate)
+	if err != nil {
+		return err
+	}
+	c.SetIR(left, right)
+	return nil
+}
+
 // Reset clears convolver history and overlap buffers.
 func (c *SoundboardConvolver) Reset() {
 	if c.leftOLA != nil {
@@ -646,6 +713,7 @@ type Params struct {
 
 	// Global parameters
 	OutputGain float32
+	IRWavPath  string
 }
 
 // NoteParams holds parameters for a specific note
@@ -661,6 +729,7 @@ func NewDefaultParams() *Params {
 	return &Params{
 		PerNote:    make(map[int]*NoteParams),
 		OutputGain: 1.0,
+		IRWavPath:  "",
 	}
 }
 
@@ -739,4 +808,29 @@ func overlapAddBlock(convOut []float64, tail []float64, blockLen int) ([]float64
 	newTail := make([]float64, len(full)-blockLen)
 	copy(newTail, full[blockLen:])
 	return out, newTail
+}
+
+func (c *SoundboardConvolver) resampleIfNeeded(in []float32, inRate int) ([]float32, error) {
+	if inRate == c.sampleRate {
+		return in, nil
+	}
+	r, err := dspresample.NewForRates(
+		float64(inRate),
+		float64(c.sampleRate),
+		dspresample.WithQuality(dspresample.QualityBest),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	in64 := make([]float64, len(in))
+	for i, v := range in {
+		in64[i] = float64(v)
+	}
+	out64 := r.Process(in64)
+	out := make([]float32, len(out64))
+	for i, v := range out64 {
+		out[i] = float32(v)
+	}
+	return out, nil
 }

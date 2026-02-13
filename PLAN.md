@@ -120,8 +120,8 @@ Conventions used in this plan:
 ## Phase 5 — Soundboard/body (commuted synthesis via IR convolution)
 
 - [ ] Decide IR format and shipping strategy
-  - [ ] Choose supported sample rates (e.g. 48k only initially)
-  - [ ] Choose mono/stereo IR layout under `assets/ir/`
+  - [x] Choose supported sample rates (e.g. 48k only initially)
+  - [x] Choose mono/stereo IR layout under `assets/ir/`
 - [x] Implement `SoundboardConvolver` (partitioned convolution)
   - [x] MVP: uniform partitioned overlap-add
   - [ ] Small early partitions for latency; larger for efficiency (later)
@@ -239,9 +239,10 @@ Conventions used in this plan:
   - [ ] DWG (matches `goal.md`)
   - [ ] Modal bank (supported by `research.md` for stability/alias control)
 - [ ] Decide: sample rate strategy
-  - [ ] Fixed 48k initial
+  - [x] Variable runtime sample-rates with IR resampling from high-res source WAV
   - [ ] (optional) multi-rate for high notes
 - [ ] Decide: IR licensing + source
+  - [x] Store IR assets as high-resolution WAV (96 kHz preferred), resample at load time
   - [ ] Use your own measured IRs
   - [ ] Use a permissive IR set (verify license)
 - [ ] Decide: realtime audio I/O for native builds
