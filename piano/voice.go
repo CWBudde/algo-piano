@@ -4,21 +4,24 @@ import "github.com/cwbudde/algo-approx"
 
 // Voice represents one note (owns 1-3 strings).
 type Voice struct {
-	sampleRate  int
-	note        int
-	velocity    int
-	f0          float32
-	baseStrike  float32
-	strikePos   float32
-	hammer      *Hammer
-	stringGains []float32
-	strings     []*StringWaveguide
-	resFilters  []noteResonator
-	active      bool
-	age         int // samples since note on
-	released    bool
-	sustainDown bool
-	softDown    bool
+	sampleRate       int
+	note             int
+	velocity         int
+	f0               float32
+	baseStrike       float32
+	strikePos        float32
+	softStrikeOffset float32
+	softHardness     float32
+	unisonCrossfeed  float32
+	hammer           *Hammer
+	stringGains      []float32
+	strings          []*StringWaveguide
+	resFilters       []noteResonator
+	active           bool
+	age              int // samples since note on
+	released         bool
+	sustainDown      bool
+	softDown         bool
 }
 
 func (v *Voice) isUndamped() bool {
@@ -34,7 +37,23 @@ func NewVoice(sampleRate, note, velocity int, params *Params) *Voice {
 	lossGain := float32(0.9998)
 	highFreqDamping := float32(0.05)
 	inharmonicity := float32(0.0)
+	unisonDetuneScale := float32(1.0)
+	unisonCrossfeed := float32(0.0008)
+	softStrikeOffset := float32(0.08)
+	softHardness := float32(0.78)
 	if params != nil {
+		if params.UnisonDetuneScale >= 0 {
+			unisonDetuneScale = params.UnisonDetuneScale
+		}
+		if params.UnisonCrossfeed >= 0 {
+			unisonCrossfeed = params.UnisonCrossfeed
+		}
+		if params.SoftPedalStrikeOffset >= 0 {
+			softStrikeOffset = params.SoftPedalStrikeOffset
+		}
+		if params.SoftPedalHardness > 0 {
+			softHardness = params.SoftPedalHardness
+		}
 		if np, ok := params.PerNote[note]; ok && np != nil {
 			if np.StrikePosition > 0.0 && np.StrikePosition < 1.0 {
 				strikePos = np.StrikePosition
@@ -49,27 +68,39 @@ func NewVoice(sampleRate, note, velocity int, params *Params) *Voice {
 	}
 
 	v := &Voice{
-		sampleRate:  sampleRate,
-		note:        note,
-		velocity:    velocity,
-		f0:          0,
-		baseStrike:  strikePos,
-		strikePos:   strikePos,
-		hammer:      NewHammer(sampleRate, velocity),
-		stringGains: make([]float32, 0, 3),
-		strings:     make([]*StringWaveguide, 0, 3),
-		resFilters:  nil,
-		active:      true,
-		released:    false,
-		sustainDown: false,
-		softDown:    false,
+		sampleRate:       sampleRate,
+		note:             note,
+		velocity:         velocity,
+		f0:               0,
+		baseStrike:       strikePos,
+		strikePos:        strikePos,
+		softStrikeOffset: softStrikeOffset,
+		softHardness:     softHardness,
+		unisonCrossfeed:  unisonCrossfeed,
+		hammer:           NewHammer(sampleRate, velocity),
+		stringGains:      make([]float32, 0, 3),
+		strings:          make([]*StringWaveguide, 0, 3),
+		resFilters:       nil,
+		active:           true,
+		released:         false,
+		sustainDown:      false,
+		softDown:         false,
+	}
+	if params != nil && v.hammer != nil {
+		v.hammer.ApplyInfluenceScales(
+			params.HammerStiffnessScale,
+			params.HammerExponentScale,
+			params.HammerDampingScale,
+			params.HammerInitialVelocityScale,
+			params.HammerContactTimeScale,
+		)
 	}
 
 	freq := midiNoteToFreq(note)
 	v.f0 = freq
 	detunes, gains := defaultUnisonForNote(note)
 	for i := range detunes {
-		ratio := centsToRatio(detunes[i])
+		ratio := centsToRatio(detunes[i] * unisonDetuneScale)
 		str := NewStringWaveguide(sampleRate, freq*ratio)
 		str.SetLoopLoss(lossGain, highFreqDamping)
 		str.SetDispersion(inharmonicity)
@@ -117,9 +148,9 @@ func (v *Voice) SetSustain(down bool) {
 func (v *Voice) SetSoftPedal(down bool) {
 	v.softDown = down
 	if down {
-		v.strikePos = minf(v.baseStrike+0.08, 0.95)
+		v.strikePos = minf(v.baseStrike+v.softStrikeOffset, 0.95)
 		if v.hammer != nil {
-			v.hammer.SetHardnessScale(0.78)
+			v.hammer.SetHardnessScale(v.softHardness)
 		}
 		return
 	}
@@ -197,7 +228,7 @@ func (v *Voice) Process(numFrames int) []float32 {
 			sample += str.Process() * v.stringGains[j]
 		}
 		if len(v.strings) > 1 {
-			cross := sample * 0.0008
+			cross := sample * v.unisonCrossfeed
 			for _, str := range v.strings {
 				str.InjectForceAtPosition(cross, 0.92)
 			}

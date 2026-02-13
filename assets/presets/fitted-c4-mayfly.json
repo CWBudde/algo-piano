@@ -1,6 +1,6 @@
 {
   "output_gain": 1.113511,
-  "ir_wav_path": "../ir/default_96k.wav",
+  "ir_wav_path": "assets/ir/default_96k.wav",
   "ir_wet_mix": 1.3357544,
   "ir_dry_mix": 0.6025721,
   "ir_gain": 1.8758913,
@@ -18,18 +18,18 @@
   "soft_pedal_hardness": 0.78,
   "per_note": {
     "21": {
-      "loss": 0.9996,
       "inharmonicity": 0.02,
+      "loss": 0.9996,
       "strike_position": 0.19
     },
     "60": {
-      "loss": 0.9940649,
       "inharmonicity": 0.5989403,
+      "loss": 0.9940649,
       "strike_position": 0.1287742
     },
     "88": {
-      "loss": 0.9970,
       "inharmonicity": 0.34,
+      "loss": 0.997,
       "strike_position": 0.15
     }
   }

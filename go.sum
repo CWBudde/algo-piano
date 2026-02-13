@@ -8,6 +8,8 @@ github.com/cwbudde/algo-pde v0.1.0 h1:KCIetossSacVKKrqorVHUIEkhda1gCBnKzWdHR0uRk
 github.com/cwbudde/algo-pde v0.1.0/go.mod h1:0TSkgnjlB7gQuq7D5TiPJ1qdQ1jvvSPdVNntWZxsTMo=
 github.com/cwbudde/algo-vecmath v0.1.0 h1:RjZLXt3BAu1f3UmdWWXbgw3Xscyh+bsg31PkS5K4y4c=
 github.com/cwbudde/algo-vecmath v0.1.0/go.mod h1:lc9dLv41D4RCmhXG/CsIesfJXmONI7pQXcFrkxQSfeQ=
+github.com/cwbudde/mayfly v0.1.0 h1:u2LTL4SCZRc4mTxtbdF2pUFTuIUDgbIZAnfr6EGacok=
+github.com/cwbudde/mayfly v0.1.0/go.mod h1:Kvhc6sAww1oFoR37ON2/iqIvOu/E8qHKAyQsM7tRs6U=
 github.com/cwbudde/wav v0.0.0-20260207095734-97d781a5fb8a h1:e6kN+v8Z9TgJz6GClDFcOd7nfI4ZgF8+IvoAb3/XIBs=
 github.com/cwbudde/wav v0.0.0-20260207095734-97d781a5fb8a/go.mod h1:sc3u5nhwaPxuQ8NUWj1bAcZ7jhlTGk4fk5vARqgHrMs=
 github.com/go-audio/audio v1.0.0 h1:zS9vebldgbQqktK4H0lUqWrG8P0NxCJVqcj7ZpNnwd4=

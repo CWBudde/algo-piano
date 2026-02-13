@@ -14,16 +14,20 @@ type Hammer struct {
 	stiffness  float32
 	exponent   float32
 	damping    float32
+	baseDamp   float32
 	baseStiff  float32
 	baseExp    float32
 
 	contactMaxSamples int
 	contactMinSamples int
+	baseContactMax    int
+	baseContactMin    int
 	contactSamples    int
 	inContact         bool
 
-	pos float32
-	vel float32
+	pos     float32
+	vel     float32
+	baseVel float32
 }
 
 // NewHammer creates a hammer initialized from MIDI velocity.
@@ -38,20 +42,27 @@ func NewHammer(sampleRate int, velocity int) *Hammer {
 	initialVel := 0.6 + 3.0*v
 	stiffness := float32(1.1e6) * (0.5 + 2.5*v)
 	exponent := float32(2.3)
+	damping := float32(0.10 + 0.20*v)
+	contactMax := int(float32(sampleRate) * (0.0040 - 0.0030*v))
+	contactMin := int(float32(sampleRate) * 0.00025)
 
 	return &Hammer{
 		sampleRate:        float32(sampleRate),
 		mass:              0.010,
 		stiffness:         stiffness,
 		exponent:          exponent,
-		damping:           0.10 + 0.20*v,
+		damping:           damping,
+		baseDamp:          damping,
 		baseStiff:         stiffness,
 		baseExp:           exponent,
-		contactMaxSamples: int(float32(sampleRate) * (0.0040 - 0.0030*v)),
-		contactMinSamples: int(float32(sampleRate) * 0.00025),
+		contactMaxSamples: contactMax,
+		contactMinSamples: contactMin,
+		baseContactMax:    contactMax,
+		baseContactMin:    contactMin,
 		inContact:         true,
 		pos:               0.00012,
 		vel:               initialVel,
+		baseVel:           initialVel,
 	}
 }
 
@@ -65,6 +76,46 @@ func (h *Hammer) SetHardnessScale(scale float32) {
 	}
 	h.stiffness = h.baseStiff * scale
 	h.exponent = h.baseExp * (0.90 + 0.10*scale)
+}
+
+// ApplyInfluenceScales applies global tuning scales to hammer behavior.
+func (h *Hammer) ApplyInfluenceScales(stiffScale, expScale, dampScale, velScale, contactScale float32) {
+	if stiffScale <= 0 {
+		stiffScale = 1.0
+	}
+	if expScale <= 0 {
+		expScale = 1.0
+	}
+	if dampScale <= 0 {
+		dampScale = 1.0
+	}
+	if velScale <= 0 {
+		velScale = 1.0
+	}
+	if contactScale <= 0 {
+		contactScale = 1.0
+	}
+
+	h.baseStiff *= stiffScale
+	h.baseExp *= expScale
+	h.baseDamp *= dampScale
+	h.baseVel *= velScale
+	h.baseContactMax = maxInt(1, int(float32(h.baseContactMax)*contactScale))
+	h.baseContactMin = maxInt(1, int(float32(h.baseContactMin)*contactScale))
+
+	h.stiffness = h.baseStiff
+	h.exponent = h.baseExp
+	h.damping = h.baseDamp
+	h.vel = h.baseVel
+	h.contactMaxSamples = h.baseContactMax
+	h.contactMinSamples = h.baseContactMin
+}
+
+func maxInt(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // InContact reports whether the hammer is still in contact with the string.

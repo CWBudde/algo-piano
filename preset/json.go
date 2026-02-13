@@ -14,12 +14,24 @@ import (
 
 // File is the JSON schema for piano presets.
 type File struct {
-	OutputGain             *float32               `json:"output_gain"`
-	IRWavPath              string                 `json:"ir_wav_path"`
-	ResonanceEnabled       *bool                  `json:"resonance_enabled"`
-	ResonanceGain          *float32               `json:"resonance_gain"`
-	ResonancePerNoteFilter *bool                  `json:"resonance_per_note_filter"`
-	PerNote                map[string]NoteSetting `json:"per_note"`
+	OutputGain                 *float32               `json:"output_gain"`
+	IRWavPath                  string                 `json:"ir_wav_path"`
+	IRWetMix                   *float32               `json:"ir_wet_mix"`
+	IRDryMix                   *float32               `json:"ir_dry_mix"`
+	IRGain                     *float32               `json:"ir_gain"`
+	ResonanceEnabled           *bool                  `json:"resonance_enabled"`
+	ResonanceGain              *float32               `json:"resonance_gain"`
+	ResonancePerNoteFilter     *bool                  `json:"resonance_per_note_filter"`
+	HammerStiffnessScale       *float32               `json:"hammer_stiffness_scale"`
+	HammerExponentScale        *float32               `json:"hammer_exponent_scale"`
+	HammerDampingScale         *float32               `json:"hammer_damping_scale"`
+	HammerInitialVelocityScale *float32               `json:"hammer_initial_velocity_scale"`
+	HammerContactTimeScale     *float32               `json:"hammer_contact_time_scale"`
+	UnisonDetuneScale          *float32               `json:"unison_detune_scale"`
+	UnisonCrossfeed            *float32               `json:"unison_crossfeed"`
+	SoftPedalStrikeOffset      *float32               `json:"soft_pedal_strike_offset"`
+	SoftPedalHardness          *float32               `json:"soft_pedal_hardness"`
+	PerNote                    map[string]NoteSetting `json:"per_note"`
 }
 
 // NoteSetting is a partial note override entry in a preset file.
@@ -72,6 +84,24 @@ func ApplyFile(dst *piano.Params, f *File) error {
 	if f.IRWavPath != "" {
 		dst.IRWavPath = strings.TrimSpace(f.IRWavPath)
 	}
+	if f.IRWetMix != nil {
+		if *f.IRWetMix < 0 {
+			return fmt.Errorf("ir_wet_mix must be >= 0")
+		}
+		dst.IRWetMix = *f.IRWetMix
+	}
+	if f.IRDryMix != nil {
+		if *f.IRDryMix < 0 {
+			return fmt.Errorf("ir_dry_mix must be >= 0")
+		}
+		dst.IRDryMix = *f.IRDryMix
+	}
+	if f.IRGain != nil {
+		if *f.IRGain <= 0 {
+			return fmt.Errorf("ir_gain must be > 0")
+		}
+		dst.IRGain = *f.IRGain
+	}
 	if f.ResonanceEnabled != nil {
 		dst.ResonanceEnabled = *f.ResonanceEnabled
 	}
@@ -83,6 +113,60 @@ func ApplyFile(dst *piano.Params, f *File) error {
 	}
 	if f.ResonancePerNoteFilter != nil {
 		dst.ResonancePerNoteFilter = *f.ResonancePerNoteFilter
+	}
+	if f.HammerStiffnessScale != nil {
+		if *f.HammerStiffnessScale <= 0 {
+			return fmt.Errorf("hammer_stiffness_scale must be > 0")
+		}
+		dst.HammerStiffnessScale = *f.HammerStiffnessScale
+	}
+	if f.HammerExponentScale != nil {
+		if *f.HammerExponentScale <= 0 {
+			return fmt.Errorf("hammer_exponent_scale must be > 0")
+		}
+		dst.HammerExponentScale = *f.HammerExponentScale
+	}
+	if f.HammerDampingScale != nil {
+		if *f.HammerDampingScale <= 0 {
+			return fmt.Errorf("hammer_damping_scale must be > 0")
+		}
+		dst.HammerDampingScale = *f.HammerDampingScale
+	}
+	if f.HammerInitialVelocityScale != nil {
+		if *f.HammerInitialVelocityScale <= 0 {
+			return fmt.Errorf("hammer_initial_velocity_scale must be > 0")
+		}
+		dst.HammerInitialVelocityScale = *f.HammerInitialVelocityScale
+	}
+	if f.HammerContactTimeScale != nil {
+		if *f.HammerContactTimeScale <= 0 {
+			return fmt.Errorf("hammer_contact_time_scale must be > 0")
+		}
+		dst.HammerContactTimeScale = *f.HammerContactTimeScale
+	}
+	if f.UnisonDetuneScale != nil {
+		if *f.UnisonDetuneScale < 0 {
+			return fmt.Errorf("unison_detune_scale must be >= 0")
+		}
+		dst.UnisonDetuneScale = *f.UnisonDetuneScale
+	}
+	if f.UnisonCrossfeed != nil {
+		if *f.UnisonCrossfeed < 0 {
+			return fmt.Errorf("unison_crossfeed must be >= 0")
+		}
+		dst.UnisonCrossfeed = *f.UnisonCrossfeed
+	}
+	if f.SoftPedalStrikeOffset != nil {
+		if *f.SoftPedalStrikeOffset < 0 {
+			return fmt.Errorf("soft_pedal_strike_offset must be >= 0")
+		}
+		dst.SoftPedalStrikeOffset = *f.SoftPedalStrikeOffset
+	}
+	if f.SoftPedalHardness != nil {
+		if *f.SoftPedalHardness <= 0 {
+			return fmt.Errorf("soft_pedal_hardness must be > 0")
+		}
+		dst.SoftPedalHardness = *f.SoftPedalHardness
 	}
 
 	if len(f.PerNote) == 0 {

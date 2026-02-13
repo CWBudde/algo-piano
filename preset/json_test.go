@@ -16,9 +16,21 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
 	content := `{
   "output_gain": 0.9,
   "ir_wav_path": "ir.wav",
+  "ir_wet_mix": 0.7,
+  "ir_dry_mix": 0.2,
+  "ir_gain": 1.1,
   "resonance_enabled": true,
   "resonance_gain": 0.0004,
   "resonance_per_note_filter": false,
+  "hammer_stiffness_scale": 1.2,
+  "hammer_exponent_scale": 0.95,
+  "hammer_damping_scale": 1.1,
+  "hammer_initial_velocity_scale": 1.05,
+  "hammer_contact_time_scale": 0.9,
+  "unison_detune_scale": 0.8,
+  "unison_crossfeed": 0.001,
+  "soft_pedal_strike_offset": 0.1,
+  "soft_pedal_hardness": 0.75,
   "per_note": {
     "60": {
       "loss": 0.998,
@@ -41,8 +53,22 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
 	if p.IRWavPath != irPath {
 		t.Fatalf("ir path mismatch: got=%q want=%q", p.IRWavPath, irPath)
 	}
+	if p.IRWetMix != 0.7 || p.IRDryMix != 0.2 || p.IRGain != 1.1 {
+		t.Fatalf("ir mix fields mismatch: %+v", p)
+	}
 	if !p.ResonanceEnabled || p.ResonanceGain != 0.0004 || p.ResonancePerNoteFilter {
 		t.Fatalf("resonance fields mismatch: %+v", p)
+	}
+	if p.HammerStiffnessScale != 1.2 ||
+		p.HammerExponentScale != 0.95 ||
+		p.HammerDampingScale != 1.1 ||
+		p.HammerInitialVelocityScale != 1.05 ||
+		p.HammerContactTimeScale != 0.9 ||
+		p.UnisonDetuneScale != 0.8 ||
+		p.UnisonCrossfeed != 0.001 ||
+		p.SoftPedalStrikeOffset != 0.1 ||
+		p.SoftPedalHardness != 0.75 {
+		t.Fatalf("extended tuning fields mismatch: %+v", p)
 	}
 	np := p.PerNote[60]
 	if np == nil {
@@ -74,5 +100,17 @@ func TestLoadJSONRejectsInvalidRanges(t *testing.T) {
 	}
 	if _, err := LoadJSON(presetPath); err == nil {
 		t.Fatalf("expected error for out-of-range loss")
+	}
+}
+
+func TestLoadJSONRejectsInvalidExtendedFields(t *testing.T) {
+	dir := t.TempDir()
+	presetPath := filepath.Join(dir, "preset.json")
+	content := `{"ir_wet_mix": -1}`
+	if err := os.WriteFile(presetPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write preset: %v", err)
+	}
+	if _, err := LoadJSON(presetPath); err == nil {
+		t.Fatalf("expected error for invalid ir_wet_mix")
 	}
 }

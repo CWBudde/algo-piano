@@ -2,30 +2,7 @@
 
 A physically-modeled piano synthesizer written in Go, using digital waveguide synthesis and commuted convolution.
 
-## Status: Through Phase 7 (core voice + sympathetic resonance) ✓
-
-Implemented through the core instrument path:
-
-- Waveguide strings with loop loss + dispersion
-- Nonlinear hammer with bounded contact
-- Unison strings (1-3) with detune and coupling
-- Partitioned stereo soundboard convolver with reset
-- WAV IR loading (mono/stereo) with runtime sample-rate conversion
-- Damper, sustain, and soft-pedal (una corda) behavior
-- Sympathetic resonance with band-limited bridge injection and optional per-note tuned filtering
-
-### What's Working
-
-- ✓ Go module structure
-- ✓ Core API types (Piano, Voice, StringWaveguide)
-- ✓ WAV file writer
-- ✓ Basic DSP utilities (Biquad, DelayLine, Lagrange interpolator)
-- ✓ **Digital waveguide string model** with fractional delay tuning
-- ✓ **Stable pitched tones** across the keyboard
-- ✓ Loss, dispersion, strike-position, hammer, unison, convolver, sustain, and soft-pedal tests
-- ✓ `piano-render` command produces pitched WAV output
-
-### Quick Start
+## Quick Start
 
 **Try the live web demo:** https://cwbudde.github.io/algo-piano/
 
@@ -49,6 +26,12 @@ just render-octave root=60 out_dir=out/octave
 
 # Measure objective distance to a recorded C4 reference
 just distance-c4 reference=reference/c4.wav
+
+# Synthesize a new stereo IR (modal+diffuse synthetic body IR)
+just ir-synth output=assets/ir/synth_96k.wav sample_rate=96000 duration=2.0 modes=128 seed=1
+
+# Run fast inner-loop fitting for C4 (writes fitted preset + report)
+just fit-c4-fast reference=reference/c4.wav preset=assets/presets/default.json output_preset=assets/presets/fitted-c4.json time_budget=120
 ```
 
 Or build the web demo locally:
@@ -81,10 +64,6 @@ algo-piano/
 ## Implementation Plan
 
 See [PLAN.md](PLAN.md) for the full phase-by-phase implementation plan.
-
-**Completed:** Phase 0 through Phase 7 (including optional per-note resonance filtering)
-
-**Next up:** Phase 8 - presets + parameterization
 
 ## Dependencies
 
