@@ -225,7 +225,14 @@ Conventions used in this plan:
   - [x] Add fast inner-loop CLI: `cmd/piano-fit-fast` (time-budgeted iterative optimization with checkpointed best preset/report)
   - [x] Add runnable entrypoint: `just fit-c4-fast ...`
   - [ ] Grid/coordinate search over `velocity`, `release-after`, and output gain to reduce avoidable mismatch
-  - [ ] Persist best control settings with score snapshot
+  - [x] Persist best control settings with score snapshot
+  - [x] Ensure fitted preset IR path serialization stays loadable from `assets/presets/` (relative IR path handling in fitter output)
+  - [x] Use fitted render controls as baseline in `just distance-c4` (`velocity=118`, `release-after=3.5`)
+  - [x] Current reproducible fitted checkpoint (2026-02-13):
+    - [x] `Distance score`: `0.4107`
+    - [x] `Similarity`: `19.35%`
+    - [x] Controls from report: `velocity=118`, `release-after=3.5`
+  - [ ] Promote post-checkpoint best (`score=0.4073`, `similarity=19.61%`, seen in run log at eval ~540) once persisted to preset/report
 - [ ] Add physically-meaningful fitting passes for note parameters
   - [ ] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
   - [ ] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
@@ -238,12 +245,12 @@ Conventions used in this plan:
   - [ ] Add acceptance thresholds for C4 (e.g. target score + per-metric caps)
   - [ ] CI check that rejects large regressions in distance metrics
 - [ ] Add metaheuristic optimizer integration (`github.com/CWBudde/mayfly`)
-  - [ ] Define optimization vector and bounds (hammer, loss, dispersion, strike position, release controls)
-  - [ ] Wrap `cmd/piano-distance`/`analysis.Compare` as objective function (weighted multi-metric score)
-  - [ ] Run Mayfly on C4 first with fixed random seed + checkpointed best candidate
+  - [x] Define optimization vector and bounds (hammer, loss, dispersion, strike position, release controls)
+  - [x] Wrap `analysis.Compare` as objective function (weighted multi-metric score)
+  - [x] Run Mayfly on C4 first with fixed random seed + checkpointed best candidate
   - [ ] Add constrained multi-note run (e.g. C3/C4/C5) with shared + per-note parameter blocks
-  - [ ] Persist best-fit preset to `assets/presets/fitted-c4.json` (and later `fitted-v1.json`)
-  - [ ] Add optimizer budget controls (max evals / time limit) for reproducible tuning sessions
+  - [x] Persist best-fit preset to configurable output path (default `assets/presets/fitted-c4.json`; current tracked run in `assets/presets/fitted-c4-mayfly.json`)
+  - [x] Add optimizer budget controls (max evals / time limit) for reproducible tuning sessions
 
 **Done when:** C4 distance and sub-metrics improve materially and remain stable across changes.
 
@@ -251,25 +258,31 @@ Conventions used in this plan:
 
 ## Phase 8C — Slow loop: IR-shape optimization with `ir-synth` + Mayfly
 
-- [ ] Add IR-synthesis objective loop (outer loop; slower than preset-only fitting)
-  - [ ] Use `cmd/ir-synth` to generate candidate IRs per evaluation
-  - [ ] Run `cmd/piano-distance` against `reference/c4.wav` with that IR
-  - [ ] Optimize over IR synthesis parameters:
-    - [ ] `modes` (e.g. `32..256`)
-    - [ ] `brightness` (e.g. `0.5..2.5`)
-    - [ ] `stereo-width` (e.g. `0.0..1.0`)
-    - [ ] `direct` (e.g. `0.1..1.2`)
-    - [ ] `early` (e.g. `0..48`)
-    - [ ] `late` (e.g. `0.0..0.12`)
-    - [ ] `low-decay` (e.g. `0.6..5.0` s)
-    - [ ] `high-decay` (e.g. `0.1..1.5` s)
-- [ ] Integrate Mayfly for this outer loop
-  - [ ] Objective = weighted distance score from `analysis.Compare`
-  - [ ] Fixed seed + checkpoint best candidate every N evals
-  - [ ] Use strict budget controls (e.g. low-population exploratory pass first, then refine)
+- [x] Preparation for IR-parameter fitting tool
+  - [x] Define candidate CLI tool scope and IO contract in `docs/plans/2026-02-13-phase8c-ir-fit-tool.md`
+  - [x] Lock initial optimization vector to current `irsynth.Config` fields (`modes`, `brightness`, `stereo-width`, `direct`, `early`, `late`, `low-decay`, `high-decay`)
+  - [x] Define checkpoint/report artifacts and resume behavior for long outer-loop runs
+- [x] Add IR-synthesis objective loop (outer loop; slower than preset-only fitting)
+  - [x] Implement dedicated CLI `cmd/piano-fit-ir` for outer-loop IR fitting
+  - [x] Generate candidate IR per evaluation via `irsynth.GenerateStereo` (same synth core as `cmd/ir-synth`)
+  - [x] Evaluate against `reference/c4.wav` by rendering with candidate IR and scoring via `analysis.Compare`
+  - [x] Optimize over IR synthesis parameters:
+    - [x] `modes` (e.g. `32..256`)
+    - [x] `brightness` (e.g. `0.5..2.5`)
+    - [x] `stereo-width` (e.g. `0.0..1.0`)
+    - [x] `direct` (e.g. `0.1..1.2`)
+    - [x] `early` (e.g. `0..48`)
+    - [x] `late` (e.g. `0.0..0.12`)
+    - [x] `low-decay` (e.g. `0.6..5.0` s)
+    - [x] `high-decay` (e.g. `0.1..1.5` s)
+- [x] Integrate Mayfly for this outer loop
+  - [x] Objective = weighted distance score from `analysis.Compare`
+  - [x] Fixed seed + checkpoint best candidate every N evals
+  - [x] Use strict budget controls (`time-budget`, `max-evals`, round eval budget, population)
+  - [x] Add optional joint optimization mode (`--optimize-joint`) to include selected fast-loop knobs with IR knobs
 - [ ] Persist and promote winning IRs
-  - [ ] Save best IRs under `assets/ir/fitted/`
-  - [ ] Record score + synth parameters in sidecar metadata (`.json`)
+  - [x] Save best IRs under `assets/ir/fitted/` (default output path)
+  - [x] Record score + synth parameters in sidecar metadata (`.report.json`)
   - [ ] Compare top-K IRs with multi-note validation before selecting default
 
 **Done when:** synthetic IR candidates measurably reduce spectral/envelope distance without destabilizing decay behavior.

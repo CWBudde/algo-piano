@@ -1,0 +1,132 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/cwbudde/algo-piano/piano"
+)
+
+func TestInitCandidateDefaultKnobs(t *testing.T) {
+	defs, cand := initCandidate(piano.NewDefaultParams(), 48000, 60, 118, 3.5, false, false)
+	if len(defs) != 8 {
+		t.Fatalf("defs len = %d, want 8", len(defs))
+	}
+	if len(cand.Vals) != len(defs) {
+		t.Fatalf("vals len = %d, want %d", len(cand.Vals), len(defs))
+	}
+}
+
+func TestApplyCandidateSetsIRAndMix(t *testing.T) {
+	base := piano.NewDefaultParams()
+	base.PerNote[60] = &piano.NoteParams{Loss: 0.994, Inharmonicity: 0.2, StrikePosition: 0.12}
+	defs := []knobDef{
+		{Name: "modes", Min: 32, Max: 256, IsInt: true},
+		{Name: "brightness", Min: 0.5, Max: 2.5},
+		{Name: "stereo_width", Min: 0, Max: 1},
+		{Name: "direct", Min: 0.1, Max: 1.2},
+		{Name: "early", Min: 0, Max: 48, IsInt: true},
+		{Name: "late", Min: 0, Max: 0.12},
+		{Name: "low_decay", Min: 0.6, Max: 5.0},
+		{Name: "high_decay", Min: 0.1, Max: 1.5},
+		{Name: "ir_wet_mix", Min: 0.2, Max: 1.6},
+		{Name: "ir_dry_mix", Min: 0.0, Max: 0.8},
+		{Name: "ir_gain", Min: 0.4, Max: 2.2},
+		{Name: "render.velocity", Min: 40, Max: 127, IsInt: true},
+		{Name: "render.release_after", Min: 0.2, Max: 3.5},
+		{Name: "output_gain", Min: 0.4, Max: 1.8},
+		{Name: "hammer_stiffness_scale", Min: 0.6, Max: 1.8},
+		{Name: "per_note.60.loss", Min: 0.985, Max: 0.99995},
+	}
+	cand := candidate{
+		Vals: []float64{
+			120, 1.5, 0.3, 0.9, 12, 0.05, 3.2, 0.6, 1.1, 0.2, 1.8, 126, 2.8, 1.3, 1.7, 0.991,
+		},
+	}
+
+	cfg, params, velocity, releaseAfter := applyCandidate(base, 48000, 60, 118, 3.5, defs, cand)
+	if cfg.Modes != 120 {
+		t.Fatalf("cfg.Modes = %d, want 120", cfg.Modes)
+	}
+	if cfg.EarlyCount != 12 {
+		t.Fatalf("cfg.EarlyCount = %d, want 12", cfg.EarlyCount)
+	}
+	if params.IRWetMix != float32(1.1) {
+		t.Fatalf("IRWetMix = %v, want 1.1", params.IRWetMix)
+	}
+	if params.IRDryMix != float32(0.2) {
+		t.Fatalf("IRDryMix = %v, want 0.2", params.IRDryMix)
+	}
+	if params.IRGain != float32(1.8) {
+		t.Fatalf("IRGain = %v, want 1.8", params.IRGain)
+	}
+	if velocity != 126 {
+		t.Fatalf("velocity = %d, want 126", velocity)
+	}
+	if releaseAfter != 2.8 {
+		t.Fatalf("releaseAfter = %.3f, want 2.8", releaseAfter)
+	}
+	if params.OutputGain != float32(1.3) {
+		t.Fatalf("OutputGain = %v, want 1.3", params.OutputGain)
+	}
+	if params.HammerStiffnessScale != float32(1.7) {
+		t.Fatalf("HammerStiffnessScale = %v, want 1.7", params.HammerStiffnessScale)
+	}
+	if params.PerNote[60].Loss != float32(0.991) {
+		t.Fatalf("PerNote[60].Loss = %v, want 0.991", params.PerNote[60].Loss)
+	}
+}
+
+func TestLoadCandidateFromReportBestIRKnobs(t *testing.T) {
+	tmp := t.TempDir()
+	reportPath := filepath.Join(tmp, "rep.json")
+	if err := os.WriteFile(reportPath, []byte(`{"best_ir_knobs":{"modes":128,"brightness":1.25}}`), 0o644); err != nil {
+		t.Fatalf("write report: %v", err)
+	}
+
+	defs := []knobDef{
+		{Name: "modes", Min: 32, Max: 256, IsInt: true},
+		{Name: "brightness", Min: 0.5, Max: 2.5},
+	}
+	fallback := candidate{Vals: []float64{64, 1.0}}
+
+	got, ok, err := loadCandidateFromReport(reportPath, defs, fallback)
+	if err != nil {
+		t.Fatalf("load report: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected resume candidate")
+	}
+	if got.Vals[0] != 128 {
+		t.Fatalf("modes = %v, want 128", got.Vals[0])
+	}
+	if got.Vals[1] != 1.25 {
+		t.Fatalf("brightness = %v, want 1.25", got.Vals[1])
+	}
+}
+
+func TestInitCandidateJointAddsRenderAndPerNoteKnobs(t *testing.T) {
+	base := piano.NewDefaultParams()
+	base.PerNote[60] = &piano.NoteParams{Loss: 0.994, Inharmonicity: 0.25, StrikePosition: 0.11}
+	defs, _ := initCandidate(base, 48000, 60, 118, 3.5, false, true)
+
+	have := map[string]bool{}
+	for _, d := range defs {
+		have[d.Name] = true
+	}
+	for _, name := range []string{
+		"render.velocity",
+		"render.release_after",
+		"per_note.60.loss",
+		"per_note.60.inharmonicity",
+		"per_note.60.strike_position",
+		"hammer_stiffness_scale",
+		"unison_detune_scale",
+		"output_gain",
+	} {
+		if !have[name] {
+			t.Fatalf("expected knob %q in joint mode", name)
+		}
+	}
+}
