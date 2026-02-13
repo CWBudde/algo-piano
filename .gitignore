@@ -1,0 +1,39 @@
+# Binaries
+bin/
+piano-render
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+piano-render
+
+# Test output
+*.wav
+!assets/ir/*.wav
+*-test.wav
+output.wav
+bench-*.wav
+tests/*.wav
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Go
+vendor/
+go.sum
+internal/cpu/cpu.go
+internal/bytealg/bytealg.go
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific
+assets/ir/*.wav.old
+assets/presets/*.json.old
+# keep IRs themselves as they are assets (or ignore if they are huge and managed via LFS/externals)
+# assets/ir/
