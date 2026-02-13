@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/cwbudde/algo-approx"
+	dspcore "github.com/cwbudde/algo-dsp/dsp/core"
 	dspconv "github.com/cwbudde/algo-dsp/dsp/conv"
 	dspresample "github.com/cwbudde/algo-dsp/dsp/resample"
 	"github.com/cwbudde/wav"
@@ -412,8 +413,9 @@ func (s *StringWaveguide) SetDispersion(amount float32) {
 
 func (s *StringWaveguide) processLoopLoss(input float32) float32 {
 	lp := (1.0-s.lowpassCoeff)*input + s.lowpassCoeff*s.loopState
+	lp = float32(dspcore.FlushDenormals(float64(lp)))
 	s.loopState = lp
-	return lp * s.reflection
+	return float32(dspcore.FlushDenormals(float64(lp * s.reflection)))
 }
 
 func (s *StringWaveguide) processDispersion(input float32) float32 {
@@ -432,20 +434,15 @@ func (s *StringWaveguide) processDispersion(input float32) float32 {
 	return z
 }
 
-// readDelayFractional reads from the delay line with fractional delay using linear interpolation
+// readDelayFractional reads from the delay line with fractional delay using
+// linear interpolation to preserve current waveguide tuning behavior.
 func (s *StringWaveguide) readDelayFractional(delay float32) float32 {
-	// Integer and fractional parts
 	intDelay := int(delay)
 	frac := delay - float32(intDelay)
-
-	// Calculate read positions (looking back in time)
 	readPos1 := (s.writePos - intDelay + len(s.delayLine)) % len(s.delayLine)
 	readPos2 := (s.writePos - intDelay - 1 + len(s.delayLine)) % len(s.delayLine)
-
-	// Linear interpolation
 	sample1 := s.delayLine[readPos1]
 	sample2 := s.delayLine[readPos2]
-
 	return sample1*(1.0-frac) + sample2*frac
 }
 
