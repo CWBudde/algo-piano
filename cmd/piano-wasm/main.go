@@ -7,7 +7,7 @@ import (
 	"syscall/js"
 	"unsafe"
 
-	"github.com/MeKo-Christian/algo-piano/piano"
+	"github.com/cwbudde/algo-piano/piano"
 )
 
 var (
