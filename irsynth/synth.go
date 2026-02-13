@@ -1,0 +1,243 @@
+package irsynth
+
+import (
+	"fmt"
+	"math"
+	"math/rand"
+)
+
+// Config controls synthetic IR generation.
+type Config struct {
+	SampleRate int
+	DurationS  float64
+	Modes      int
+	Seed       int64
+
+	Brightness  float64
+	StereoWidth float64
+	DirectLevel float64
+	EarlyCount  int
+	LateLevel   float64
+
+	LowDecayS  float64
+	HighDecayS float64
+
+	NormalizePeak float64
+}
+
+func DefaultConfig() Config {
+	return Config{
+		SampleRate:    96000,
+		DurationS:     2.0,
+		Modes:         128,
+		Seed:          1,
+		Brightness:    1.0,
+		StereoWidth:   0.6,
+		DirectLevel:   0.6,
+		EarlyCount:    16,
+		LateLevel:     0.045,
+		LowDecayS:     2.4,
+		HighDecayS:    0.35,
+		NormalizePeak: 0.9,
+	}
+}
+
+func (c *Config) Validate() error {
+	if c.SampleRate < 8000 {
+		return fmt.Errorf("sample rate too low: %d", c.SampleRate)
+	}
+	if c.DurationS <= 0 {
+		return fmt.Errorf("duration must be > 0")
+	}
+	if c.Modes < 1 {
+		return fmt.Errorf("modes must be >= 1")
+	}
+	if c.Brightness <= 0 {
+		return fmt.Errorf("brightness must be > 0")
+	}
+	if c.StereoWidth < 0 {
+		return fmt.Errorf("stereo width must be >= 0")
+	}
+	if c.DirectLevel < 0 {
+		return fmt.Errorf("direct level must be >= 0")
+	}
+	if c.EarlyCount < 0 {
+		return fmt.Errorf("early count must be >= 0")
+	}
+	if c.LateLevel < 0 {
+		return fmt.Errorf("late level must be >= 0")
+	}
+	if c.LowDecayS <= 0 || c.HighDecayS <= 0 {
+		return fmt.Errorf("decay seconds must be > 0")
+	}
+	if c.NormalizePeak <= 0 {
+		return fmt.Errorf("normalize peak must be > 0")
+	}
+	return nil
+}
+
+// GenerateStereo synthesizes a stereo IR according to cfg.
+func GenerateStereo(cfg Config) ([]float32, []float32, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, nil, err
+	}
+
+	n := int(math.Round(cfg.DurationS * float64(cfg.SampleRate)))
+	if n < 1 {
+		n = 1
+	}
+	left := make([]float64, n)
+	right := make([]float64, n)
+
+	rng := rand.New(rand.NewSource(cfg.Seed))
+
+	// Direct path impulse.
+	left[0] += cfg.DirectLevel * (1.0 - 0.05*cfg.StereoWidth)
+	right[0] += cfg.DirectLevel * (1.0 + 0.05*cfg.StereoWidth)
+
+	maxF := 0.47 * float64(cfg.SampleRate)
+	if maxF < 500.0 {
+		maxF = 500.0
+	}
+	minF := 35.0
+	if minF >= maxF {
+		minF = maxF * 0.5
+	}
+
+	// Modal body contribution.
+	for m := 0; m < cfg.Modes; m++ {
+		u := rng.Float64()
+		// Bias toward lower frequencies where piano body modes are denser perceptually.
+		fNorm := u * u
+		f := minF * math.Pow(maxF/minF, fNorm)
+
+		brightnessExp := 0.7 + 0.9*cfg.Brightness
+		amp := 0.9 / math.Pow(1.0+f/120.0, brightnessExp)
+		amp *= 0.7 + 0.6*rng.Float64()
+
+		tau := lerp(cfg.LowDecayS, cfg.HighDecayS, math.Sqrt(f/maxF))
+		decay := math.Exp(-1.0 / (tau * float64(cfg.SampleRate)))
+
+		pan := (rng.Float64()*2.0 - 1.0) * cfg.StereoWidth
+		lGain := 1.0 - 0.45*pan
+		rGain := 1.0 + 0.45*pan
+		fSkew := 0.004 * pan
+		fL := f * (1.0 - fSkew)
+		fR := f * (1.0 + fSkew)
+
+		phi := rng.Float64() * 2.0 * math.Pi
+		addModeRec(left, amp*lGain, fL, phi, decay, cfg.SampleRate)
+		addModeRec(right, amp*rGain, fR, phi+0.01*pan, decay, cfg.SampleRate)
+	}
+
+	// Early reflections cluster.
+	for i := 0; i < cfg.EarlyCount; i++ {
+		t := 0.001 + 0.030*rng.Float64()
+		idx := int(t * float64(cfg.SampleRate))
+		if idx <= 0 || idx >= n {
+			continue
+		}
+		amp := (0.10 + 0.35*rng.Float64()) * math.Exp(-t*28.0)
+		pan := (rng.Float64()*2.0 - 1.0) * cfg.StereoWidth
+		left[idx] += amp * (1.0 - 0.5*pan)
+		right[idx] += amp * (1.0 + 0.5*pan)
+	}
+
+	// Diffuse late tail.
+	if cfg.LateLevel > 0 {
+		lpL := 0.0
+		lpR := 0.0
+		for i := 0; i < n; i++ {
+			t := float64(i) / float64(cfg.SampleRate)
+			env := math.Exp(-t / (0.75 * cfg.LowDecayS))
+			nL := rng.NormFloat64()
+			nR := rng.NormFloat64()
+			lpL = 0.985*lpL + 0.015*nL
+			lpR = 0.985*lpR + 0.015*nR
+			left[i] += cfg.LateLevel * env * lpL
+			right[i] += cfg.LateLevel * env * lpR
+		}
+	}
+
+	// Remove tiny DC drift.
+	highpassDC(left, 0.995)
+	highpassDC(right, 0.995)
+
+	// Normalize.
+	peak := maxAbs(left)
+	if rp := maxAbs(right); rp > peak {
+		peak = rp
+	}
+	if peak < 1e-12 {
+		peak = 1e-12
+	}
+	s := cfg.NormalizePeak / peak
+	outL := make([]float32, n)
+	outR := make([]float32, n)
+	for i := 0; i < n; i++ {
+		outL[i] = float32(left[i] * s)
+		outR[i] = float32(right[i] * s)
+	}
+	return outL, outR, nil
+}
+
+func addModeRec(out []float64, amp float64, freq float64, phase float64, decay float64, sampleRate int) {
+	if len(out) == 0 {
+		return
+	}
+	w := 2.0 * math.Pi * freq / float64(sampleRate)
+	cw := math.Cos(w)
+	x0 := math.Cos(phase)
+	x1 := math.Cos(phase + w)
+	env := 1.0
+
+	out[0] += amp * env * x0
+	env *= decay
+	if len(out) == 1 {
+		return
+	}
+	out[1] += amp * env * x1
+	env *= decay
+	for i := 2; i < len(out); i++ {
+		x2 := 2.0*cw*x1 - x0
+		x0 = x1
+		x1 = x2
+		out[i] += amp * env * x2
+		env *= decay
+	}
+}
+
+func highpassDC(x []float64, r float64) {
+	if len(x) == 0 {
+		return
+	}
+	prevIn := 0.0
+	prevOut := 0.0
+	for i := range x {
+		y := x[i] - prevIn + r*prevOut
+		prevIn = x[i]
+		prevOut = y
+		x[i] = y
+	}
+}
+
+func maxAbs(x []float64) float64 {
+	m := 0.0
+	for _, v := range x {
+		a := math.Abs(v)
+		if a > m {
+			m = a
+		}
+	}
+	return m
+}
+
+func lerp(a, b, t float64) float64 {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	return a + (b-a)*t
+}

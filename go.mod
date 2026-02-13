@@ -13,6 +13,7 @@ require (
 
 require (
 	github.com/cwbudde/algo-vecmath v0.1.0 // indirect
+	github.com/cwbudde/mayfly v0.1.0 // indirect
 	github.com/go-audio/riff v1.0.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 )

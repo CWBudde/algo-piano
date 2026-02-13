@@ -87,7 +87,33 @@ func (p *Piano) Process(numFrames int) []float32 {
 		p.resonance.InjectFromBridge(monoMix, p.voices)
 	}
 
-	stereoOutput := p.convolver.Process(monoMix)
+	stereoWet := p.convolver.Process(monoMix)
+	stereoOutput := make([]float32, len(stereoWet))
+	wetMix := float32(1.0)
+	dryMix := float32(0.0)
+	irGain := float32(1.0)
+	outGain := float32(1.0)
+	if p.params != nil {
+		if p.params.IRWetMix >= 0 {
+			wetMix = p.params.IRWetMix
+		}
+		if p.params.IRDryMix >= 0 {
+			dryMix = p.params.IRDryMix
+		}
+		if p.params.IRGain > 0 {
+			irGain = p.params.IRGain
+		}
+		if p.params.OutputGain > 0 {
+			outGain = p.params.OutputGain
+		}
+	}
+	for i := 0; i < numFrames; i++ {
+		dry := monoMix[i] * dryMix
+		l := dry + stereoWet[i*2]*wetMix*irGain
+		r := dry + stereoWet[i*2+1]*wetMix*irGain
+		stereoOutput[i*2] = l * outGain
+		stereoOutput[i*2+1] = r * outGain
+	}
 
 	activeVoices := make([]*Voice, 0, len(p.voices))
 	for _, v := range p.voices {

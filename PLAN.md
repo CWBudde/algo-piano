@@ -216,7 +216,14 @@ Conventions used in this plan:
 
 ## Phase 8B — Distance-guided timbre matching (C4 first, then scale out)
 
+- [x] Collect and expose first optimization surface (hammer + detuning + IR influence)
+  - [x] Add preset-controlled hammer influence scales
+  - [x] Add preset-controlled unison detune/crossfeed scales
+  - [x] Add preset-controlled IR wet/dry/gain mix
+  - [x] Document suggested Mayfly bounds and optimization order in `docs/plans/2026-02-13-phase8b-tweak-surface.md`
 - [ ] Add render-control fitting loop (before touching physical params)
+  - [x] Add fast inner-loop CLI: `cmd/piano-fit-fast` (time-budgeted iterative optimization with checkpointed best preset/report)
+  - [x] Add runnable entrypoint: `just fit-c4-fast ...`
   - [ ] Grid/coordinate search over `velocity`, `release-after`, and output gain to reduce avoidable mismatch
   - [ ] Persist best control settings with score snapshot
 - [ ] Add physically-meaningful fitting passes for note parameters
@@ -239,6 +246,33 @@ Conventions used in this plan:
   - [ ] Add optimizer budget controls (max evals / time limit) for reproducible tuning sessions
 
 **Done when:** C4 distance and sub-metrics improve materially and remain stable across changes.
+
+---
+
+## Phase 8C — Slow loop: IR-shape optimization with `ir-synth` + Mayfly
+
+- [ ] Add IR-synthesis objective loop (outer loop; slower than preset-only fitting)
+  - [ ] Use `cmd/ir-synth` to generate candidate IRs per evaluation
+  - [ ] Run `cmd/piano-distance` against `reference/c4.wav` with that IR
+  - [ ] Optimize over IR synthesis parameters:
+    - [ ] `modes` (e.g. `32..256`)
+    - [ ] `brightness` (e.g. `0.5..2.5`)
+    - [ ] `stereo-width` (e.g. `0.0..1.0`)
+    - [ ] `direct` (e.g. `0.1..1.2`)
+    - [ ] `early` (e.g. `0..48`)
+    - [ ] `late` (e.g. `0.0..0.12`)
+    - [ ] `low-decay` (e.g. `0.6..5.0` s)
+    - [ ] `high-decay` (e.g. `0.1..1.5` s)
+- [ ] Integrate Mayfly for this outer loop
+  - [ ] Objective = weighted distance score from `analysis.Compare`
+  - [ ] Fixed seed + checkpoint best candidate every N evals
+  - [ ] Use strict budget controls (e.g. low-population exploratory pass first, then refine)
+- [ ] Persist and promote winning IRs
+  - [ ] Save best IRs under `assets/ir/fitted/`
+  - [ ] Record score + synth parameters in sidecar metadata (`.json`)
+  - [ ] Compare top-K IRs with multi-note validation before selecting default
+
+**Done when:** synthetic IR candidates measurably reduce spectral/envelope distance without destabilizing decay behavior.
 
 ---
 

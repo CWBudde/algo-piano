@@ -102,3 +102,27 @@ func TestSoftPedalReducesAttackBrightness(t *testing.T) {
 		t.Fatalf("expected soft pedal to lower attack brightness: soft=%.2fHz normal=%.2fHz", softCentroid, normalCentroid)
 	}
 }
+
+func TestIRDryWetMixCanBypassConvolverOutput(t *testing.T) {
+	wetOnly := NewDefaultParams()
+	wetOnly.IRWetMix = 1.0
+	wetOnly.IRDryMix = 0.0
+	pw := NewPiano(48000, 16, wetOnly)
+	pw.convolver.SetIR([]float32{0.0}, []float32{0.0})
+	pw.NoteOn(60, 100)
+	wetOut := pw.Process(512)
+	if stereoRMS(wetOut) > 1e-6 {
+		t.Fatalf("expected near-silence for wet-only with zero IR, got %f", stereoRMS(wetOut))
+	}
+
+	dryOnly := NewDefaultParams()
+	dryOnly.IRWetMix = 0.0
+	dryOnly.IRDryMix = 1.0
+	pd := NewPiano(48000, 16, dryOnly)
+	pd.convolver.SetIR([]float32{0.0}, []float32{0.0})
+	pd.NoteOn(60, 100)
+	dryOut := pd.Process(512)
+	if stereoRMS(dryOut) <= 1e-4 {
+		t.Fatalf("expected audible dry signal with dry-only mix, got %f", stereoRMS(dryOut))
+	}
+}

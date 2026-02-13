@@ -1,0 +1,35 @@
+{
+  "output_gain": 1,
+  "ir_wav_path": "assets/ir/default_96k.wav",
+  "ir_wet_mix": 0.91825265,
+  "ir_gain": 1.0723412,
+  "resonance_enabled": true,
+  "resonance_gain": 0.00025,
+  "resonance_per_note_filter": true,
+  "hammer_stiffness_scale": 1.1329426,
+  "hammer_exponent_scale": 1.0256859,
+  "hammer_damping_scale": 1.2174098,
+  "hammer_initial_velocity_scale": 0.9780756,
+  "hammer_contact_time_scale": 0.8942127,
+  "unison_detune_scale": 0.8201058,
+  "unison_crossfeed": 0.00016304111,
+  "soft_pedal_strike_offset": 0.08,
+  "soft_pedal_hardness": 0.78,
+  "per_note": {
+    "21": {
+      "inharmonicity": 0.02,
+      "loss": 0.9996,
+      "strike_position": 0.19
+    },
+    "60": {
+      "inharmonicity": 0.09424487,
+      "loss": 0.99853516,
+      "strike_position": 0.18340495
+    },
+    "88": {
+      "inharmonicity": 0.34,
+      "loss": 0.997,
+      "strike_position": 0.15
+    }
+  }
+}

@@ -85,13 +85,20 @@ render-octave root="60" out_dir="out/octave" preset="assets/presets/default.json
     done
 
 # Compare model C4 against reference/c4.wav
-distance-c4 reference="reference/c4.wav" preset="assets/presets/default.json":
+distance-c4 reference="reference/c4.wav" preset="assets/presets/default.json" output="out/C4.wav":
     #!/usr/bin/env bash
     set -euo pipefail
     reference_raw="{{reference}}"
     preset_raw="{{preset}}"
+    output_raw="{{output}}"
     reference="${reference_raw#reference=}"
     preset="${preset_raw#preset=}"
+    output="${output_raw#output=}"
+    extra_write_candidate=()
+    if [ -n "$output" ]; then
+        mkdir -p "$(dirname "$output")"
+        extra_write_candidate=(--write-candidate "$output")
+    fi
     GOCACHE="${GOCACHE:-/tmp/gocache}" go run ./cmd/piano-distance \
         --reference "$reference" \
         --preset "$preset" \
@@ -101,4 +108,100 @@ distance-c4 reference="reference/c4.wav" preset="assets/presets/default.json":
         --decay-hold-blocks 6 \
         --min-duration 2.0 \
         --release-after 2.0 \
-        --max-duration 30
+        --max-duration 30 \
+        "${extra_write_candidate[@]}"
+
+# Synthesize a stereo IR WAV for soundboard/body convolution
+ir-synth output="assets/ir/synth_96k.wav" sample_rate="96000" duration="2.0" modes="128" seed="1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    output_raw="{{output}}"
+    sample_rate_raw="{{sample_rate}}"
+    duration_raw="{{duration}}"
+    modes_raw="{{modes}}"
+    seed_raw="{{seed}}"
+    output="${output_raw#output=}"
+    sample_rate="${sample_rate_raw#sample_rate=}"
+    duration="${duration_raw#duration=}"
+    modes="${modes_raw#modes=}"
+    seed="${seed_raw#seed=}"
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run ./cmd/ir-synth \
+        --output "$output" \
+        --sample-rate "$sample_rate" \
+        --duration "$duration" \
+        --modes "$modes" \
+        --seed "$seed"
+
+# Fast inner-loop fitting (preset/model params) against C4 reference
+fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" output_preset="assets/presets/fitted-c4.json" time_budget="120" max_evals="10000" mayfly_variant="desma" mayfly_pop="10" mayfly_round_evals="240" report_every="10" checkpoint_every="1" resume="true" write_best_candidate="" seed="1" decay_dbfs="-90" decay_hold_blocks="6" min_duration="2.0" max_duration="30" note="60" sample_rate="48000" resume_report="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    reference_raw="{{reference}}"
+    preset_raw="{{preset}}"
+    output_raw="{{output_preset}}"
+    budget_raw="{{time_budget}}"
+    max_evals_raw="{{max_evals}}"
+    mayfly_variant_raw="{{mayfly_variant}}"
+    mayfly_pop_raw="{{mayfly_pop}}"
+    mayfly_round_evals_raw="{{mayfly_round_evals}}"
+    report_every_raw="{{report_every}}"
+    checkpoint_every_raw="{{checkpoint_every}}"
+    resume_raw="{{resume}}"
+    write_best_candidate_raw="{{write_best_candidate}}"
+    seed_raw="{{seed}}"
+    decay_dbfs_raw="{{decay_dbfs}}"
+    decay_hold_blocks_raw="{{decay_hold_blocks}}"
+    min_duration_raw="{{min_duration}}"
+    max_duration_raw="{{max_duration}}"
+    note_raw="{{note}}"
+    sample_rate_raw="{{sample_rate}}"
+    resume_report_raw="{{resume_report}}"
+    reference="${reference_raw#reference=}"
+    preset="${preset_raw#preset=}"
+    output_preset="${output_raw#output_preset=}"
+    time_budget="${budget_raw#time_budget=}"
+    max_evals="${max_evals_raw#max_evals=}"
+    mayfly_variant="${mayfly_variant_raw#mayfly_variant=}"
+    mayfly_pop="${mayfly_pop_raw#mayfly_pop=}"
+    mayfly_round_evals="${mayfly_round_evals_raw#mayfly_round_evals=}"
+    report_every="${report_every_raw#report_every=}"
+    checkpoint_every="${checkpoint_every_raw#checkpoint_every=}"
+    resume="${resume_raw#resume=}"
+    write_best_candidate="${write_best_candidate_raw#write_best_candidate=}"
+    seed="${seed_raw#seed=}"
+    decay_dbfs="${decay_dbfs_raw#decay_dbfs=}"
+    decay_hold_blocks="${decay_hold_blocks_raw#decay_hold_blocks=}"
+    min_duration="${min_duration_raw#min_duration=}"
+    max_duration="${max_duration_raw#max_duration=}"
+    note="${note_raw#note=}"
+    sample_rate="${sample_rate_raw#sample_rate=}"
+    resume_report="${resume_report_raw#resume_report=}"
+    extra_write_best=()
+    extra_resume_report=()
+    if [ -n "$write_best_candidate" ]; then
+        extra_write_best=(--write-best-candidate "$write_best_candidate")
+    fi
+    if [ -n "$resume_report" ]; then
+        extra_resume_report=(--resume-report "$resume_report")
+    fi
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run ./cmd/piano-fit-fast \
+        --reference "$reference" \
+        --preset "$preset" \
+        --output-preset "$output_preset" \
+        --time-budget "$time_budget" \
+        --max-evals "$max_evals" \
+        --note "$note" \
+        --sample-rate "$sample_rate" \
+        --decay-dbfs "$decay_dbfs" \
+        --decay-hold-blocks "$decay_hold_blocks" \
+        --min-duration "$min_duration" \
+        --max-duration "$max_duration" \
+        --report-every "$report_every" \
+        --checkpoint-every "$checkpoint_every" \
+        --seed "$seed" \
+        --resume="$resume" \
+        --mayfly-variant "$mayfly_variant" \
+        --mayfly-pop "$mayfly_pop" \
+        --mayfly-round-evals "$mayfly_round_evals" \
+        "${extra_resume_report[@]}" \
+        "${extra_write_best[@]}"
