@@ -27,6 +27,10 @@ Implemented through the core instrument path:
 
 ### Quick Start
 
+**Try the live web demo:** https://cwbudde.github.io/algo-piano/
+
+Or render offline WAV files:
+
 ```bash
 # Render a test tone (A4 = 440 Hz) with default 96 kHz IR asset
 go run ./cmd/piano-render --note 69 --duration 2.0 --output output.wav
@@ -37,6 +41,16 @@ go run ./cmd/piano-render --note 69 --sample-rate 44100 --output a4_44k.wav
 # Select a custom IR WAV
 go run ./cmd/piano-render --note 60 --ir assets/ir/default_96k.wav --output middle-c.wav
 ```
+
+Or build the web demo locally:
+
+```bash
+./scripts/build-wasm.sh
+python3 -m http.server -d web 8080
+# Open http://localhost:8080
+```
+
+See [web/README.md](web/README.md) for web demo details.
 
 ### Project Structure
 
