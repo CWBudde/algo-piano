@@ -119,7 +119,7 @@ Conventions used in this plan:
 
 ## Phase 5 — Soundboard/body (commuted synthesis via IR convolution)
 
-- [ ] Decide IR format and shipping strategy
+- [x] Decide IR format and shipping strategy
   - [x] Choose supported sample rates (e.g. 48k only initially)
   - [x] Choose mono/stereo IR layout under `assets/ir/`
 - [x] Implement `SoundboardConvolver` (partitioned convolution)
@@ -127,9 +127,9 @@ Conventions used in this plan:
   - [ ] Small early partitions for latency; larger for efficiency (later)
   - [x] Provide stereo output from one mono bridge signal
   - [x] Add reset/flush behavior for note-off and engine reset
-- [ ] Pick FFT strategy (pure Go)
-  - [ ] Start with `gonum.org/v1/gonum/dsp/fourier` (fast enough to ship)
-  - [ ] (optional) Replace with a specialized radix-2 FFT (complex64) if profiling demands it
+- [x] Pick FFT/convolution backend (pure Go)
+  - [x] Use `algo-fft`; let the library select the concrete FFT strategy
+  - [x] Use `algo-fft` convolution implementation as the default backend
 - [x] Add correctness test
   - [x] Compare partitioned convolution vs direct convolution on small signals
   - [x] Define acceptable error bound (float)
@@ -148,8 +148,8 @@ Conventions used in this plan:
   - [x] When sustain pedal down: keep strings in low-loss mode
 - [x] Sustain pedal
   - [x] Add CC handling and smooth parameter transitions
-- [ ] (optional) Una corda / soft pedal
-  - [ ] Modify strike position and hammer hardness
+- [x] (optional) Una corda / soft pedal
+  - [x] Modify strike position and hammer hardness
 - [x] Add tests
   - [x] Note release with pedal up decays quickly
   - [x] With sustain down, note continues ringing
@@ -160,14 +160,14 @@ Conventions used in this plan:
 
 ## Phase 7 — Sympathetic resonance (big realism lever)
 
-- [ ] Implement `ResonanceEngine`
-  - [ ] Maintain list of undamped strings (pedal down or key held)
-  - [ ] Inject filtered bridge/soundboard energy into undamped strings
-- [ ] Choose MVP injection strategy
-  - [ ] MVP: inject a band-limited version of the global bridge signal
-  - [ ] (optional) Per-note filter tuned near each string’s fundamental/partials
-- [ ] Add tests
-  - [ ] With sustain down, silent keys cause audible bloom after strikes
+- [x] Implement `ResonanceEngine`
+  - [x] Maintain list of undamped strings (pedal down or key held)
+  - [x] Inject filtered bridge/soundboard energy into undamped strings
+- [x] Choose MVP injection strategy
+  - [x] MVP: inject a band-limited version of the global bridge signal
+  - [x] (optional) Per-note filter tuned near each string’s fundamental/partials
+- [x] Add tests
+  - [x] With sustain down, silent keys cause audible bloom after strikes
 
 **Done when:** sustain pedal produces believable “wash” and bloom.
 

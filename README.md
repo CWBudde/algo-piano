@@ -2,7 +2,7 @@
 
 A physically-modeled piano synthesizer written in Go, using digital waveguide synthesis and commuted convolution.
 
-## Status: Through Phase 6 (core voice path) ✓
+## Status: Through Phase 7 (core voice + sympathetic resonance) ✓
 
 Implemented through the core instrument path:
 
@@ -11,7 +11,8 @@ Implemented through the core instrument path:
 - Unison strings (1-3) with detune and coupling
 - Partitioned stereo soundboard convolver with reset
 - WAV IR loading (mono/stereo) with runtime sample-rate conversion
-- Damper and sustain pedal behavior
+- Damper, sustain, and soft-pedal (una corda) behavior
+- Sympathetic resonance with band-limited bridge injection and optional per-note tuned filtering
 
 ### What's Working
 
@@ -21,7 +22,7 @@ Implemented through the core instrument path:
 - ✓ Basic DSP utilities (Biquad, DelayLine, Lagrange interpolator)
 - ✓ **Digital waveguide string model** with fractional delay tuning
 - ✓ **Stable pitched tones** across the keyboard
-- ✓ Loss, dispersion, strike-position, hammer, unison, convolver, and sustain tests
+- ✓ Loss, dispersion, strike-position, hammer, unison, convolver, sustain, and soft-pedal tests
 - ✓ `piano-render` command produces pitched WAV output
 
 ### Quick Start
@@ -58,9 +59,9 @@ algo-piano/
 
 See [PLAN.md](PLAN.md) for the full phase-by-phase implementation plan.
 
-**Completed:** Phase 0 through Phase 6 (except optional items)
+**Completed:** Phase 0 through Phase 7 (including optional per-note resonance filtering)
 
-**Next up:** Phase 7 - sympathetic resonance
+**Next up:** Phase 8 - presets + parameterization
 
 ## Dependencies
 
