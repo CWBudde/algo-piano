@@ -1,8 +1,9 @@
-module github.com/MeKo-Christian/algo-piano
+module github.com/cwbudde/algo-piano
 
 go 1.25.0
 
 require (
+	github.com/MeKo-Christian/algo-piano v0.0.0-20260213133347-6763cfebd502
 	github.com/cwbudde/algo-approx v0.1.0
 	github.com/cwbudde/algo-dsp v0.3.0
 	github.com/cwbudde/algo-fft v0.6.9
