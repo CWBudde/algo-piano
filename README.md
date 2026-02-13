@@ -38,8 +38,14 @@ go run ./cmd/piano-render --note 69 --duration 2.0 --output output.wav
 # Try a different runtime sample-rate (IR is resampled automatically)
 go run ./cmd/piano-render --note 69 --sample-rate 44100 --output a4_44k.wav
 
-# Select a custom IR WAV
-go run ./cmd/piano-render --note 60 --ir assets/ir/default_96k.wav --output middle-c.wav
+# Render with preset JSON (default: assets/presets/default.json)
+go run ./cmd/piano-render --preset assets/presets/default.json --note 60 --output middle-c.wav
+
+# Override IR from CLI (takes precedence over preset)
+go run ./cmd/piano-render --preset assets/presets/default.json --ir assets/ir/default_96k.wav --output middle-c-ir.wav
+
+# Render one octave (12 WAV files) with auto-stop at -90 dBFS decay
+just render-octave root=60 out_dir=out/octave
 ```
 
 Or build the web demo locally:
@@ -62,10 +68,10 @@ algo-piano/
 ├── piano/               # Public engine API
 ├── dsp/                 # DSP utilities and WAV I/O
 ├── conv/                # Partitioned convolution (TODO)
-├── preset/              # Parameter schema (TODO)
+├── preset/              # Preset schema + JSON loader
 ├── assets/
 │   ├── ir/              # Impulse responses (TODO)
-│   └── presets/         # Preset files (TODO)
+│   └── presets/         # Preset files
 └── examples/            # Example code (TODO)
 ```
 

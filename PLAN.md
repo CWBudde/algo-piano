@@ -175,13 +175,13 @@ Conventions used in this plan:
 
 ## Phase 8 — Presets + parameterization
 
-- [ ] Define `Params` schema
-  - [ ] Per-note: `f0`, dispersion/inharmonicity, loss coefficients, strike position
+- [x] Define `Params` schema
+  - [x] Per-note: `f0`, dispersion/inharmonicity, loss coefficients, strike position
   - [ ] Unison: detune map, gains
   - [ ] Global: IR set, output gain, limiter (optional)
-- [ ] Add preset loader
-  - [ ] Choose JSON or YAML and implement a minimal parser strategy
-  - [ ] Add `assets/presets/default.*`
+- [x] Add preset loader
+  - [x] Choose JSON or YAML and implement a minimal parser strategy
+  - [x] Add `assets/presets/default.*`
 - [ ] Add tooling hooks (optional)
   - [ ] Offline helper to fit decay times / inharmonicity targets from recordings
 
@@ -205,20 +205,22 @@ Conventions used in this plan:
 
 ---
 
-## Phase 10 — Web demo (WASM + AudioWorklet)
+## Phase 10 — Web demo (WASM + AudioWorklet) ✓
 
-- [ ] Choose build approach (Go-only)
-  - [ ] Prefer **TinyGo** for the audio core (smaller runtime; better fit for AudioWorklet constraints)
-  - [ ] Alternative: standard Go WASM for non-worklet UI/analysis (often too heavy for real-time audio threads)
-  - [ ] Define a stable exported API for WASM calls (process block, note events)
-- [ ] Create `demo-web/`
-  - [ ] Vite app with AudioWorklet
-  - [ ] UI: minimal keyboard + sustain pedal toggle + IR select
-  - [ ] MIDI: WebMIDI if available, fallback UI
-- [ ] Integrate and validate latency
-  - [ ] Block size 128 (or browser default) and convolver partition alignment
+- [x] Choose build approach (Go-only)
+  - [x] Standard Go WASM (using syscall/js for bridge between Go and JS)
+  - [x] Define a stable exported API for WASM calls (process block, note events)
+- [x] Create web demo (`web/`)
+  - [x] AudioWorklet processor for real-time audio
+  - [x] UI: minimal keyboard (2 octaves) + sustain pedal toggle
+  - [x] Computer keyboard bindings for playability
+  - [x] WASM bridge with Go audio engine
+- [x] Build and deployment infrastructure
+  - [x] Build script (`scripts/build-wasm.sh`) for WASM compilation
+  - [x] GitHub Actions workflow for automated deployment to GitHub Pages
+  - [x] IR asset loading with graceful fallback
 
-**Done when:** playable in browser without glitches on a typical machine.
+**Done when:** playable in browser without glitches on a typical machine. ✓
 
 ---
 
