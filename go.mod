@@ -1,4 +1,4 @@
-module github.com/cwbudde/algo-piano
+module github.com/MeKo-Christian/algo-piano
 
 go 1.25.0
 
