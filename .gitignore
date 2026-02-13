@@ -37,3 +37,7 @@ assets/ir/*.wav.old
 assets/presets/*.json.old
 # keep IRs themselves as they are assets (or ignore if they are huge and managed via LFS/externals)
 # assets/ir/
+
+# Web demo build artifacts
+web/dist/
+web/wasm_exec.js
