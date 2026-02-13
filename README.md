@@ -46,6 +46,9 @@ go run ./cmd/piano-render --preset assets/presets/default.json --ir assets/ir/de
 
 # Render one octave (12 WAV files) with auto-stop at -90 dBFS decay
 just render-octave root=60 out_dir=out/octave
+
+# Measure objective distance to a recorded C4 reference
+just distance-c4 reference=reference/c4.wav
 ```
 
 Or build the web demo locally:

@@ -53,21 +53,52 @@ clean:
 
 # Render one octave of WAV files with auto-stop at decay threshold
 render-octave root="60" out_dir="out/octave" preset="assets/presets/default.json" sample_rate="48000" velocity="100":
-    mkdir -p "{{out_dir}}"
-    start="{{root}}"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root_raw="{{root}}"
+    out_dir_raw="{{out_dir}}"
+    preset_raw="{{preset}}"
+    sample_rate_raw="{{sample_rate}}"
+    velocity_raw="{{velocity}}"
+    root="${root_raw#root=}"
+    out_dir="${out_dir_raw#out_dir=}"
+    preset="${preset_raw#preset=}"
+    sample_rate="${sample_rate_raw#sample_rate=}"
+    velocity="${velocity_raw#velocity=}"
+    start="$root"
+    mkdir -p "$out_dir"
     end=$((start + 11))
-    for note in $(seq "$start" "$end"); do \
-        out="{{out_dir}}/note_$note.wav"; \
-        echo "Rendering $out"; \
+    for note in $(seq "$start" "$end"); do
+        out="$out_dir/note_$note.wav"
+        echo "Rendering $out"
         go run ./cmd/piano-render \
-            --preset "{{preset}}" \
+            --preset "$preset" \
             --note "$note" \
-            --velocity "{{velocity}}" \
-            --sample-rate "{{sample_rate}}" \
+            --velocity "$velocity" \
+            --sample-rate "$sample_rate" \
             --decay-dbfs -90 \
             --decay-hold-blocks 6 \
-            --min-duration 0.5 \
-            --max-duration 30 \
-            --release-after 0.12 \
-            --output "$out"; \
+            --min-duration 2.0 \
+            --max-duration 60 \
+            --release-after 2.0 \
+            --output "$out"
     done
+
+# Compare model C4 against reference/c4.wav
+distance-c4 reference="reference/c4.wav" preset="assets/presets/default.json":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    reference_raw="{{reference}}"
+    preset_raw="{{preset}}"
+    reference="${reference_raw#reference=}"
+    preset="${preset_raw#preset=}"
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run ./cmd/piano-distance \
+        --reference "$reference" \
+        --preset "$preset" \
+        --note 60 \
+        --sample-rate 48000 \
+        --decay-dbfs -90 \
+        --decay-hold-blocks 6 \
+        --min-duration 2.0 \
+        --release-after 2.0 \
+        --max-duration 30

@@ -74,6 +74,7 @@ function generateKeyboard() {
 
     const whiteKeyWidth = 50;
     const whiteKeyMargin = 1;
+    const blackKeyWidth = 32;
     let whiteKeyIndex = 0;
 
     // Generate white keys first
@@ -111,8 +112,11 @@ function generateKeyboard() {
                 key.dataset.note = midiNote;
 
                 // Position black keys between white keys
+                // Each white key takes up (width + 2*margin) space
                 const whiteKeysBefore = whiteKeyPattern.filter(n => n < i).length;
-                const leftPos = (whiteKeysBefore + octave * 7) * (whiteKeyWidth + whiteKeyMargin * 2) + whiteKeyWidth - 16;
+                const totalWhiteKeysSpace = (whiteKeyWidth + whiteKeyMargin * 2);
+                const leftPos = (whiteKeysBefore + octave * 7) * totalWhiteKeysSpace +
+                                (totalWhiteKeysSpace - blackKeyWidth / 2);
                 key.style.left = `${leftPos}px`;
 
                 const label = document.createElement('div');

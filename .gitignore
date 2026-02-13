@@ -6,7 +6,7 @@ piano-render
 *.dll
 *.so
 *.dylib
-piano-render
+!piano-render/
 
 # Test output
 *.wav
