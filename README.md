@@ -10,6 +10,7 @@ Implemented through the core instrument path:
 - Nonlinear hammer with bounded contact
 - Unison strings (1-3) with detune and coupling
 - Partitioned stereo soundboard convolver with reset
+- WAV IR loading (mono/stereo) with runtime sample-rate conversion
 - Damper and sustain pedal behavior
 
 ### What's Working
@@ -26,12 +27,14 @@ Implemented through the core instrument path:
 ### Quick Start
 
 ```bash
-# Render a test tone (A4 = 440 Hz)
+# Render a test tone (A4 = 440 Hz) with default 96 kHz IR asset
 go run ./cmd/piano-render --note 69 --duration 2.0 --output output.wav
 
-# Try different notes
-go run ./cmd/piano-render --note 60 --duration 1.0 --output middle-c.wav  # Middle C
-go run ./cmd/piano-render --note 81 --duration 1.0 --output high-a.wav    # A5
+# Try a different runtime sample-rate (IR is resampled automatically)
+go run ./cmd/piano-render --note 69 --sample-rate 44100 --output a4_44k.wav
+
+# Select a custom IR WAV
+go run ./cmd/piano-render --note 60 --ir assets/ir/default_96k.wav --output middle-c.wav
 ```
 
 ### Project Structure
@@ -62,6 +65,8 @@ See [PLAN.md](PLAN.md) for the full phase-by-phase implementation plan.
 ## Dependencies
 
 - [github.com/cwbudde/algo-approx](https://github.com/cwbudde/algo-approx) - Fast math approximations
+- [github.com/cwbudde/algo-dsp](https://github.com/cwbudde/algo-dsp) - Overlap-add convolution and resampling
+- [github.com/cwbudde/wav](https://github.com/cwbudde/wav) - WAV encode/decode for IR assets
 
 ## Design Goals
 

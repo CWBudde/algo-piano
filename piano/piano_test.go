@@ -3,11 +3,15 @@ package piano
 import (
 	"fmt"
 	"math"
+	"os"
 	"testing"
 
+	dspresample "github.com/cwbudde/algo-dsp/dsp/resample"
 	algofft "github.com/cwbudde/algo-fft"
 	pdefd "github.com/cwbudde/algo-pde/fd"
 	pdepoisson "github.com/cwbudde/algo-pde/poisson"
+	"github.com/cwbudde/wav"
+	"github.com/go-audio/audio"
 )
 
 // TestTuningAccuracy verifies that the generated pitch is within tolerance
@@ -294,6 +298,69 @@ func TestConvolverResetClearsTail(t *testing.T) {
 	}
 }
 
+func TestConvolverLoads96kWavAndResamples(t *testing.T) {
+	const srcRate = 96000
+	const dstRate = 48000
+
+	srcIR := make([]float32, 960)
+	srcIR[0] = 1.0
+	for i := 1; i < len(srcIR); i++ {
+		srcIR[i] = 0.4 * float32(math.Exp(-float64(i)/180.0))
+	}
+
+	path := writeTempIRWav(t, srcIR, nil, srcRate)
+
+	c := NewSoundboardConvolver(dstRate)
+	if err := c.SetIRFromWAV(path); err != nil {
+		t.Fatalf("SetIRFromWAV error: %v", err)
+	}
+
+	r, err := dspresample.NewForRates(float64(srcRate), float64(dstRate), dspresample.WithQuality(dspresample.QualityBest))
+	if err != nil {
+		t.Fatalf("resampler error: %v", err)
+	}
+	src64 := make([]float64, len(srcIR))
+	for i, v := range srcIR {
+		src64[i] = float64(v)
+	}
+	want64 := r.Process(src64)
+
+	input := make([]float32, len(want64)+64)
+	input[0] = 1
+	out := c.Process(input)
+	gotL := make([]float32, len(input))
+	for i := range gotL {
+		gotL[i] = out[i*2]
+	}
+
+	for i := 0; i < len(want64) && i < len(gotL); i++ {
+		if math.Abs(float64(gotL[i]-float32(want64[i]))) > 2e-3 {
+			t.Fatalf("resampled IR mismatch at %d: got=%f want=%f", i, gotL[i], want64[i])
+		}
+	}
+}
+
+func TestConvolverLoadsMonoWavAsDualMono(t *testing.T) {
+	srcIR := []float32{1.0, 0.6, 0.3, 0.15, 0.08, 0.03}
+	path := writeTempIRWav(t, srcIR, nil, 96000)
+
+	c := NewSoundboardConvolver(48000)
+	if err := c.SetIRFromWAV(path); err != nil {
+		t.Fatalf("SetIRFromWAV error: %v", err)
+	}
+
+	input := make([]float32, 256)
+	input[0] = 1
+	out := c.Process(input)
+	for i := 0; i < len(input); i++ {
+		l := out[i*2]
+		r := out[i*2+1]
+		if math.Abs(float64(l-r)) > 1e-6 {
+			t.Fatalf("expected dual mono output at sample %d, got L=%f R=%f", i, l, r)
+		}
+	}
+}
+
 func TestAlgoFFTConvolveRealMatchesDirect(t *testing.T) {
 	a := []float32{1, 2, 3, 4, 5}
 	b := []float32{0.5, -0.25, 0.125}
@@ -553,4 +620,46 @@ func stereoRMS(interleaved []float32) float64 {
 		sum += v * v
 	}
 	return math.Sqrt(sum / float64(len(interleaved)))
+}
+
+func writeTempIRWav(t *testing.T, left []float32, right []float32, sampleRate int) string {
+	t.Helper()
+	f, err := os.CreateTemp("", "ir-*.wav")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer f.Close()
+
+	numCh := 1
+	data := make([]float32, len(left))
+	copy(data, left)
+	if right != nil {
+		numCh = 2
+		if len(right) != len(left) {
+			t.Fatalf("left/right length mismatch")
+		}
+		data = make([]float32, len(left)*2)
+		for i := range left {
+			data[i*2] = left[i]
+			data[i*2+1] = right[i]
+		}
+	}
+
+	enc := wav.NewEncoder(f, sampleRate, 16, numCh, 1)
+	buf := &audio.Float32Buffer{
+		Format: &audio.Format{
+			SampleRate:  sampleRate,
+			NumChannels: numCh,
+		},
+		Data:           data,
+		SourceBitDepth: 16,
+	}
+	if err := enc.Write(buf); err != nil {
+		t.Fatalf("wav write: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("wav close: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+	return f.Name()
 }
