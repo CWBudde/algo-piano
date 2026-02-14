@@ -138,7 +138,7 @@ ir-synth output="assets/ir/synth_96k.wav" sample_rate="96000" duration="2.0" mod
         --seed "$seed"
 
 # Fast inner-loop fitting (preset/model params) against C4 reference
-fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" output_preset="assets/presets/fitted-c4.json" time_budget="120" max_evals="10000" mayfly_variant="desma" mayfly_pop="10" mayfly_round_evals="240" report_every="10" checkpoint_every="1" resume="true" write_best_candidate="" seed="1" decay_dbfs="-90" decay_hold_blocks="6" min_duration="2.0" max_duration="30" note="60" sample_rate="48000" resume_report="":
+fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" output_preset="assets/presets/fitted-c4.json" time_budget="120" max_evals="10000" mayfly_variant="desma" mayfly_pop="10" mayfly_round_evals="240" report_every="10" checkpoint_every="1" resume="true" write_best_candidate="" seed="1" decay_dbfs="-90" decay_hold_blocks="6" min_duration="2.0" max_duration="30" note="60" sample_rate="48000" resume_report="" workers="1":
     #!/usr/bin/env bash
     set -euo pipefail
     reference_raw="{{reference}}"
@@ -149,6 +149,7 @@ fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" ou
     mayfly_variant_raw="{{mayfly_variant}}"
     mayfly_pop_raw="{{mayfly_pop}}"
     mayfly_round_evals_raw="{{mayfly_round_evals}}"
+    workers_raw="{{workers}}"
     report_every_raw="{{report_every}}"
     checkpoint_every_raw="{{checkpoint_every}}"
     resume_raw="{{resume}}"
@@ -169,6 +170,7 @@ fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" ou
     mayfly_variant="${mayfly_variant_raw#mayfly_variant=}"
     mayfly_pop="${mayfly_pop_raw#mayfly_pop=}"
     mayfly_round_evals="${mayfly_round_evals_raw#mayfly_round_evals=}"
+    workers="${workers_raw#workers=}"
     report_every="${report_every_raw#report_every=}"
     checkpoint_every="${checkpoint_every_raw#checkpoint_every=}"
     resume="${resume_raw#resume=}"
@@ -189,7 +191,7 @@ fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" ou
     if [ -n "$resume_report" ]; then
         extra_resume_report=(--resume-report "$resume_report")
     fi
-    GOCACHE="${GOCACHE:-/tmp/gocache}" go run ./cmd/piano-fit-fast \
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run -tags asm ./cmd/piano-fit-fast \
         --reference "$reference" \
         --preset "$preset" \
         --output-preset "$output_preset" \
@@ -208,6 +210,7 @@ fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" ou
         --mayfly-variant "$mayfly_variant" \
         --mayfly-pop "$mayfly_pop" \
         --mayfly-round-evals "$mayfly_round_evals" \
+        --workers "$workers" \
         "${extra_resume_report[@]}" \
         "${extra_write_best[@]}"
 
@@ -273,7 +276,7 @@ fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" outp
     if [ -n "$resume_report" ]; then
         extra_resume_report=(--resume-report "$resume_report")
     fi
-    GOCACHE="${GOCACHE:-/tmp/gocache}" go run ./cmd/piano-fit-ir \
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run -tags asm ./cmd/piano-fit-ir \
         --reference "$reference" \
         --preset "$preset" \
         --output-ir "$output_ir" \
