@@ -96,7 +96,7 @@ func wasmLoadIR(this js.Value, args []js.Value) interface{} {
 
 	// Write to temporary file
 	tmpFile := "/tmp/ir.wav"
-	err := os.WriteFile(tmpFile, irData, 0644)
+	err := os.WriteFile(tmpFile, irData, 0o644)
 	if err != nil {
 		println("Failed to write IR file:", err.Error())
 		return nil

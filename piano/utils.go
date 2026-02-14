@@ -59,27 +59,3 @@ func toFloat64(in []float32) []float64 {
 	}
 	return out
 }
-
-func overlapAddBlock(convOut []float64, tail []float64, blockLen int) ([]float64, []float64) {
-	if len(convOut) < blockLen {
-		out := make([]float64, blockLen)
-		copy(out, convOut)
-		return out, nil
-	}
-
-	full := make([]float64, len(convOut))
-	copy(full, convOut)
-	n := len(tail)
-	if n > len(full) {
-		n = len(full)
-	}
-	for i := 0; i < n; i++ {
-		full[i] += tail[i]
-	}
-
-	out := make([]float64, blockLen)
-	copy(out, full[:blockLen])
-	newTail := make([]float64, len(full)-blockLen)
-	copy(newTail, full[blockLen:])
-	return out, newTail
-}

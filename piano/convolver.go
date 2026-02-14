@@ -17,11 +17,12 @@ type SoundboardConvolver struct {
 	partSize   int
 	irLen      int
 
-	leftOLA  *dspconv.OverlapAdd
-	rightOLA *dspconv.OverlapAdd
+	leftOLA  *dspconv.StreamingOverlapAdd
+	rightOLA *dspconv.StreamingOverlapAdd
 
-	tailLeft  []float64
-	tailRight []float64
+	// Pre-allocated buffers for zero-allocation processing
+	leftOut  []float64
+	rightOut []float64
 }
 
 // NewSoundboardConvolver creates a new soundboard convolver.
@@ -41,27 +42,47 @@ func (c *SoundboardConvolver) Process(input []float32) []float32 {
 		return output
 	}
 
+	// Handle arbitrary input lengths by processing in partSize blocks
 	in64 := toFloat64(input)
+	processed := 0
 
-	leftFull, errL := c.leftOLA.Process(in64)
-	rightFull, errR := c.rightOLA.Process(in64)
-	if errL != nil || errR != nil {
-		for i, s := range input {
-			output[i*2] = s
-			output[i*2+1] = s
+	for processed < len(input) {
+		blockEnd := processed + c.partSize
+		if blockEnd > len(input) {
+			blockEnd = len(input)
 		}
-		return output
+		blockLen := blockEnd - processed
+		block := in64[processed:blockEnd]
+
+		// Pad to partSize if needed (for last block)
+		if blockLen < c.partSize {
+			padded := make([]float64, c.partSize)
+			copy(padded, block)
+			block = padded
+		}
+
+		// Process block with zero-allocation streaming convolvers
+		errL := c.leftOLA.ProcessBlockTo(c.leftOut, block)
+		errR := c.rightOLA.ProcessBlockTo(c.rightOut, block)
+		if errL != nil || errR != nil {
+			// Fallback: pass through for this block
+			for i := 0; i < blockLen; i++ {
+				output[(processed+i)*2] = input[processed+i]
+				output[(processed+i)*2+1] = input[processed+i]
+			}
+			processed = blockEnd
+			continue
+		}
+
+		// Interleave stereo output for this block
+		for i := 0; i < blockLen; i++ {
+			output[(processed+i)*2] = float32(c.leftOut[i])
+			output[(processed+i)*2+1] = float32(c.rightOut[i])
+		}
+
+		processed = blockEnd
 	}
 
-	outL, newTailL := overlapAddBlock(leftFull, c.tailLeft, len(input))
-	outR, newTailR := overlapAddBlock(rightFull, c.tailRight, len(input))
-	c.tailLeft = newTailL
-	c.tailRight = newTailR
-
-	for i := 0; i < len(input); i++ {
-		output[i*2] = float32(outL[i])
-		output[i*2+1] = float32(outR[i])
-	}
 	return output
 }
 
@@ -77,8 +98,8 @@ func (c *SoundboardConvolver) SetIR(leftIR []float32, rightIR []float32) {
 	left64 := toFloat64(leftIR)
 	right64 := toFloat64(rightIR)
 
-	leftOLA, errL := dspconv.NewOverlapAdd(left64, c.partSize)
-	rightOLA, errR := dspconv.NewOverlapAdd(right64, c.partSize)
+	leftOLA, errL := dspconv.NewStreamingOverlapAdd(left64, c.partSize)
+	rightOLA, errR := dspconv.NewStreamingOverlapAdd(right64, c.partSize)
 	if errL != nil || errR != nil {
 		return
 	}
@@ -91,6 +112,11 @@ func (c *SoundboardConvolver) SetIR(leftIR []float32, rightIR []float32) {
 	if c.irLen < 1 {
 		c.irLen = 1
 	}
+
+	// Allocate output buffers
+	c.leftOut = make([]float64, c.partSize)
+	c.rightOut = make([]float64, c.partSize)
+
 	c.Reset()
 }
 
@@ -127,13 +153,13 @@ func (c *SoundboardConvolver) SetIRFromWAV(path string) error {
 	left := make([]float32, frames)
 	right := make([]float32, frames)
 	if numCh == 1 {
-		for i := 0; i < frames; i++ {
+		for i := range frames {
 			v := buf.Data[i]
 			left[i] = v
 			right[i] = v
 		}
 	} else {
-		for i := 0; i < frames; i++ {
+		for i := range frames {
 			left[i] = buf.Data[i*numCh]
 			right[i] = buf.Data[i*numCh+1]
 		}
@@ -159,12 +185,6 @@ func (c *SoundboardConvolver) Reset() {
 	if c.rightOLA != nil {
 		c.rightOLA.Reset()
 	}
-	tailLen := c.irLen - 1
-	if tailLen < 0 {
-		tailLen = 0
-	}
-	c.tailLeft = make([]float64, tailLen)
-	c.tailRight = make([]float64, tailLen)
 }
 
 func (c *SoundboardConvolver) resampleIfNeeded(in []float32, inRate int) ([]float32, error) {
