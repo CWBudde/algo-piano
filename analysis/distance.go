@@ -9,8 +9,10 @@ import (
 	algofft "github.com/cwbudde/algo-fft"
 )
 
-var spectralPlanCache sync.Map // map[int]*spectralFFTPlan
-var lagPlanCache sync.Map      // map[int]*lagFFTPlan
+var (
+	spectralPlanCache sync.Map // map[int]*spectralFFTPlan
+	lagPlanCache      sync.Map // map[int]*lagFFTPlan
+)
 
 type spectralFFTPlan struct {
 	mu   sync.Mutex
