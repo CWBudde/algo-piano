@@ -75,6 +75,11 @@ func main() {
 	decayHoldBlocks := flag.Int("decay-hold-blocks", 6, "Consecutive below-threshold blocks for stop")
 	minDuration := flag.Float64("min-duration", 2.0, "Minimum render duration in seconds")
 	maxDuration := flag.Float64("max-duration", 30.0, "Maximum render duration in seconds")
+	optSampleRate := flag.Int("opt-sample-rate", 0, "Optimization-loop sample rate (0 uses --sample-rate)")
+	optMinDuration := flag.Float64("opt-min-duration", -1, "Optimization-loop min render duration seconds (<0 uses --min-duration)")
+	optMaxDuration := flag.Float64("opt-max-duration", -1, "Optimization-loop max render duration seconds (<0 uses --max-duration)")
+	renderBlockSize := flag.Int("render-block-size", 128, "Audio render block size for candidate evaluation")
+	refineTopK := flag.Int("refine-top-k", 3, "After optimization, re-evaluate best N candidates at full settings")
 	topK := flag.Int("top-k", 5, "How many top candidates to keep in report")
 	resume := flag.Bool("resume", true, "Resume from previous best_ir_knobs report when available")
 	resumeReport := flag.String("resume-report", "", "Optional report JSON path to resume from (default: current report path)")
@@ -117,6 +122,27 @@ func main() {
 	if *topK < 1 {
 		*topK = 1
 	}
+	if *optSampleRate <= 0 {
+		*optSampleRate = *sampleRate
+	}
+	if *optMinDuration < 0 {
+		*optMinDuration = *minDuration
+	}
+	if *optMaxDuration < 0 {
+		*optMaxDuration = *maxDuration
+	}
+	if *optMaxDuration < *optMinDuration {
+		*optMaxDuration = *optMinDuration
+	}
+	if *renderBlockSize < 16 {
+		*renderBlockSize = 16
+	}
+	if *refineTopK < 1 {
+		*refineTopK = 1
+	}
+	if *refineTopK > *topK {
+		*refineTopK = *topK
+	}
 	parsedWorkers, err := parseWorkersFlag(*workers)
 	if err != nil {
 		die("invalid workers value: %v", err)
@@ -130,18 +156,22 @@ func main() {
 		baseParams.IRWavPath = piano.DefaultIRWavPath
 	}
 
-	ref, refSR, err := readWAVMono(*referencePath)
+	refRaw, refSR, err := readWAVMono(*referencePath)
 	if err != nil {
 		die("failed to read reference: %v", err)
 	}
-	ref, err = resampleIfNeeded(ref, refSR, *sampleRate)
+	refOpt, err := resampleIfNeeded(refRaw, refSR, *optSampleRate)
 	if err != nil {
-		die("failed to resample reference: %v", err)
+		die("failed to resample optimization reference: %v", err)
+	}
+	refFull, err := resampleIfNeeded(refRaw, refSR, *sampleRate)
+	if err != nil {
+		die("failed to resample full reference: %v", err)
 	}
 
 	defs, initCand := initCandidate(
 		baseParams,
-		*sampleRate,
+		*optSampleRate,
 		*note,
 		*velocity,
 		*releaseAfter,
@@ -166,14 +196,16 @@ func main() {
 	}
 
 	cfg := &optimizationConfig{
-		reference:        ref,
+		reference:        refOpt,
+		finalReference:   refFull,
 		baseParams:       baseParams,
 		defs:             defs,
 		initCandidate:    initCand,
 		note:             *note,
 		baseVelocity:     *velocity,
 		baseReleaseAfter: *releaseAfter,
-		sampleRate:       *sampleRate,
+		sampleRate:       *optSampleRate,
+		finalSampleRate:  *sampleRate,
 		seed:             *seed,
 		timeBudget:       *timeBudget,
 		maxEvals:         *maxEvals,
@@ -181,8 +213,12 @@ func main() {
 		checkpointEvery:  *checkpointEvery,
 		decayDBFS:        *decayDBFS,
 		decayHoldBlocks:  *decayHoldBlocks,
-		minDuration:      *minDuration,
-		maxDuration:      *maxDuration,
+		minDuration:      *optMinDuration,
+		maxDuration:      *optMaxDuration,
+		finalMinDuration: *minDuration,
+		finalMaxDuration: *maxDuration,
+		renderBlockSize:  *renderBlockSize,
+		refineTopK:       *refineTopK,
 		mayflyVariant:    *mayflyVariant,
 		mayflyPop:        *mayflyPop,
 		mayflyRoundEvals: *mayflyRoundEvals,
