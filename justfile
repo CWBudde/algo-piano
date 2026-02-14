@@ -215,7 +215,7 @@ fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" ou
         "${extra_write_best[@]}"
 
 # Slow outer-loop fitting for IR synthesis parameters against C4 reference
-fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" output_ir="assets/ir/fitted/c4-best.wav" output_preset="assets/presets/fitted-c4-ir.json" work_dir="out/ir-fit" time_budget="300" max_evals="10000" mayfly_variant="desma" mayfly_pop="10" mayfly_round_evals="240" report_every="10" checkpoint_every="1" resume="true" seed="1" decay_dbfs="-90" decay_hold_blocks="6" min_duration="2.0" max_duration="30" note="60" sample_rate="48000" velocity="118" release_after="3.5" top_k="5" optimize_ir_mix="false" optimize_joint="false" resume_report="" workers="1":
+fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" output_ir="assets/ir/fitted/c4-best.wav" output_preset="assets/presets/fitted-c4-ir.json" work_dir="out/ir-fit" time_budget="300" max_evals="10000" mayfly_variant="desma" mayfly_pop="10" mayfly_round_evals="240" report_every="10" checkpoint_every="1" resume="true" seed="1" decay_dbfs="-90" decay_hold_blocks="6" min_duration="2.0" max_duration="30" note="60" sample_rate="48000" velocity="118" release_after="3.5" top_k="5" optimize_ir_mix="false" optimize_joint="false" resume_report="" workers="1" opt_sample_rate="0" opt_min_duration="-1" opt_max_duration="-1" render_block_size="128" refine_top_k="3":
     #!/usr/bin/env bash
     set -euo pipefail
     reference_raw="{{reference}}"
@@ -245,6 +245,11 @@ fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" outp
     optimize_joint_raw="{{optimize_joint}}"
     resume_report_raw="{{resume_report}}"
     workers_raw="{{workers}}"
+    opt_sample_rate_raw="{{opt_sample_rate}}"
+    opt_min_duration_raw="{{opt_min_duration}}"
+    opt_max_duration_raw="{{opt_max_duration}}"
+    render_block_size_raw="{{render_block_size}}"
+    refine_top_k_raw="{{refine_top_k}}"
     reference="${reference_raw#reference=}"
     preset="${preset_raw#preset=}"
     output_ir="${output_ir_raw#output_ir=}"
@@ -272,6 +277,11 @@ fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" outp
     optimize_joint="${optimize_joint_raw#optimize_joint=}"
     resume_report="${resume_report_raw#resume_report=}"
     workers="${workers_raw#workers=}"
+    opt_sample_rate="${opt_sample_rate_raw#opt_sample_rate=}"
+    opt_min_duration="${opt_min_duration_raw#opt_min_duration=}"
+    opt_max_duration="${opt_max_duration_raw#opt_max_duration=}"
+    render_block_size="${render_block_size_raw#render_block_size=}"
+    refine_top_k="${refine_top_k_raw#refine_top_k=}"
     mkdir -p "$(dirname "$output_ir")"
     mkdir -p "$work_dir"
     extra_resume_report=()
@@ -294,6 +304,11 @@ fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" outp
         --decay-hold-blocks "$decay_hold_blocks" \
         --min-duration "$min_duration" \
         --max-duration "$max_duration" \
+        --opt-sample-rate "$opt_sample_rate" \
+        --opt-min-duration "$opt_min_duration" \
+        --opt-max-duration "$opt_max_duration" \
+        --render-block-size "$render_block_size" \
+        --refine-top-k "$refine_top_k" \
         --report-every "$report_every" \
         --checkpoint-every "$checkpoint_every" \
         --top-k "$top_k" \

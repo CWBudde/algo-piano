@@ -21,6 +21,7 @@ import (
 
 type optimizationConfig struct {
 	reference        []float64
+	finalReference   []float64
 	baseParams       *piano.Params
 	defs             []knobDef
 	initCandidate    candidate
@@ -28,6 +29,7 @@ type optimizationConfig struct {
 	baseVelocity     int
 	baseReleaseAfter float64
 	sampleRate       int
+	finalSampleRate  int
 	seed             int64
 	timeBudget       float64
 	maxEvals         int
@@ -37,6 +39,10 @@ type optimizationConfig struct {
 	decayHoldBlocks  int
 	minDuration      float64
 	maxDuration      float64
+	finalMinDuration float64
+	finalMaxDuration float64
+	renderBlockSize  int
+	refineTopK       int
 	mayflyVariant    string
 	mayflyPop        int
 	mayflyRoundEvals int
@@ -48,6 +54,16 @@ type optimizationConfig struct {
 	reportPath       string
 	referencePath    string
 	presetPath       string
+}
+
+type evalSettings struct {
+	reference       []float64
+	sampleRate      int
+	minDuration     float64
+	maxDuration     float64
+	decayDBFS       float64
+	decayHoldBlocks int
+	renderBlockSize int
 }
 
 type optimizationEval struct {
@@ -89,10 +105,28 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	start := time.Now()
 	deadline := start.Add(time.Duration(cfg.timeBudget * float64(time.Second)))
 	variant := strings.ToLower(cfg.mayflyVariant)
+	optEvalSettings := evalSettings{
+		reference:       cfg.reference,
+		sampleRate:      cfg.sampleRate,
+		minDuration:     cfg.minDuration,
+		maxDuration:     cfg.maxDuration,
+		decayDBFS:       cfg.decayDBFS,
+		decayHoldBlocks: cfg.decayHoldBlocks,
+		renderBlockSize: cfg.renderBlockSize,
+	}
+	finalEvalSettings := evalSettings{
+		reference:       cfg.finalReference,
+		sampleRate:      cfg.finalSampleRate,
+		minDuration:     cfg.finalMinDuration,
+		maxDuration:     cfg.finalMaxDuration,
+		decayDBFS:       cfg.decayDBFS,
+		decayHoldBlocks: cfg.decayHoldBlocks,
+		renderBlockSize: cfg.renderBlockSize,
+	}
 
 	initialScratch := filepath.Join(cfg.workDir, "candidate_ir_init.wav")
 	best := cloneCandidate(cfg.initCandidate)
-	initialEval, err := evaluateCandidate(cfg, best, initialScratch)
+	initialEval, err := evaluateCandidate(cfg, best, initialScratch, optEvalSettings)
 	if err != nil {
 		return nil, fmt.Errorf("initial evaluation failed: %w", err)
 	}
@@ -111,7 +145,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 			cfg.reportPath,
 			cfg.referencePath,
 			cfg.presetPath,
-			cfg.sampleRate,
+			optEvalSettings.sampleRate,
 			cfg.note,
 			initialEval.velocity,
 			initialEval.releaseAfter,
@@ -183,7 +217,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 					}
 
 					cand := fromNormalized(pos, cfg.defs)
-					evalRes, err := evaluateCandidate(cfg, cand, workerScratch)
+					evalRes, err := evaluateCandidate(cfg, cand, workerScratch, optEvalSettings)
 					if err != nil {
 						return currentBestScore(state) + 0.8
 					}
@@ -228,7 +262,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 									cfg.reportPath,
 									cfg.referencePath,
 									cfg.presetPath,
-									cfg.sampleRate,
+									optEvalSettings.sampleRate,
 									cfg.note,
 									bestEvalSnapshot.velocity,
 									bestEvalSnapshot.releaseAfter,
@@ -278,6 +312,57 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	finalCheckpoints := state.checkpoints
 	state.mu.Unlock()
 
+	refineTopK := cfg.refineTopK
+	if refineTopK < 1 {
+		refineTopK = 1
+	}
+	seen := make(map[string]struct{}, refineTopK)
+	candidates := make([]candidate, 0, refineTopK)
+	addCandidate := func(c candidate) {
+		if len(candidates) >= refineTopK {
+			return
+		}
+		key := candidateKey(c)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, c)
+	}
+	addCandidate(finalBest)
+	for _, entry := range finalTop {
+		if len(candidates) >= refineTopK {
+			break
+		}
+		addCandidate(candidateFromTop(entry, cfg.defs, finalBest))
+	}
+
+	refinedTop := make([]topCandidate, 0, cfg.topK)
+	var refinedBest candidate
+	var refinedEval optimizationEval
+	hasRefinedBest := false
+	for i, cand := range candidates {
+		scratchPath := filepath.Join(cfg.workDir, fmt.Sprintf("candidate_ir_refine_%d.wav", i+1))
+		evalRes, err := evaluateCandidate(cfg, cand, scratchPath, finalEvalSettings)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "refine eval %d failed: %v\n", i+1, err)
+			continue
+		}
+		refinedTop = updateTopCandidates(refinedTop, cfg.topK, i+1, evalRes.metrics, cfg.defs, cand)
+		if !hasRefinedBest || evalRes.metrics.Score < refinedEval.metrics.Score {
+			refinedBest = cloneCandidate(cand)
+			refinedEval = cloneOptimizationEval(evalRes)
+			hasRefinedBest = true
+		}
+	}
+	if hasRefinedBest {
+		finalBest = refinedBest
+		finalEval = refinedEval
+		if len(refinedTop) > 0 {
+			finalTop = refinedTop
+		}
+	}
+
 	return &optimizationResult{
 		best:             finalBest,
 		bestMetrics:      finalEval.metrics,
@@ -293,10 +378,10 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	}, nil
 }
 
-func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchIRPath string) (optimizationEval, error) {
+func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchIRPath string, settings evalSettings) (optimizationEval, error) {
 	irCfg, params, evalVelocity, evalReleaseAfter := applyCandidate(
 		cfg.baseParams,
-		cfg.sampleRate,
+		settings.sampleRate,
 		cfg.note,
 		cfg.baseVelocity,
 		cfg.baseReleaseAfter,
@@ -315,18 +400,19 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchIRPath st
 		params,
 		cfg.note,
 		evalVelocity,
-		cfg.sampleRate,
-		cfg.decayDBFS,
-		cfg.decayHoldBlocks,
-		cfg.minDuration,
-		cfg.maxDuration,
+		settings.sampleRate,
+		settings.decayDBFS,
+		settings.decayHoldBlocks,
+		settings.minDuration,
+		settings.maxDuration,
+		settings.renderBlockSize,
 		evalReleaseAfter,
 	)
 	if err != nil {
 		return optimizationEval{}, err
 	}
 	return optimizationEval{
-		metrics:      analysis.Compare(cfg.reference, mono, cfg.sampleRate),
+		metrics:      analysis.Compare(settings.reference, mono, settings.sampleRate),
 		params:       params,
 		irLeft:       left,
 		irRight:      right,
@@ -366,6 +452,31 @@ func cloneTopCandidates(in []topCandidate) []topCandidate {
 		out[i] = entry
 	}
 	return out
+}
+
+func candidateFromTop(entry topCandidate, defs []knobDef, fallback candidate) candidate {
+	vals := make([]float64, len(fallback.Vals))
+	copy(vals, fallback.Vals)
+	for i, d := range defs {
+		if v, ok := entry.Knobs[d.Name]; ok {
+			vals[i] = clamp(v, d.Min, d.Max)
+			if d.IsInt {
+				vals[i] = math.Round(vals[i])
+			}
+		}
+	}
+	return candidate{Vals: vals}
+}
+
+func candidateKey(c candidate) string {
+	var b strings.Builder
+	for i, v := range c.Vals {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "%.6g", v)
+	}
+	return b.String()
 }
 
 func reserveEval(evals *int64, maxEvals int) (int64, bool) {
@@ -442,6 +553,7 @@ func renderCandidateFromParams(
 	decayHoldBlocks int,
 	minDuration float64,
 	maxDuration float64,
+	blockSize int,
 	releaseAfter float64,
 ) ([]float64, []float32, error) {
 	if params == nil {
@@ -471,7 +583,9 @@ func renderCandidateFromParams(
 	}
 
 	threshold := math.Pow(10.0, decayDBFS/20.0)
-	blockSize := 128
+	if blockSize < 16 {
+		blockSize = 16
+	}
 	framesRendered := 0
 	belowCount := 0
 	noteReleased := false
