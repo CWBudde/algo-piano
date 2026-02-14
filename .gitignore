@@ -1,11 +1,13 @@
 # Binaries
 bin/
 piano-render
+piano-fit-fast
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
+*.test
 !piano-render/
 
 # Test output
@@ -34,8 +36,15 @@ Thumbs.db
 # Project-specific
 assets/ir/*.wav.old
 assets/presets/*.json.old
+assets/presets/fitted-*.json
+assets/presets/*.report.json
 # keep IRs themselves as they are assets (or ignore if they are huge and managed via LFS/externals)
 # assets/ir/
+
+# Profiling data
+*.prof
+cpu.prof
+mem.prof
 
 # Web demo build artifacts
 web/dist/
