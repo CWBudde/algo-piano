@@ -6,6 +6,8 @@ github.com/cucumber/messages/go/v21 v21.0.1 h1:wzA0LxwjlWQYZd32VTlAVDTkW6inOFmSM
 github.com/cucumber/messages/go/v21 v21.0.1/go.mod h1:zheH/2HS9JLVFukdrsPWoPdmUtmYQAQPLk7w5vWsk5s=
 github.com/cwbudde/algo-approx v0.1.0 h1:0i+ogADelGMNKx82mOes80ikmdA8SNdSM5UDJ27G/TY=
 github.com/cwbudde/algo-approx v0.1.0/go.mod h1:Bz0OrNQt5WJFTjbrOrNjg1JOZCPDZsjfSYfkSmBeNUc=
+github.com/cwbudde/algo-dsp v0.4.0 h1:0qXkIpI0VYTwTfxM6xSDVvovtRmHp9Q4DIKjElvSIKo=
+github.com/cwbudde/algo-dsp v0.4.0/go.mod h1:cDRwoYw/6i3QKFLXDUuZa2AqeMnzb0u7Yn+nZV6Tl4U=
 github.com/cwbudde/algo-fft v0.6.10 h1:xEtl2oHC3SQjGwzu/bdecLEw50hJYF9brhcFuUHQ2I8=
 github.com/cwbudde/algo-fft v0.6.10/go.mod h1:H5rJ7JNXvhe3kT4yc41TJB9DEnO7KlhHN7toLO+ZZXU=
 github.com/cwbudde/algo-pde v0.1.0 h1:KCIetossSacVKKrqorVHUIEkhda1gCBnKzWdHR0uRkQ=

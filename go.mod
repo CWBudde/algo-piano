@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/cwbudde/algo-approx v0.1.0
-	github.com/cwbudde/algo-dsp v0.3.0
+	github.com/cwbudde/algo-dsp v0.4.0
 	github.com/cwbudde/algo-fft v0.6.10
 	github.com/cwbudde/algo-pde v0.1.0
 	github.com/cwbudde/mayfly v0.1.0
@@ -17,5 +17,3 @@ require (
 	github.com/go-audio/riff v1.0.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 )
-
-replace github.com/cwbudde/algo-dsp => ../algo-dsp
