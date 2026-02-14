@@ -2,6 +2,7 @@
 bin/
 piano-render
 piano-fit-fast
+!piano-fit-fast/
 *.exe
 *.exe~
 *.dll

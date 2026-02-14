@@ -6,15 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"math"
-	"math/rand"
 	"os"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/cwbudde/algo-piano/analysis"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
-	"github.com/cwbudde/mayfly"
 )
 
 type knobDef struct {
@@ -44,147 +42,6 @@ type runReport struct {
 	CheckpointCount int                `json:"checkpoint_count"`
 }
 
-type optimizationConfig struct {
-	reference          []float64
-	baseParams         *piano.Params
-	defs               []knobDef
-	initCandidate      candidate
-	note               int
-	sampleRate         int
-	seed               int64
-	timeBudget         float64
-	maxEvals           int
-	reportEvery        int
-	checkpointEvery    int
-	decayDBFS          float64
-	decayHoldBlocks    int
-	minDuration        float64
-	maxDuration        float64
-	mayflyVariant      string
-	mayflyPop          int
-	mayflyRoundEvals   int
-	outputPreset       string
-	reportPath         string
-	referencePath      string
-	presetPath         string
-	writeBestCandidate string
-}
-
-type optimizationResult struct {
-	best        candidate
-	bestMetrics analysis.Metrics
-	evals       int
-	elapsed     float64
-	checkpoints int
-}
-
-func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
-	evaluate := func(c candidate) (analysis.Metrics, error) {
-		p, velocity, releaseAfter := applyCandidate(cfg.baseParams, cfg.note, cfg.defs, c)
-		mono, _, err := renderCandidateFromParams(
-			p,
-			cfg.note,
-			velocity,
-			cfg.sampleRate,
-			cfg.decayDBFS,
-			cfg.decayHoldBlocks,
-			cfg.minDuration,
-			cfg.maxDuration,
-			releaseAfter,
-		)
-		if err != nil {
-			return analysis.Metrics{}, err
-		}
-		return analysis.Compare(cfg.reference, mono, cfg.sampleRate), nil
-	}
-
-	start := time.Now()
-	deadline := start.Add(time.Duration(cfg.timeBudget * float64(time.Second)))
-	evals := 0
-	bestImproves := 0
-	checkpoints := 0
-
-	best := cfg.initCandidate
-	bestM, err := evaluate(best)
-	if err != nil {
-		return nil, fmt.Errorf("initial evaluation failed: %w", err)
-	}
-	evals++
-	fmt.Printf("Start score=%.4f similarity=%.2f%%\n", bestM.Score, bestM.Similarity*100.0)
-
-	round := 0
-	for evals < cfg.maxEvals && time.Now().Before(deadline) {
-		round++
-		remaining := cfg.maxEvals - evals
-		budget := minInt(cfg.mayflyRoundEvals, remaining)
-		iters := maxInt(1, budget/(2*cfg.mayflyPop))
-
-		mayflyConfig, err := newMayflyConfig(strings.ToLower(cfg.mayflyVariant), cfg.mayflyPop, len(cfg.defs), iters)
-		if err != nil {
-			return nil, fmt.Errorf("invalid mayfly variant: %w", err)
-		}
-		mayflyConfig.Rand = rand.New(rand.NewSource(cfg.seed + int64(round)*7919))
-
-		mayflyConfig.ObjectiveFunc = func(pos []float64) float64 {
-			if evals >= cfg.maxEvals || time.Now().After(deadline) {
-				return bestM.Score + 1.0
-			}
-			cand := fromNormalized(pos, cfg.defs)
-			m, err := evaluate(cand)
-			evals++
-			if err != nil {
-				return bestM.Score + 0.8
-			}
-			if m.Score < bestM.Score {
-				best = cand
-				bestM = m
-				bestImproves++
-				fmt.Printf("Improved #%d eval=%d score=%.4f sim=%.2f%%\n", bestImproves, evals, bestM.Score, bestM.Similarity*100.0)
-				if cfg.writeBestCandidate != "" {
-					if err := writeBestCandidateSnapshot(
-						cfg.writeBestCandidate,
-						cfg.baseParams,
-						cfg.note,
-						cfg.defs,
-						best,
-						cfg.sampleRate,
-						cfg.decayDBFS,
-						cfg.decayHoldBlocks,
-						cfg.minDuration,
-						cfg.maxDuration,
-					); err != nil {
-						fmt.Fprintf(os.Stderr, "failed to update best candidate wav: %v\n", err)
-					}
-				}
-				if bestImproves%cfg.checkpointEvery == 0 {
-					if err := writeOutputs(cfg.outputPreset, cfg.reportPath, cfg.referencePath, cfg.presetPath, cfg.sampleRate, cfg.note, time.Since(start).Seconds(), evals, strings.ToLower(cfg.mayflyVariant), cfg.defs, best, bestM, cfg.baseParams, checkpoints+1); err != nil {
-						fmt.Fprintf(os.Stderr, "checkpoint write failed: %v\n", err)
-					} else {
-						checkpoints++
-					}
-				}
-			}
-			if evals%cfg.reportEvery == 0 {
-				fmt.Printf("Progress round=%d eval=%d elapsed=%.1fs best=%.4f\n", round, evals, time.Since(start).Seconds(), bestM.Score)
-			}
-			return m.Score
-		}
-
-		if _, err := runMayfly(mayflyConfig); err != nil {
-			fmt.Fprintf(os.Stderr, "mayfly round %d failed: %v\n", round, err)
-			continue
-		}
-	}
-
-	return &optimizationResult{
-		best:        best,
-		bestMetrics: bestM,
-		evals:       evals,
-		elapsed:     time.Since(start).Seconds(),
-		checkpoints: checkpoints,
-	}, nil
-}
-
 func main() {
 	referencePath := flag.String("reference", "reference/c4.wav", "Reference WAV path")
 	presetPath := flag.String("preset", "assets/presets/default.json", "Base preset JSON path")
@@ -208,6 +65,7 @@ func main() {
 	mayflyVariant := flag.String("mayfly-variant", "desma", "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
 	mayflyPop := flag.Int("mayfly-pop", 10, "Male and female population size per Mayfly run")
 	mayflyRoundEvals := flag.Int("mayfly-round-evals", 240, "Target eval budget per Mayfly round")
+	workers := flag.String("workers", "1", "Parallel optimization workers running independent Mayfly rounds (number or 'auto')")
 	flag.Parse()
 
 	if *maxEvals < 1 {
@@ -227,6 +85,10 @@ func main() {
 	}
 	if *mayflyRoundEvals < *mayflyPop*2 {
 		*mayflyRoundEvals = *mayflyPop * 2
+	}
+	parsedWorkers, err := parseWorkersFlag(*workers)
+	if err != nil {
+		die("invalid workers value: %v", err)
 	}
 
 	baseParams, err := preset.LoadJSON(*presetPath)
@@ -283,6 +145,7 @@ func main() {
 		mayflyVariant:      *mayflyVariant,
 		mayflyPop:          *mayflyPop,
 		mayflyRoundEvals:   *mayflyRoundEvals,
+		workers:            parsedWorkers,
 		outputPreset:       *outputPreset,
 		reportPath:         *reportPath,
 		referencePath:      *referencePath,
@@ -319,47 +182,22 @@ func main() {
 	fmt.Printf("Done evals=%d elapsed=%.1fs best_score=%.4f best_similarity=%.2f%% variant=%s\n", result.evals, result.elapsed, result.bestMetrics.Score, result.bestMetrics.Similarity*100.0, strings.ToLower(*mayflyVariant))
 }
 
-func newMayflyConfig(variant string, pop int, dims int, iters int) (*mayfly.Config, error) {
-	var cfg *mayfly.Config
-	switch variant {
-	case "ma":
-		cfg = mayfly.NewDefaultConfig()
-	case "desma":
-		cfg = mayfly.NewDESMAConfig()
-	case "olce":
-		cfg = mayfly.NewOLCEConfig()
-	case "eobbma":
-		cfg = mayfly.NewEOBBMAConfig()
-	case "gsasma":
-		cfg = mayfly.NewGSASMAConfig()
-	case "mpma":
-		cfg = mayfly.NewMPMAConfig()
-	case "aoblmoa":
-		cfg = mayfly.NewAOBLMOAConfig()
-	default:
-		return nil, fmt.Errorf("unsupported variant %q", variant)
+func parseWorkersFlag(raw string) (int, error) {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	if v == "" {
+		return 0, fmt.Errorf("empty value (use integer >= 1 or 'auto')")
 	}
-	cfg.ProblemSize = dims
-	cfg.LowerBound = 0.0
-	cfg.UpperBound = 1.0
-	cfg.MaxIterations = iters
-	cfg.NPop = pop
-	cfg.NPopF = pop
-	// Mayfly's implementation assumes NC/2 parent pairs are available from both
-	// male and female populations.
-	cfg.NC = 2 * pop
-	// Keep at least one mutation to avoid stalling on small populations.
-	cfg.NM = maxInt(1, int(math.Round(0.05*float64(pop))))
-	return cfg, nil
-}
-
-func runMayfly(cfg *mayfly.Config) (_ *mayfly.Result, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("mayfly panic: %v", r)
-		}
-	}()
-	return mayfly.Optimize(cfg)
+	if v == "auto" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%q (use integer >= 1 or 'auto')", raw)
+	}
+	if n < 1 {
+		return 0, fmt.Errorf("%d (must be >= 1 or 'auto')", n)
+	}
+	return n, nil
 }
 
 func loadCandidateFromReport(path string, defs []knobDef, fallback candidate) (candidate, bool, error) {
