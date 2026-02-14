@@ -17,12 +17,12 @@ type SoundboardConvolver struct {
 	partSize   int
 	irLen      int
 
-	leftOLA  *dspconv.StreamingOverlapAdd
-	rightOLA *dspconv.StreamingOverlapAdd
+	leftOLA  *dspconv.StreamingOverlapAddT[float32, complex64]
+	rightOLA *dspconv.StreamingOverlapAddT[float32, complex64]
 
 	// Pre-allocated buffers for zero-allocation processing
-	leftOut  []float64
-	rightOut []float64
+	leftOut  []float32
+	rightOut []float32
 }
 
 // NewSoundboardConvolver creates a new soundboard convolver.
@@ -43,7 +43,6 @@ func (c *SoundboardConvolver) Process(input []float32) []float32 {
 	}
 
 	// Handle arbitrary input lengths by processing in partSize blocks
-	in64 := toFloat64(input)
 	processed := 0
 
 	for processed < len(input) {
@@ -52,11 +51,11 @@ func (c *SoundboardConvolver) Process(input []float32) []float32 {
 			blockEnd = len(input)
 		}
 		blockLen := blockEnd - processed
-		block := in64[processed:blockEnd]
+		block := input[processed:blockEnd]
 
 		// Pad to partSize if needed (for last block)
 		if blockLen < c.partSize {
-			padded := make([]float64, c.partSize)
+			padded := make([]float32, c.partSize)
 			copy(padded, block)
 			block = padded
 		}
@@ -76,8 +75,8 @@ func (c *SoundboardConvolver) Process(input []float32) []float32 {
 
 		// Interleave stereo output for this block
 		for i := 0; i < blockLen; i++ {
-			output[(processed+i)*2] = float32(c.leftOut[i])
-			output[(processed+i)*2+1] = float32(c.rightOut[i])
+			output[(processed+i)*2] = c.leftOut[i]
+			output[(processed+i)*2+1] = c.rightOut[i]
 		}
 
 		processed = blockEnd
@@ -95,11 +94,8 @@ func (c *SoundboardConvolver) SetIR(leftIR []float32, rightIR []float32) {
 		rightIR = []float32{1.0}
 	}
 
-	left64 := toFloat64(leftIR)
-	right64 := toFloat64(rightIR)
-
-	leftOLA, errL := dspconv.NewStreamingOverlapAdd(left64, c.partSize)
-	rightOLA, errR := dspconv.NewStreamingOverlapAdd(right64, c.partSize)
+	leftOLA, errL := dspconv.NewStreamingOverlapAdd32(leftIR, c.partSize)
+	rightOLA, errR := dspconv.NewStreamingOverlapAdd32(rightIR, c.partSize)
 	if errL != nil || errR != nil {
 		return
 	}
@@ -114,8 +110,8 @@ func (c *SoundboardConvolver) SetIR(leftIR []float32, rightIR []float32) {
 	}
 
 	// Allocate output buffers
-	c.leftOut = make([]float64, c.partSize)
-	c.rightOut = make([]float64, c.partSize)
+	c.leftOut = make([]float32, c.partSize)
+	c.rightOut = make([]float32, c.partSize)
 
 	c.Reset()
 }
