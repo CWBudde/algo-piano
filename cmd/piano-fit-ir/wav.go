@@ -10,8 +10,8 @@ func resampleIfNeeded(in []float64, fromRate int, toRate int) ([]float64, error)
 	return fitcommon.ResampleIfNeeded(in, fromRate, toRate)
 }
 
-func writeStereoWAV(path string, samples []float32, sampleRate int) error {
-	return fitcommon.WriteStereoInterleavedWAV(path, samples, sampleRate)
+func writeStereoWAV(path string, left []float32, right []float32, sampleRate int) error {
+	return fitcommon.WriteStereoWAVLR(path, left, right, sampleRate)
 }
 
 func stereoToMono64(st []float32) []float64 {

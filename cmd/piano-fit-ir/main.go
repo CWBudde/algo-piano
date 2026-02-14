@@ -6,22 +6,15 @@ import (
 	"flag"
 	"fmt"
 	"math"
-	"math/rand"
 	"os"
-	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
-	"time"
 
-	dspresample "github.com/cwbudde/algo-dsp/dsp/resample"
 	"github.com/cwbudde/algo-piano/analysis"
+	fitcommon "github.com/cwbudde/algo-piano/internal/fitcommon"
 	"github.com/cwbudde/algo-piano/irsynth"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
-	"github.com/cwbudde/mayfly"
-	"github.com/cwbudde/wav"
-	"github.com/go-audio/audio"
 )
 
 type knobDef struct {
@@ -87,6 +80,7 @@ func main() {
 	resumeReport := flag.String("resume-report", "", "Optional report JSON path to resume from (default: current report path)")
 	optimizeIRMix := flag.Bool("optimize-ir-mix", false, "Also optimize ir_wet_mix/ir_dry_mix/ir_gain")
 	optimizeJoint := flag.Bool("optimize-joint", false, "Jointly optimize selected non-IR piano knobs with IR knobs")
+	workers := flag.String("workers", "1", "Parallel optimization workers running independent Mayfly rounds (number or 'auto')")
 
 	mayflyVariant := flag.String("mayfly-variant", "desma", "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
 	mayflyPop := flag.Int("mayfly-pop", 10, "Male and female population size per Mayfly run")
@@ -123,6 +117,10 @@ func main() {
 	if *topK < 1 {
 		*topK = 1
 	}
+	parsedWorkers, err := parseWorkersFlag(*workers)
+	if err != nil {
+		die("invalid workers value: %v", err)
+	}
 
 	baseParams, err := preset.LoadJSON(*presetPath)
 	if err != nil {
@@ -140,11 +138,6 @@ func main() {
 	if err != nil {
 		die("failed to resample reference: %v", err)
 	}
-
-	if err := os.MkdirAll(*workDir, 0o755); err != nil {
-		die("failed to create work-dir: %v", err)
-	}
-	scratchIRPath := filepath.Join(*workDir, "candidate_ir.wav")
 
 	defs, initCand := initCandidate(
 		baseParams,
@@ -172,163 +165,42 @@ func main() {
 		}
 	}
 
-	evaluate := func(c candidate) (analysis.Metrics, *piano.Params, []float32, []float32, int, float64, error) {
-		cfg, params, evalVelocity, evalReleaseAfter := applyCandidate(
-			baseParams,
-			*sampleRate,
-			*note,
-			*velocity,
-			*releaseAfter,
-			defs,
-			c,
-		)
-		left, right, err := irsynth.GenerateStereo(cfg)
-		if err != nil {
-			return analysis.Metrics{}, nil, nil, nil, 0, 0, err
-		}
-		if err := writeStereoWAV(scratchIRPath, left, right, cfg.SampleRate); err != nil {
-			return analysis.Metrics{}, nil, nil, nil, 0, 0, err
-		}
-		params.IRWavPath = scratchIRPath
-		mono, _, err := renderCandidateFromParams(
-			params,
-			*note,
-			evalVelocity,
-			*sampleRate,
-			*decayDBFS,
-			*decayHoldBlocks,
-			*minDuration,
-			*maxDuration,
-			evalReleaseAfter,
-		)
-		if err != nil {
-			return analysis.Metrics{}, nil, nil, nil, 0, 0, err
-		}
-		return analysis.Compare(ref, mono, *sampleRate), params, left, right, evalVelocity, evalReleaseAfter, nil
+	cfg := &optimizationConfig{
+		reference:        ref,
+		baseParams:       baseParams,
+		defs:             defs,
+		initCandidate:    initCand,
+		note:             *note,
+		baseVelocity:     *velocity,
+		baseReleaseAfter: *releaseAfter,
+		sampleRate:       *sampleRate,
+		seed:             *seed,
+		timeBudget:       *timeBudget,
+		maxEvals:         *maxEvals,
+		reportEvery:      *reportEvery,
+		checkpointEvery:  *checkpointEvery,
+		decayDBFS:        *decayDBFS,
+		decayHoldBlocks:  *decayHoldBlocks,
+		minDuration:      *minDuration,
+		maxDuration:      *maxDuration,
+		mayflyVariant:    *mayflyVariant,
+		mayflyPop:        *mayflyPop,
+		mayflyRoundEvals: *mayflyRoundEvals,
+		workers:          parsedWorkers,
+		topK:             *topK,
+		workDir:          *workDir,
+		outputIR:         *outputIR,
+		outputPreset:     *outputPreset,
+		reportPath:       *reportPath,
+		referencePath:    *referencePath,
+		presetPath:       *presetPath,
 	}
 
-	start := time.Now()
-	deadline := start.Add(time.Duration(*timeBudget * float64(time.Second)))
-	evals := 0
-	bestImproves := 0
-	checkpoints := 0
-	top := make([]topCandidate, 0, *topK)
-
-	best := initCand
-	bestM, bestParams, bestIRL, bestIRR, bestVelocity, bestReleaseAfter, err := evaluate(best)
+	result, err := runOptimization(cfg)
 	if err != nil {
-		die("initial evaluation failed: %v", err)
-	}
-	evals++
-	top = updateTopCandidates(top, *topK, evals, bestM, defs, best)
-	fmt.Printf("Start score=%.4f similarity=%.2f%%\n", bestM.Score, bestM.Similarity*100.0)
-
-	if _, err := os.Stat(*outputIR); err != nil && errors.Is(err, os.ErrNotExist) {
-		if err := writeOutputs(
-			*outputIR,
-			*outputPreset,
-			*reportPath,
-			*referencePath,
-			*presetPath,
-			*sampleRate,
-			*note,
-			bestVelocity,
-			bestReleaseAfter,
-			time.Since(start).Seconds(),
-			evals,
-			strings.ToLower(*mayflyVariant),
-			defs,
-			best,
-			bestM,
-			bestParams,
-			bestIRL,
-			bestIRR,
-			checkpoints,
-			top,
-		); err != nil {
-			fmt.Fprintf(os.Stderr, "initial write failed: %v\n", err)
-		}
+		die("optimization failed: %v", err)
 	}
 
-	round := 0
-	for evals < *maxEvals && time.Now().Before(deadline) {
-		round++
-		remaining := *maxEvals - evals
-		budget := minInt(*mayflyRoundEvals, remaining)
-		iters := maxInt(1, budget/(2*(*mayflyPop)))
-
-		cfg, err := newMayflyConfig(strings.ToLower(*mayflyVariant), *mayflyPop, len(defs), iters)
-		if err != nil {
-			die("invalid mayfly variant: %v", err)
-		}
-		cfg.Rand = rand.New(rand.NewSource(*seed + int64(round)*7919))
-
-		cfg.ObjectiveFunc = func(pos []float64) float64 {
-			if evals >= *maxEvals || time.Now().After(deadline) {
-				return bestM.Score + 1.0
-			}
-			cand := fromNormalized(pos, defs)
-			m, params, left, right, evalVelocity, evalReleaseAfter, err := evaluate(cand)
-			evals++
-			if err != nil {
-				return bestM.Score + 0.8
-			}
-
-			top = updateTopCandidates(top, *topK, evals, m, defs, cand)
-
-			if m.Score < bestM.Score {
-				best = cand
-				bestM = m
-				bestParams = params
-				bestVelocity = evalVelocity
-				bestReleaseAfter = evalReleaseAfter
-				bestIRL = append(bestIRL[:0], left...)
-				bestIRR = append(bestIRR[:0], right...)
-				bestImproves++
-				fmt.Printf("Improved #%d eval=%d score=%.4f sim=%.2f%%\n", bestImproves, evals, bestM.Score, bestM.Similarity*100.0)
-				if bestImproves%*checkpointEvery == 0 {
-					if err := writeOutputs(
-						*outputIR,
-						*outputPreset,
-						*reportPath,
-						*referencePath,
-						*presetPath,
-						*sampleRate,
-						*note,
-						bestVelocity,
-						bestReleaseAfter,
-						time.Since(start).Seconds(),
-						evals,
-						strings.ToLower(*mayflyVariant),
-						defs,
-						best,
-						bestM,
-						bestParams,
-						bestIRL,
-						bestIRR,
-						checkpoints+1,
-						top,
-					); err != nil {
-						fmt.Fprintf(os.Stderr, "checkpoint write failed: %v\n", err)
-					} else {
-						checkpoints++
-					}
-				}
-			}
-
-			if evals%*reportEvery == 0 {
-				fmt.Printf("Progress round=%d eval=%d elapsed=%.1fs best=%.4f\n", round, evals, time.Since(start).Seconds(), bestM.Score)
-			}
-			return m.Score
-		}
-
-		if _, err := runMayfly(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "mayfly round %d failed: %v\n", round, err)
-			continue
-		}
-	}
-
-	elapsed := time.Since(start).Seconds()
 	if err := writeOutputs(
 		*outputIR,
 		*outputPreset,
@@ -337,24 +209,28 @@ func main() {
 		*presetPath,
 		*sampleRate,
 		*note,
-		bestVelocity,
-		bestReleaseAfter,
-		elapsed,
-		evals,
+		result.bestVelocity,
+		result.bestReleaseAfter,
+		result.elapsed,
+		result.evals,
 		strings.ToLower(*mayflyVariant),
 		defs,
-		best,
-		bestM,
-		bestParams,
-		bestIRL,
-		bestIRR,
-		checkpoints,
-		top,
+		result.best,
+		result.bestMetrics,
+		result.bestParams,
+		result.bestIRL,
+		result.bestIRR,
+		result.checkpoints,
+		result.top,
 	); err != nil {
 		die("failed to write outputs: %v", err)
 	}
 
-	fmt.Printf("Done evals=%d elapsed=%.1fs best_score=%.4f best_similarity=%.2f%% variant=%s\n", evals, elapsed, bestM.Score, bestM.Similarity*100.0, strings.ToLower(*mayflyVariant))
+	fmt.Printf("Done evals=%d elapsed=%.1fs best_score=%.4f best_similarity=%.2f%% variant=%s\n", result.evals, result.elapsed, result.bestMetrics.Score, result.bestMetrics.Similarity*100.0, strings.ToLower(*mayflyVariant))
+}
+
+func parseWorkersFlag(raw string) (int, error) {
+	return fitcommon.ParseWorkers(raw)
 }
 
 func initCandidate(
@@ -543,69 +419,6 @@ func updateTopCandidates(top []topCandidate, topK int, eval int, metrics analysi
 	return top
 }
 
-func writeOutputs(
-	outputIR string,
-	outputPreset string,
-	reportPath string,
-	referencePath string,
-	presetPath string,
-	sampleRate int,
-	note int,
-	velocity int,
-	releaseAfter float64,
-	elapsed float64,
-	evals int,
-	variant string,
-	defs []knobDef,
-	best candidate,
-	bestM analysis.Metrics,
-	bestParams *piano.Params,
-	bestIRL []float32,
-	bestIRR []float32,
-	checkpoints int,
-	top []topCandidate,
-) error {
-	if err := writeStereoWAV(outputIR, bestIRL, bestIRR, sampleRate); err != nil {
-		return err
-	}
-
-	p := cloneParams(bestParams)
-	p.IRWavPath = presetIRPath(outputPreset, outputIR)
-	if err := writePresetJSON(outputPreset, p); err != nil {
-		return err
-	}
-
-	knobs := make(map[string]float64, len(defs))
-	for i, d := range defs {
-		knobs[d.Name] = best.Vals[i]
-	}
-
-	rep := runReport{
-		ReferencePath:   referencePath,
-		PresetPath:      presetPath,
-		OutputPreset:    outputPreset,
-		OutputIR:        outputIR,
-		SampleRate:      sampleRate,
-		Note:            note,
-		Velocity:        velocity,
-		ReleaseAfterSec: releaseAfter,
-		DurationSec:     elapsed,
-		Evaluations:     evals,
-		MayflyVariant:   variant,
-		BestScore:       bestM.Score,
-		BestSimilarity:  bestM.Similarity,
-		BestMetrics:     bestM,
-		BestIRKnobs:     knobs,
-		CheckpointCount: checkpoints,
-		TopCandidates:   top,
-	}
-
-	if reportPath == "" {
-		reportPath = outputPreset + ".report.json"
-	}
-	return writeJSON(reportPath, rep)
-}
-
 func loadCandidateFromReport(path string, defs []knobDef, fallback candidate) (candidate, bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -654,369 +467,4 @@ func fromNormalized(pos []float64, defs []knobDef) candidate {
 		vals[i] = v
 	}
 	return candidate{Vals: vals}
-}
-
-func newMayflyConfig(variant string, pop int, dims int, iters int) (*mayfly.Config, error) {
-	var cfg *mayfly.Config
-	switch variant {
-	case "ma":
-		cfg = mayfly.NewDefaultConfig()
-	case "desma":
-		cfg = mayfly.NewDESMAConfig()
-	case "olce":
-		cfg = mayfly.NewOLCEConfig()
-	case "eobbma":
-		cfg = mayfly.NewEOBBMAConfig()
-	case "gsasma":
-		cfg = mayfly.NewGSASMAConfig()
-	case "mpma":
-		cfg = mayfly.NewMPMAConfig()
-	case "aoblmoa":
-		cfg = mayfly.NewAOBLMOAConfig()
-	default:
-		return nil, fmt.Errorf("unsupported variant %q", variant)
-	}
-	cfg.ProblemSize = dims
-	cfg.LowerBound = 0.0
-	cfg.UpperBound = 1.0
-	cfg.MaxIterations = iters
-	cfg.NPop = pop
-	cfg.NPopF = pop
-	cfg.NC = 2 * pop
-	cfg.NM = maxInt(1, int(math.Round(0.05*float64(pop))))
-	return cfg, nil
-}
-
-func runMayfly(cfg *mayfly.Config) (_ *mayfly.Result, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("mayfly panic: %v", r)
-		}
-	}()
-	return mayfly.Optimize(cfg)
-}
-
-func renderCandidateFromParams(
-	params *piano.Params,
-	note int,
-	velocity int,
-	sampleRate int,
-	decayDBFS float64,
-	decayHoldBlocks int,
-	minDuration float64,
-	maxDuration float64,
-	releaseAfter float64,
-) ([]float64, []float32, error) {
-	if params == nil {
-		return nil, nil, errors.New("nil params")
-	}
-	p := piano.NewPiano(sampleRate, 16, params)
-	p.NoteOn(note, velocity)
-
-	if decayHoldBlocks < 1 {
-		decayHoldBlocks = 1
-	}
-	if minDuration < 0 {
-		minDuration = 0
-	}
-	if maxDuration < minDuration {
-		maxDuration = minDuration
-	}
-
-	minFrames := int(float64(sampleRate) * minDuration)
-	maxFrames := int(float64(sampleRate) * maxDuration)
-	releaseAtFrame := int(float64(sampleRate) * releaseAfter)
-	if releaseAtFrame < 0 {
-		releaseAtFrame = 0
-	}
-	if maxFrames < 1 {
-		return nil, nil, errors.New("max duration too small")
-	}
-
-	threshold := math.Pow(10.0, decayDBFS/20.0)
-	blockSize := 128
-	framesRendered := 0
-	belowCount := 0
-	noteReleased := false
-	stereo := make([]float32, 0, maxFrames*2)
-
-	for framesRendered < maxFrames {
-		framesToRender := blockSize
-		if framesRendered+framesToRender > maxFrames {
-			framesToRender = maxFrames - framesRendered
-		}
-		if !noteReleased && framesRendered >= releaseAtFrame {
-			p.NoteOff(note)
-			noteReleased = true
-		}
-		block := p.Process(framesToRender)
-		stereo = append(stereo, block...)
-		framesRendered += framesToRender
-
-		if framesRendered >= minFrames {
-			if stereoRMS(block) < threshold {
-				belowCount++
-				if belowCount >= decayHoldBlocks {
-					break
-				}
-			} else {
-				belowCount = 0
-			}
-		}
-	}
-
-	return stereoToMono64(stereo), stereo, nil
-}
-
-func cloneParams(src *piano.Params) *piano.Params {
-	if src == nil {
-		return piano.NewDefaultParams()
-	}
-	d := *src
-	d.PerNote = make(map[int]*piano.NoteParams, len(src.PerNote))
-	for k, v := range src.PerNote {
-		if v == nil {
-			d.PerNote[k] = nil
-			continue
-		}
-		nv := *v
-		d.PerNote[k] = &nv
-	}
-	return &d
-}
-
-func writePresetJSON(path string, p *piano.Params) error {
-	type noteEntry struct {
-		F0             float32 `json:"f0,omitempty"`
-		Inharmonicity  float32 `json:"inharmonicity,omitempty"`
-		Loss           float32 `json:"loss,omitempty"`
-		StrikePosition float32 `json:"strike_position,omitempty"`
-	}
-	type out struct {
-		OutputGain                 float32              `json:"output_gain,omitempty"`
-		IRWavPath                  string               `json:"ir_wav_path,omitempty"`
-		IRWetMix                   float32              `json:"ir_wet_mix,omitempty"`
-		IRDryMix                   float32              `json:"ir_dry_mix,omitempty"`
-		IRGain                     float32              `json:"ir_gain,omitempty"`
-		ResonanceEnabled           bool                 `json:"resonance_enabled,omitempty"`
-		ResonanceGain              float32              `json:"resonance_gain,omitempty"`
-		ResonancePerNoteFilter     bool                 `json:"resonance_per_note_filter,omitempty"`
-		HammerStiffnessScale       float32              `json:"hammer_stiffness_scale,omitempty"`
-		HammerExponentScale        float32              `json:"hammer_exponent_scale,omitempty"`
-		HammerDampingScale         float32              `json:"hammer_damping_scale,omitempty"`
-		HammerInitialVelocityScale float32              `json:"hammer_initial_velocity_scale,omitempty"`
-		HammerContactTimeScale     float32              `json:"hammer_contact_time_scale,omitempty"`
-		UnisonDetuneScale          float32              `json:"unison_detune_scale,omitempty"`
-		UnisonCrossfeed            float32              `json:"unison_crossfeed,omitempty"`
-		SoftPedalStrikeOffset      float32              `json:"soft_pedal_strike_offset,omitempty"`
-		SoftPedalHardness          float32              `json:"soft_pedal_hardness,omitempty"`
-		PerNote                    map[string]noteEntry `json:"per_note,omitempty"`
-	}
-
-	o := out{
-		OutputGain:                 p.OutputGain,
-		IRWavPath:                  p.IRWavPath,
-		IRWetMix:                   p.IRWetMix,
-		IRDryMix:                   p.IRDryMix,
-		IRGain:                     p.IRGain,
-		ResonanceEnabled:           p.ResonanceEnabled,
-		ResonanceGain:              p.ResonanceGain,
-		ResonancePerNoteFilter:     p.ResonancePerNoteFilter,
-		HammerStiffnessScale:       p.HammerStiffnessScale,
-		HammerExponentScale:        p.HammerExponentScale,
-		HammerDampingScale:         p.HammerDampingScale,
-		HammerInitialVelocityScale: p.HammerInitialVelocityScale,
-		HammerContactTimeScale:     p.HammerContactTimeScale,
-		UnisonDetuneScale:          p.UnisonDetuneScale,
-		UnisonCrossfeed:            p.UnisonCrossfeed,
-		SoftPedalStrikeOffset:      p.SoftPedalStrikeOffset,
-		SoftPedalHardness:          p.SoftPedalHardness,
-		PerNote:                    map[string]noteEntry{},
-	}
-	keys := make([]int, 0, len(p.PerNote))
-	for k := range p.PerNote {
-		keys = append(keys, k)
-	}
-	sort.Ints(keys)
-	for _, k := range keys {
-		np := p.PerNote[k]
-		if np == nil {
-			continue
-		}
-		o.PerNote[strconv.Itoa(k)] = noteEntry{
-			F0:             np.F0,
-			Inharmonicity:  np.Inharmonicity,
-			Loss:           np.Loss,
-			StrikePosition: np.StrikePosition,
-		}
-	}
-	return writeJSON(path, o)
-}
-
-func presetIRPath(presetPath string, irPath string) string {
-	irPath = strings.TrimSpace(irPath)
-	if irPath == "" {
-		return ""
-	}
-
-	presetDir := filepath.Dir(presetPath)
-	presetDirAbs, err := filepath.Abs(presetDir)
-	if err != nil {
-		return irPath
-	}
-
-	irAbs := irPath
-	if !filepath.IsAbs(irAbs) {
-		irAbs, err = filepath.Abs(irAbs)
-		if err != nil {
-			return irPath
-		}
-	}
-
-	rel, err := filepath.Rel(presetDirAbs, irAbs)
-	if err != nil {
-		return irPath
-	}
-	return filepath.ToSlash(rel)
-}
-
-func writeJSON(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	b = append(b, '\n')
-	return os.WriteFile(path, b, 0o644)
-}
-
-func readWAVMono(path string) ([]float64, int, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer f.Close()
-	dec := wav.NewDecoder(f)
-	if !dec.IsValidFile() {
-		return nil, 0, fmt.Errorf("invalid wav file: %s", path)
-	}
-	buf, err := dec.FullPCMBuffer()
-	if err != nil {
-		return nil, 0, err
-	}
-	if buf == nil || buf.Format == nil || buf.Format.NumChannels < 1 {
-		return nil, 0, fmt.Errorf("invalid wav buffer: %s", path)
-	}
-	ch := buf.Format.NumChannels
-	frames := len(buf.Data) / ch
-	out := make([]float64, frames)
-	for i := 0; i < frames; i++ {
-		var sum float64
-		for c := 0; c < ch; c++ {
-			sum += float64(buf.Data[i*ch+c])
-		}
-		out[i] = sum / float64(ch)
-	}
-	return out, buf.Format.SampleRate, nil
-}
-
-func resampleIfNeeded(in []float64, fromRate int, toRate int) ([]float64, error) {
-	if fromRate == toRate {
-		return in, nil
-	}
-	r, err := dspresample.NewForRates(
-		float64(fromRate),
-		float64(toRate),
-		dspresample.WithQuality(dspresample.QualityBest),
-	)
-	if err != nil {
-		return nil, err
-	}
-	return r.Process(in), nil
-}
-
-func writeStereoWAV(path string, left []float32, right []float32, sampleRate int) error {
-	if len(left) != len(right) {
-		return fmt.Errorf("left/right length mismatch")
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	enc := wav.NewEncoder(f, sampleRate, 16, 2, 1)
-	defer enc.Close()
-
-	data := make([]float32, len(left)*2)
-	for i := 0; i < len(left); i++ {
-		data[i*2] = left[i]
-		data[i*2+1] = right[i]
-	}
-	buf := &audio.Float32Buffer{
-		Format: &audio.Format{
-			SampleRate:  sampleRate,
-			NumChannels: 2,
-		},
-		Data:           data,
-		SourceBitDepth: 16,
-	}
-	return enc.Write(buf)
-}
-
-func stereoToMono64(st []float32) []float64 {
-	if len(st) < 2 {
-		return nil
-	}
-	n := len(st) / 2
-	out := make([]float64, n)
-	for i := 0; i < n; i++ {
-		out[i] = 0.5 * (float64(st[i*2]) + float64(st[i*2+1]))
-	}
-	return out
-}
-
-func stereoRMS(interleaved []float32) float64 {
-	if len(interleaved) == 0 {
-		return 0
-	}
-	var sum float64
-	for _, s := range interleaved {
-		v := float64(s)
-		sum += v * v
-	}
-	return math.Sqrt(sum / float64(len(interleaved)))
-}
-
-func clamp(v, lo, hi float64) float64 {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func die(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
-	os.Exit(1)
 }

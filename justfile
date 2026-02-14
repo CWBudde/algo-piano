@@ -215,7 +215,7 @@ fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" ou
         "${extra_write_best[@]}"
 
 # Slow outer-loop fitting for IR synthesis parameters against C4 reference
-fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" output_ir="assets/ir/fitted/c4-best.wav" output_preset="assets/presets/fitted-c4-ir.json" work_dir="out/ir-fit" time_budget="300" max_evals="10000" mayfly_variant="desma" mayfly_pop="10" mayfly_round_evals="240" report_every="10" checkpoint_every="1" resume="true" seed="1" decay_dbfs="-90" decay_hold_blocks="6" min_duration="2.0" max_duration="30" note="60" sample_rate="48000" velocity="118" release_after="3.5" top_k="5" optimize_ir_mix="false" optimize_joint="false" resume_report="":
+fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" output_ir="assets/ir/fitted/c4-best.wav" output_preset="assets/presets/fitted-c4-ir.json" work_dir="out/ir-fit" time_budget="300" max_evals="10000" mayfly_variant="desma" mayfly_pop="10" mayfly_round_evals="240" report_every="10" checkpoint_every="1" resume="true" seed="1" decay_dbfs="-90" decay_hold_blocks="6" min_duration="2.0" max_duration="30" note="60" sample_rate="48000" velocity="118" release_after="3.5" top_k="5" optimize_ir_mix="false" optimize_joint="false" resume_report="" workers="1":
     #!/usr/bin/env bash
     set -euo pipefail
     reference_raw="{{reference}}"
@@ -244,6 +244,7 @@ fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" outp
     optimize_ir_mix_raw="{{optimize_ir_mix}}"
     optimize_joint_raw="{{optimize_joint}}"
     resume_report_raw="{{resume_report}}"
+    workers_raw="{{workers}}"
     reference="${reference_raw#reference=}"
     preset="${preset_raw#preset=}"
     output_ir="${output_ir_raw#output_ir=}"
@@ -270,6 +271,7 @@ fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" outp
     optimize_ir_mix="${optimize_ir_mix_raw#optimize_ir_mix=}"
     optimize_joint="${optimize_joint_raw#optimize_joint=}"
     resume_report="${resume_report_raw#resume_report=}"
+    workers="${workers_raw#workers=}"
     mkdir -p "$(dirname "$output_ir")"
     mkdir -p "$work_dir"
     extra_resume_report=()
@@ -302,4 +304,5 @@ fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" outp
         --mayfly-variant "$mayfly_variant" \
         --mayfly-pop "$mayfly_pop" \
         --mayfly-round-evals "$mayfly_round_evals" \
+        --workers "$workers" \
         "${extra_resume_report[@]}"
