@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/cwbudde/algo-piano/analysis"
+	fitcommon "github.com/cwbudde/algo-piano/internal/fitcommon"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
 )
@@ -183,21 +183,7 @@ func main() {
 }
 
 func parseWorkersFlag(raw string) (int, error) {
-	v := strings.ToLower(strings.TrimSpace(raw))
-	if v == "" {
-		return 0, fmt.Errorf("empty value (use integer >= 1 or 'auto')")
-	}
-	if v == "auto" {
-		return 0, nil
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return 0, fmt.Errorf("%q (use integer >= 1 or 'auto')", raw)
-	}
-	if n < 1 {
-		return 0, fmt.Errorf("%d (must be >= 1 or 'auto')", n)
-	}
-	return n, nil
+	return fitcommon.ParseWorkers(raw)
 }
 
 func loadCandidateFromReport(path string, defs []knobDef, fallback candidate) (candidate, bool, error) {
