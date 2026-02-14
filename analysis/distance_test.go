@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 )
 
@@ -27,6 +28,55 @@ func TestCompareDifferentSignalsHasHigherDistance(t *testing.T) {
 	}
 }
 
+func TestEstimateLagFindsPositiveShift(t *testing.T) {
+	const (
+		n      = 8192
+		shift  = 237
+		maxLag = 600
+	)
+	ref := randomSignal(n, 7)
+	cand := make([]float64, n)
+	copy(cand, ref[shift:])
+
+	got := estimateLag(ref, cand, maxLag)
+	if got != shift {
+		t.Fatalf("estimateLag() = %d, want %d", got, shift)
+	}
+}
+
+func TestEstimateLagFindsNegativeShift(t *testing.T) {
+	const (
+		n      = 8192
+		shift  = -191
+		maxLag = 600
+	)
+	ref := randomSignal(n, 11)
+	cand := make([]float64, n)
+	copy(cand[-shift:], ref)
+
+	got := estimateLag(ref, cand, maxLag)
+	if got != shift {
+		t.Fatalf("estimateLag() = %d, want %d", got, shift)
+	}
+}
+
+func TestEstimateLagFFTMatchesExhaustive(t *testing.T) {
+	const (
+		n      = 16000
+		shift  = 443
+		maxLag = 1000
+	)
+	ref := randomSignal(n, 23)
+	cand := make([]float64, n)
+	copy(cand, ref[shift:])
+
+	got := estimateLag(ref, cand, maxLag)
+	want := estimateLagExhaustive(ref, cand, maxLag)
+	if got != want {
+		t.Fatalf("estimateLag() = %d, exhaustive = %d", got, want)
+	}
+}
+
 func makeDecaySine(sr int, freq float64, durationSec float64, decaySec float64) []float64 {
 	n := int(float64(sr) * durationSec)
 	if n < 1 {
@@ -37,6 +87,15 @@ func makeDecaySine(sr int, freq float64, durationSec float64, decaySec float64) 
 		t := float64(i) / float64(sr)
 		env := math.Exp(-t / decaySec)
 		out[i] = env * math.Sin(2*math.Pi*freq*t)
+	}
+	return out
+}
+
+func randomSignal(n int, seed int64) []float64 {
+	rng := rand.New(rand.NewSource(seed))
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = rng.Float64()*2 - 1
 	}
 	return out
 }
