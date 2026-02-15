@@ -38,6 +38,10 @@ type File struct {
 	HammerContactTimeScale     *float32               `json:"hammer_contact_time_scale"`
 	UnisonDetuneScale          *float32               `json:"unison_detune_scale"`
 	UnisonCrossfeed            *float32               `json:"unison_crossfeed"`
+	CouplingEnabled            *bool                  `json:"coupling_enabled"`
+	CouplingOctaveGain         *float32               `json:"coupling_octave_gain"`
+	CouplingFifthGain          *float32               `json:"coupling_fifth_gain"`
+	CouplingMaxForce           *float32               `json:"coupling_max_force"`
 	SoftPedalStrikeOffset      *float32               `json:"soft_pedal_strike_offset"`
 	SoftPedalHardness          *float32               `json:"soft_pedal_hardness"`
 	PerNote                    map[string]NoteSetting `json:"per_note"`
@@ -201,6 +205,27 @@ func ApplyFile(dst *piano.Params, f *File) error {
 			return fmt.Errorf("unison_crossfeed must be >= 0")
 		}
 		dst.UnisonCrossfeed = *f.UnisonCrossfeed
+	}
+	if f.CouplingEnabled != nil {
+		dst.CouplingEnabled = *f.CouplingEnabled
+	}
+	if f.CouplingOctaveGain != nil {
+		if *f.CouplingOctaveGain < 0 {
+			return fmt.Errorf("coupling_octave_gain must be >= 0")
+		}
+		dst.CouplingOctaveGain = *f.CouplingOctaveGain
+	}
+	if f.CouplingFifthGain != nil {
+		if *f.CouplingFifthGain < 0 {
+			return fmt.Errorf("coupling_fifth_gain must be >= 0")
+		}
+		dst.CouplingFifthGain = *f.CouplingFifthGain
+	}
+	if f.CouplingMaxForce != nil {
+		if *f.CouplingMaxForce <= 0 {
+			return fmt.Errorf("coupling_max_force must be > 0")
+		}
+		dst.CouplingMaxForce = *f.CouplingMaxForce
 	}
 	if f.SoftPedalStrikeOffset != nil {
 		if *f.SoftPedalStrikeOffset < 0 {

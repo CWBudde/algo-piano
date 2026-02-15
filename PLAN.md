@@ -291,58 +291,84 @@ Conventions used in this plan:
 
 ## Phase 9 — Full-instrument ringing architecture (persistent strings + coupling)
 
-This phase implements the structural change needed for realistic sustain-pedal behavior:
+This phase is split into execution subphases to make progress and ownership explicit.
 
-- keep the linear string-ringing model running continuously for the full instrument
-- decouple short nonlinear hammer excitation from long linear ringing
-- introduce explicit inter-string coupling paths for sympathetic resonance
+### Phase 9.1 — Foundation Refactor (completed)
 
-- [ ] Split voice responsibilities: excitation vs ringing
-  - [x] Introduce explicit engine-side components for:
-    - [x] key/voice control state (note on/off, velocity, pedal state)
-    - [x] hammer excitation events (short nonlinear contact window)
-    - [x] persistent ringing state (long-lived string waveguides)
-  - [x] Refactor `Voice` so it no longer owns string lifetime; it should target pre-existing strings.
-  - [x] Keep `Piano.NoteOn/NoteOff/SetSustainPedal` public API unchanged during refactor.
-- [ ] Implement a persistent full-string bank
-  - [ ] Allocate full piano string set at init (1-3 strings per note across the keyboard), independent of active notes.
-  - [ ] Maintain per-string damper state independent from note allocation.
-  - [ ] Keep per-string calibration hooks (detune, loss, inharmonicity, gain, strike position mapping).
-  - [ ] Ensure no per-sample/per-block heap allocations are introduced by the new bank processing path.
-- [ ] Add explicit coupling model for sympathetic resonance
-  - [ ] Replace/augment global resonance injection with a sparse coupling graph between strings.
-  - [ ] Start with harmonic-aware coupling neighborhoods:
-    - [ ] unison/near-unison strings
-    - [ ] octave-related strings
-    - [ ] low-order partial neighbors (optional gated extension)
-  - [ ] Apply coupling primarily at bridge-side injection points with stable gain limits.
-  - [ ] Keep a feature flag or strategy switch to compare new coupling vs current MVP resonance model.
-- [ ] Make sustain/damper semantics instrument-wide
-  - [ ] Sustain pedal down should undamp all strings in the persistent bank (not only currently active voices).
-  - [ ] Note release with sustain down should only stop active excitation; ringing must continue until damping conditions change.
-  - [ ] Sustain pedal up should reapply damping to non-held notes/strings deterministically.
-  - [ ] If partial-pedal behavior is retained, map it to physically meaningful damping coefficients (not time-based note release).
-- [ ] Lock the linear radiation path around the new string-bank output
-  - [ ] Keep signal flow explicit: `string-bank bridge mix -> body IR (mono) -> room IR (stereo)`.
-  - [ ] Ensure body/room separation remains first-class in params and preset loading.
-  - [ ] Preserve legacy single-IR compatibility path only as fallback behavior.
-  - [ ] Complete WASM runtime IR application (`wasmLoadIR`) so web can switch IRs without rebuild.
-- [ ] Web-demo compatibility and migration
-  - [ ] Keep existing JS/WASM note/pedal API stable so UI wiring does not require immediate redesign.
-  - [ ] Remove/retire sustain timer release logic in web layer once engine sustain semantics are instrument-physical.
-  - [ ] Validate that default web demo behavior remains playable with no UI regressions.
-- [ ] Validation, tests, and performance criteria for the new architecture
-  - [ ] Add physics-behavior tests:
-    - [ ] pedal-down strike excites silent, undamped related strings (e.g. octave)
-    - [ ] pedal-up suppresses sympathetic buildup compared to pedal-down
-    - [ ] hammer contact window can end while ringing continues in persistent strings
-  - [ ] Add regression tests for API compatibility and no NaN/Inf under long renders with coupling enabled.
-  - [ ] Add targeted benchmarks:
-    - [ ] idle full-string-bank cost
-    - [ ] active polyphony with coupling on/off
-    - [ ] coupling graph density vs CPU scaling
+- [x] Split responsibilities into explicit components:
+  - [x] key/control state (note on/off, pedal state)
+  - [x] hammer excitation events (short nonlinear contact)
+  - [x] persistent ringing state
+- [x] Refactor away from classical transient voice ownership of string lifetime.
+- [x] Keep `Piano.NoteOn/NoteOff/SetSustainPedal` public API unchanged.
 
-**Done when:** one struck note with sustain down can audibly excite non-struck related strings from the persistent bank, hammer and ringing are architecturally decoupled, body/room IR stages remain cleanly separated, and web/demo APIs remain stable.
+### Phase 9.2 — Persistent String Bank Completion
+
+- [x] Allocate full piano string set at init (1-3 strings per note), independent of active notes.
+- [x] Maintain per-string damper state independent from note allocation.
+- [x] Keep per-string calibration hooks (detune, loss, inharmonicity, gain, strike mapping).
+- [ ] Ensure no per-sample/per-block heap allocations are introduced by the bank processing path.
+
+### Phase 9.3 — Baseline Sparse Coupling (completed MVP)
+
+- [x] Add sparse coupling graph between strings.
+- [x] Implement harmonic neighborhoods:
+  - [x] unison/near-unison family
+  - [x] octave-related neighbors
+  - [x] fifth-related neighbors (coarse consonance proxy)
+- [x] Apply coupling at bridge-side injection points with stable force limits.
+- [x] Add coupling feature switch and gain controls in params/presets.
+
+### Phase 9.4 — Physically-Informed Coupling (general-parameter model)
+
+- [ ] Replace fixed-neighbor gains with a physically-informed weight model based on general parameters.
+- [ ] Define coupling coefficient for source string `i` to target string `j` using:
+  - [ ] overtone strength profile of source string
+  - [ ] frequency alignment between target fundamental and source partials
+  - [ ] approximate inter-string distance penalty
+  - [ ] detune penalty (larger detune => weaker coupling)
+- [ ] Build and persist an approximate string-distance map across the instrument.
+- [ ] Precompute sparse top-K coupling edges from the continuous model (threshold + neighbor cap).
+- [ ] Add normalized energy scaling so coupling remains stable across registers and polyphony.
+- [ ] Add user-facing control extent:
+  - [ ] `coupling_mode`: `off | static | physical`
+  - [ ] `coupling_amount`: scalar `0..1` blend/strength control
+  - [ ] advanced knobs: harmonic falloff, detune sigma, distance exponent, max neighbors
+- [ ] Keep hard safety clamps (`max_force`) and validate numerical stability under stress.
+
+### Phase 9.5 — Instrument Semantics + Radiation + Web Migration
+
+- [ ] Make sustain/damper semantics instrument-wide:
+  - [ ] Sustain pedal down undamps relevant strings in the persistent bank (not just recently struck notes).
+  - [ ] Note release with sustain down stops excitation only; ringing continues until damping changes.
+  - [ ] Sustain pedal up reapplies damping deterministically to non-held strings.
+  - [ ] If partial pedal is supported, map to physical damping coefficients (not timer-based release logic).
+- [ ] Lock linear radiation path around bank output:
+  - [ ] enforce `string-bank bridge mix -> body IR -> room IR`
+  - [ ] keep body/room separation first-class in params/presets
+  - [ ] keep legacy single-IR path as fallback only
+  - [ ] complete WASM runtime IR apply (`wasmLoadIR`)
+- [ ] Web/demo compatibility:
+  - [ ] keep JS/WASM note + pedal API stable
+  - [ ] retire sustain timer release behavior in web layer once physical pedal semantics are active
+  - [ ] verify no UI/playability regressions
+
+### Phase 9.6 — Validation, Calibration, and Performance
+
+- [ ] Add physics-behavior tests:
+  - [ ] pedal-down strike excites silent undamped related strings (octave + non-octave checks)
+  - [ ] pedal-up suppresses sympathetic buildup vs pedal-down
+  - [ ] hammer contact ends while ringing continues
+  - [ ] `coupling_mode` transitions (`off/static/physical`) behave as expected
+  - [ ] detune and distance penalties measurably reduce coupling according to model
+- [ ] Add regression tests for API compatibility and long-render stability (no NaN/Inf).
+- [ ] Add benchmarks:
+  - [ ] idle full-string-bank cost
+  - [ ] active polyphony with coupling `off/static/physical`
+  - [ ] coupling graph density/top-K scaling vs CPU
+- [ ] Define calibration workflow for physical coupling knobs against multi-note recordings.
+
+**Done when:** one struck note with sustain down audibly excites non-struck related strings through the physical coupling model, coupling strength is controllable (`off` to strong) via general parameters, hammer/ringing remain decoupled, and body/room + web compatibility remain intact.
 
 ---
 

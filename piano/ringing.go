@@ -16,6 +16,11 @@ type RingingStringGroup struct {
 	quietBlocks int
 }
 
+type couplingEdge struct {
+	to   int
+	gain float32
+}
+
 func newRingingStringGroup(sampleRate int, note int, params *Params) *RingingStringGroup {
 	lossGain := float32(0.9998)
 	highFreqDamping := float32(0.05)
@@ -152,6 +157,21 @@ func (g *RingingStringGroup) injectHammerForce(force float32, strikePos float32)
 	g.quietBlocks = 0
 }
 
+func (g *RingingStringGroup) injectCouplingForce(force float32) {
+	if force == 0 {
+		return
+	}
+	for i, s := range g.strings {
+		sg := float32(1.0)
+		if i < len(g.gains) {
+			sg = g.gains[i]
+		}
+		s.InjectForceAtPosition(force*sg, 0.9)
+	}
+	g.active = true
+	g.quietBlocks = 0
+}
+
 func (g *RingingStringGroup) processSample(unisonCrossfeed float32) float32 {
 	sample := float32(0)
 	for i, s := range g.strings {
@@ -193,31 +213,80 @@ func (g *RingingStringGroup) endBlock(blockEnergy float64, frames int) bool {
 
 // StringBank owns persistent ringing state for all piano notes.
 type StringBank struct {
-	unisonCrossfeed float32
-	groups          [128]*RingingStringGroup
-	targets         []resonanceTarget
-	active          [128]bool
-	activeNotes     []int
-	blockEnergy     [128]float64
+	unisonCrossfeed  float32
+	couplingEnabled  bool
+	couplingMaxForce float32
+	groups           [128]*RingingStringGroup
+	targets          []resonanceTarget
+	coupling         [128][]couplingEdge
+	active           [128]bool
+	activeNotes      []int
+	blockEnergy      [128]float64
+	sampleOut        [128]float32
 }
 
 func NewStringBank(sampleRate int, params *Params) *StringBank {
 	unisonCrossfeed := float32(0.0008)
+	couplingEnabled := true
+	couplingOctaveGain := float32(0.00018)
+	couplingFifthGain := float32(0.00008)
+	couplingMaxForce := float32(0.00045)
 	if params != nil && params.UnisonCrossfeed >= 0 {
 		unisonCrossfeed = params.UnisonCrossfeed
 	}
+	if params != nil {
+		couplingEnabled = params.CouplingEnabled
+		if params.CouplingOctaveGain >= 0 {
+			couplingOctaveGain = params.CouplingOctaveGain
+		}
+		if params.CouplingFifthGain >= 0 {
+			couplingFifthGain = params.CouplingFifthGain
+		}
+		if params.CouplingMaxForce > 0 {
+			couplingMaxForce = params.CouplingMaxForce
+		}
+	}
 
 	sb := &StringBank{
-		unisonCrossfeed: unisonCrossfeed,
-		targets:         make([]resonanceTarget, 0, 128),
-		activeNotes:     make([]int, 0, 32),
+		unisonCrossfeed:  unisonCrossfeed,
+		couplingEnabled:  couplingEnabled,
+		couplingMaxForce: couplingMaxForce,
+		targets:          make([]resonanceTarget, 0, 128),
+		activeNotes:      make([]int, 0, 32),
 	}
 	for note := 0; note < 128; note++ {
 		g := newRingingStringGroup(sampleRate, note, params)
 		sb.groups[note] = g
 		sb.targets = append(sb.targets, g)
 	}
+	sb.initCouplingGraph(couplingOctaveGain, couplingFifthGain)
 	return sb
+}
+
+func (sb *StringBank) initCouplingGraph(octaveGain float32, fifthGain float32) {
+	for i := range sb.coupling {
+		sb.coupling[i] = sb.coupling[i][:0]
+	}
+	for note := 0; note < 128; note++ {
+		edges := make([]couplingEdge, 0, 4)
+		if octaveGain > 0 {
+			if note+12 <= 127 {
+				edges = append(edges, couplingEdge{to: note + 12, gain: octaveGain})
+			}
+			if note-12 >= 0 {
+				edges = append(edges, couplingEdge{to: note - 12, gain: octaveGain})
+			}
+		}
+		if fifthGain > 0 {
+			if note+7 <= 127 {
+				edges = append(edges, couplingEdge{to: note + 7, gain: fifthGain})
+			}
+			if note-7 >= 0 {
+				edges = append(edges, couplingEdge{to: note - 7, gain: fifthGain})
+			}
+		}
+		sb.coupling[note] = edges
+	}
 }
 
 func (sb *StringBank) Group(note int) *RingingStringGroup {
@@ -264,6 +333,25 @@ func (sb *StringBank) InjectHammerForce(note int, force float32, strikePos float
 	sb.markActive(note)
 }
 
+func (sb *StringBank) InjectCouplingForce(note int, force float32) {
+	if force == 0 {
+		return
+	}
+	if sb.couplingMaxForce > 0 {
+		if force > sb.couplingMaxForce {
+			force = sb.couplingMaxForce
+		} else if force < -sb.couplingMaxForce {
+			force = -sb.couplingMaxForce
+		}
+	}
+	g := sb.Group(note)
+	if g == nil {
+		return
+	}
+	g.injectCouplingForce(force)
+	sb.markActive(note)
+}
+
 func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 	out := make([]float32, numFrames)
 	if numFrames <= 0 {
@@ -288,14 +376,19 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 		}
 		var mix float32
 		for _, note := range sb.activeNotes {
+			sb.sampleOut[note] = 0
 			g := sb.groups[note]
 			if g == nil || !g.active {
 				continue
 			}
 			s := g.processSample(sb.unisonCrossfeed)
+			sb.sampleOut[note] = s
 			mix += s
 			sf := float64(s)
 			sb.blockEnergy[note] += sf * sf
+		}
+		if sb.couplingEnabled {
+			sb.applySparseCoupling()
 		}
 		out[i] = mix
 	}
@@ -317,6 +410,20 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 	sb.activeNotes = next
 
 	return out
+}
+
+func (sb *StringBank) applySparseCoupling() {
+	const eps = 1e-9
+	for _, src := range sb.activeNotes {
+		srcSample := sb.sampleOut[src]
+		if srcSample > -eps && srcSample < eps {
+			continue
+		}
+		edges := sb.coupling[src]
+		for _, e := range edges {
+			sb.InjectCouplingForce(e.to, srcSample*e.gain)
+		}
+	}
 }
 
 type RingingState struct {
