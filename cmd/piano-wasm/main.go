@@ -3,6 +3,7 @@
 package main
 
 import (
+	"strings"
 	"syscall/js"
 	"unsafe"
 
@@ -21,8 +22,10 @@ func main() {
 	// Export functions to JavaScript
 	js.Global().Set("wasmInit", js.FuncOf(wasmInit))
 	js.Global().Set("wasmNoteOn", js.FuncOf(wasmNoteOn))
+	js.Global().Set("wasmKeyDown", js.FuncOf(wasmKeyDown))
 	js.Global().Set("wasmNoteOff", js.FuncOf(wasmNoteOff))
 	js.Global().Set("wasmSetSustain", js.FuncOf(wasmSetSustain))
+	js.Global().Set("wasmSetCouplingMode", js.FuncOf(wasmSetCouplingMode))
 	js.Global().Set("wasmLoadIR", js.FuncOf(wasmLoadIR))
 	js.Global().Set("wasmProcessBlock", js.FuncOf(wasmProcessBlock))
 	js.Global().Set("wasmGetMemoryBuffer", js.FuncOf(wasmGetMemoryBuffer))
@@ -57,6 +60,15 @@ func wasmNoteOn(this js.Value, args []js.Value) interface{} {
 	return nil
 }
 
+func wasmKeyDown(this js.Value, args []js.Value) interface{} {
+	if len(args) < 1 || globalPiano == nil {
+		return nil
+	}
+	note := args[0].Int()
+	globalPiano.KeyDown(note)
+	return nil
+}
+
 func wasmNoteOff(this js.Value, args []js.Value) interface{} {
 	if len(args) < 1 || globalPiano == nil {
 		return nil
@@ -73,6 +85,15 @@ func wasmSetSustain(this js.Value, args []js.Value) interface{} {
 	down := args[0].Bool()
 	globalPiano.SetSustainPedal(down)
 	return nil
+}
+
+func wasmSetCouplingMode(this js.Value, args []js.Value) interface{} {
+	if len(args) < 1 || globalPiano == nil {
+		return false
+	}
+	modeRaw := strings.TrimSpace(strings.ToLower(args[0].String()))
+	mode := piano.CouplingMode(modeRaw)
+	return globalPiano.SetCouplingMode(mode)
 }
 
 func wasmLoadIR(this js.Value, args []js.Value) interface{} {

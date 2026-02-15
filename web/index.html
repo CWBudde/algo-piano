@@ -134,6 +134,16 @@
           </div>
           <div id="sustain-level-value" class="slider-value">50%</div>
         </article>
+
+        <article class="control-card">
+          <h2>Coupling</h2>
+          <select id="coupling-mode" class="coupling-select" aria-label="Coupling mode">
+            <option value="off">Off</option>
+            <option value="static" selected>Static</option>
+            <option value="physical">Physical</option>
+          </select>
+          <p class="control-hint">Key Y controls velocity (top=0, bottom=127). Right-click latches until next click release.</p>
+        </article>
       </section>
 
       <footer class="footer">
@@ -146,6 +156,6 @@
     </main>
 
     <script src="wasm_exec.js"></script>
-    <script src="main.js?v=20260215-3" type="module"></script>
+    <script src="main.js?v=20260215-4" type="module"></script>
   </body>
 </html>

@@ -307,3 +307,117 @@ func TestStringCountCouplingScaleMonotonic(t *testing.T) {
 		t.Fatalf("expected 3-string regime scale near unity, got=%f", s3)
 	}
 }
+
+func TestStaticCouplingSourceStringCountScalesOutgoingGain(t *testing.T) {
+	params := NewDefaultParams()
+	params.CouplingMode = CouplingModeStatic
+	params.CouplingAmount = 1.0
+	params.CouplingOctaveGain = 0.001
+	params.CouplingFifthGain = 0.0
+	sb := NewStringBank(48000, params)
+
+	sumGain := func(edges []couplingEdge) float32 {
+		total := float32(0)
+		for _, e := range edges {
+			total += e.gain
+		}
+		return total
+	}
+
+	lowOut := sumGain(sb.coupling[21])  // 1-string regime, both octave neighbors low
+	midOut := sumGain(sb.coupling[52])  // 2-string regime, both octave neighbors mid
+	highOut := sumGain(sb.coupling[84]) // 3-string regime, both octave neighbors high
+	if lowOut <= 0 || midOut <= 0 || highOut <= 0 {
+		t.Fatalf("expected positive static outgoing gains: low=%e mid=%e high=%e", lowOut, midOut, highOut)
+	}
+	if !(lowOut < midOut && midOut < highOut) {
+		t.Fatalf("expected static outgoing gains to rise with unison count: low=%e mid=%e high=%e", lowOut, midOut, highOut)
+	}
+}
+
+func TestStringBankSetCouplingModeTransitions(t *testing.T) {
+	params := NewDefaultParams()
+	params.CouplingMode = CouplingModeStatic
+	sb := NewStringBank(48000, params)
+
+	if !sb.SetCouplingMode(CouplingModeOff) {
+		t.Fatalf("expected off mode transition to succeed")
+	}
+	if sb.couplingEnabled {
+		t.Fatalf("expected coupling disabled in off mode")
+	}
+	for i := 0; i < 128; i++ {
+		if len(sb.coupling[i]) != 0 {
+			t.Fatalf("expected no edges in off mode, note=%d", i)
+		}
+	}
+
+	if !sb.SetCouplingMode(CouplingModeStatic) {
+		t.Fatalf("expected static mode transition to succeed")
+	}
+	if !sb.couplingEnabled {
+		t.Fatalf("expected coupling enabled in static mode")
+	}
+	if len(sb.coupling[60]) == 0 {
+		t.Fatalf("expected static edges after mode transition")
+	}
+
+	if !sb.SetCouplingMode(CouplingModePhysical) {
+		t.Fatalf("expected physical mode transition to succeed")
+	}
+	if !sb.couplingEnabled {
+		t.Fatalf("expected coupling enabled in physical mode")
+	}
+	if len(sb.coupling[60]) == 0 {
+		t.Fatalf("expected physical edges after mode transition")
+	}
+
+	if sb.SetCouplingMode(CouplingMode("invalid")) {
+		t.Fatalf("expected invalid mode transition to fail")
+	}
+}
+
+func TestPianoSetCouplingModeUpdatesEngineState(t *testing.T) {
+	p := NewPiano(48000, 16, NewDefaultParams())
+	if p == nil || p.ringing == nil || p.ringing.bank == nil {
+		t.Fatalf("expected initialized piano with ringing bank")
+	}
+	if !p.SetCouplingMode(CouplingModePhysical) {
+		t.Fatalf("expected setting physical mode to succeed")
+	}
+	if p.ringing.bank.couplingMode != CouplingModePhysical {
+		t.Fatalf("expected physical mode in bank, got=%q", p.ringing.bank.couplingMode)
+	}
+	if !p.SetCouplingMode(CouplingModeOff) {
+		t.Fatalf("expected setting off mode to succeed")
+	}
+	if p.ringing.bank.couplingMode != CouplingModeOff || p.ringing.bank.couplingEnabled {
+		t.Fatalf("expected off mode with coupling disabled, got mode=%q enabled=%v", p.ringing.bank.couplingMode, p.ringing.bank.couplingEnabled)
+	}
+	if p.SetCouplingMode(CouplingMode("nope")) {
+		t.Fatalf("expected invalid coupling mode to fail")
+	}
+}
+
+func TestPianoKeyDownWithoutStrikeIsSilentAndUndamped(t *testing.T) {
+	params := NewDefaultParams()
+	params.ResonanceEnabled = false
+	params.CouplingEnabled = false
+	p := NewPiano(48000, 16, params)
+
+	p.KeyDown(60)
+	out := p.Process(512)
+	if rms := stereoRMS(out); rms > 1e-8 {
+		t.Fatalf("expected key-down without strike to be silent, got rms=%e", rms)
+	}
+
+	g := p.ringing.bank.Group(60)
+	if g == nil || !g.isUndamped() {
+		t.Fatalf("expected key-down without strike to lift damper")
+	}
+
+	p.NoteOff(60)
+	if g.isUndamped() {
+		t.Fatalf("expected note-off to re-engage damper when sustain is up")
+	}
+}

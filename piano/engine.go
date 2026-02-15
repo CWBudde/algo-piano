@@ -61,6 +61,12 @@ func (p *Piano) NoteOn(note int, velocity int) {
 	p.hammerExciter.Trigger(note, velocity)
 }
 
+// KeyDown presses a key without hammer excitation (damper lift only).
+func (p *Piano) KeyDown(note int) {
+	p.keys.NoteOn(note, 0)
+	p.ringing.SetKeyDown(note, true)
+}
+
 // NoteOff releases a note.
 func (p *Piano) NoteOff(note int) {
 	p.keys.NoteOff(note)
@@ -77,6 +83,19 @@ func (p *Piano) SetSustainPedal(down bool) {
 func (p *Piano) SetSoftPedal(down bool) {
 	p.softPedal = down
 	p.hammerExciter.SetSoftPedal(down)
+}
+
+// SetCouplingMode updates string-bank coupling mode at runtime.
+func (p *Piano) SetCouplingMode(mode CouplingMode) bool {
+	if p == nil || p.ringing == nil {
+		return false
+	}
+	ok := p.ringing.SetCouplingMode(mode)
+	if ok && p.params != nil {
+		p.params.CouplingMode = mode
+		p.params.CouplingEnabled = mode != CouplingModeOff
+	}
+	return ok
 }
 
 // SetIR sets the room impulse response from pre-computed stereo buffers.
