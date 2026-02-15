@@ -378,7 +378,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	}, nil
 }
 
-func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchIRPath string, settings evalSettings) (optimizationEval, error) {
+func evaluateCandidate(cfg *optimizationConfig, cand candidate, _ string, settings evalSettings) (optimizationEval, error) {
 	irCfg, params, evalVelocity, evalReleaseAfter := applyCandidate(
 		cfg.baseParams,
 		settings.sampleRate,
@@ -392,12 +392,11 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchIRPath st
 	if err != nil {
 		return optimizationEval{}, err
 	}
-	if err := writeStereoWAV(scratchIRPath, left, right, irCfg.SampleRate); err != nil {
-		return optimizationEval{}, err
-	}
-	params.IRWavPath = scratchIRPath
-	mono, _, err := renderCandidateFromParams(
+	// Clear IR path so NewPiano won't load from disk; we set buffers directly.
+	params.IRWavPath = ""
+	mono, _, err := renderCandidateWithIR(
 		params,
+		left, right,
 		cfg.note,
 		evalVelocity,
 		settings.sampleRate,
@@ -544,8 +543,10 @@ func runMayfly(cfg *mayfly.Config) (_ *mayfly.Result, err error) {
 	return mayfly.Optimize(cfg)
 }
 
-func renderCandidateFromParams(
+func renderCandidateWithIR(
 	params *piano.Params,
+	irLeft []float32,
+	irRight []float32,
 	note int,
 	velocity int,
 	sampleRate int,
@@ -560,6 +561,22 @@ func renderCandidateFromParams(
 		return nil, nil, errors.New("nil params")
 	}
 	p := piano.NewPiano(sampleRate, 16, params)
+	p.SetIR(irLeft, irRight)
+	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, minDuration, maxDuration, blockSize, releaseAfter)
+}
+
+func renderPiano(
+	p *piano.Piano,
+	note int,
+	velocity int,
+	sampleRate int,
+	decayDBFS float64,
+	decayHoldBlocks int,
+	minDuration float64,
+	maxDuration float64,
+	blockSize int,
+	releaseAfter float64,
+) ([]float64, []float32, error) {
 	p.NoteOn(note, velocity)
 
 	if decayHoldBlocks < 1 {

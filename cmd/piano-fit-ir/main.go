@@ -295,6 +295,7 @@ func initCandidate(
 
 	addKnob(knobDef{Name: "modes", Min: 32, Max: 256, IsInt: true}, float64(cfg.Modes))
 	addKnob(knobDef{Name: "brightness", Min: 0.5, Max: 2.5}, cfg.Brightness)
+	addKnob(knobDef{Name: "density", Min: 0.5, Max: 4.0}, cfg.Density)
 	addKnob(knobDef{Name: "stereo_width", Min: 0.0, Max: 1.0}, cfg.StereoWidth)
 	addKnob(knobDef{Name: "direct", Min: 0.1, Max: 1.2}, cfg.DirectLevel)
 	addKnob(knobDef{Name: "early", Min: 0, Max: 48, IsInt: true}, float64(cfg.EarlyCount))
@@ -367,6 +368,8 @@ func applyCandidate(
 			cfg.Modes = int(math.Round(v))
 		case "brightness":
 			cfg.Brightness = v
+		case "density":
+			cfg.Density = v
 		case "stereo_width":
 			cfg.StereoWidth = v
 		case "direct":
