@@ -91,6 +91,7 @@ function generateKeyboard() {
     const whiteKeyWidth = 52;
     const whiteKeyMargin = 2;
     const blackKeyWidth = 34;
+    const blackKeyNudgeRight = 2;
 
     // Generate white keys first
     for (let octave = 0; octave < numOctaves; octave++) {
@@ -130,7 +131,8 @@ function generateKeyboard() {
                 const whiteKeysBefore = whiteKeyPattern.filter(n => n < i).length;
                 const totalWhiteKeysSpace = (whiteKeyWidth + whiteKeyMargin * 2);
                 const leftPos = (whiteKeysBefore + octave * 7) * totalWhiteKeysSpace +
-                                (totalWhiteKeysSpace - blackKeyWidth / 2);
+                                (totalWhiteKeysSpace - blackKeyWidth / 2) +
+                                blackKeyNudgeRight;
                 key.style.left = `${leftPos}px`;
 
                 const label = document.createElement('div');
@@ -179,9 +181,13 @@ function attachKeyboardListeners() {
 
     function setSustainState(down) {
         sustainPedalDown = down;
-        damperEngaged = !down;
         syncPedalUI();
         handleSustain(down);
+    }
+
+    function setDamperState(on) {
+        damperEngaged = on;
+        syncPedalUI();
     }
 
     sustainLevel = parseInt(sustainLevelSlider.value, 10) || 50;
@@ -230,8 +236,7 @@ function attachKeyboardListeners() {
     });
 
     damperButton.addEventListener('click', () => {
-        damperEngaged = !damperEngaged;
-        setSustainState(!damperEngaged);
+        setDamperState(!damperEngaged);
     });
 
     sustainLevelSlider.addEventListener('input', (event) => {
