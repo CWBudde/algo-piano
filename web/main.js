@@ -68,6 +68,7 @@ function updateStatus(message) {
     } else {
         info.textContent = message;
         info.style.display = 'block';
+        info.style.color = '';
     }
 }
 
