@@ -28,10 +28,24 @@ This maps each split source file to its direct and indirect test coverage.
 - `TestStringBankSetCouplingModeTransitions` (`ringing_test.go`)
 - `TestPianoSetCouplingModeUpdatesEngineState` (`ringing_test.go`)
 - `TestPianoKeyDownWithoutStrikeIsSilentAndUndamped` (`ringing_test.go`)
+- `TestStringModelDefaultsToDWG` (`ringing_test.go`)
+- `TestStringBankModalModelSelectable` (`ringing_test.go`)
+- `TestStringBankModalProcessHasNoPerBlockHeapAllocs` (`ringing_test.go`)
+- `TestPianoSetStringModelSwitchesCore` (`ringing_test.go`)
+- `TestModalPartialsParameterControlsModeCount` (`ringing_test.go`)
+- `TestModalExcitationParameterScalesOutputEnergy` (`ringing_test.go`)
 - `TestSoftPedalReducesAttackBrightness` (`pedals_test.go`)
 - `TestPerNoteResonanceFilterIsFrequencySelective` (`resonance_test.go`)
 - `TestSympatheticResonanceEnergizesSilentHeldString` (`resonance_test.go`)
 - `TestLongRenderHasNoNaNOrInf` (`integration_test.go`)
+
+## `modal_group.go`
+
+- `TestStringBankModalModelSelectable` (`ringing_test.go`)
+- `TestStringBankModalProcessHasNoPerBlockHeapAllocs` (`ringing_test.go`)
+- `TestPianoSetStringModelSwitchesCore` (`ringing_test.go`)
+- `TestModalPartialsParameterControlsModeCount` (`ringing_test.go`)
+- `TestModalExcitationParameterScalesOutputEnergy` (`ringing_test.go`)
 
 ## `control.go`
 

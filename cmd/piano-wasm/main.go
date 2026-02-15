@@ -26,6 +26,7 @@ func main() {
 	js.Global().Set("wasmNoteOff", js.FuncOf(wasmNoteOff))
 	js.Global().Set("wasmSetSustain", js.FuncOf(wasmSetSustain))
 	js.Global().Set("wasmSetCouplingMode", js.FuncOf(wasmSetCouplingMode))
+	js.Global().Set("wasmSetStringModel", js.FuncOf(wasmSetStringModel))
 	js.Global().Set("wasmLoadIR", js.FuncOf(wasmLoadIR))
 	js.Global().Set("wasmProcessBlock", js.FuncOf(wasmProcessBlock))
 	js.Global().Set("wasmGetMemoryBuffer", js.FuncOf(wasmGetMemoryBuffer))
@@ -94,6 +95,15 @@ func wasmSetCouplingMode(this js.Value, args []js.Value) interface{} {
 	modeRaw := strings.TrimSpace(strings.ToLower(args[0].String()))
 	mode := piano.CouplingMode(modeRaw)
 	return globalPiano.SetCouplingMode(mode)
+}
+
+func wasmSetStringModel(this js.Value, args []js.Value) interface{} {
+	if len(args) < 1 || globalPiano == nil {
+		return false
+	}
+	modelRaw := strings.TrimSpace(strings.ToLower(args[0].String()))
+	model := piano.StringModel(modelRaw)
+	return globalPiano.SetStringModel(model)
 }
 
 func wasmLoadIR(this js.Value, args []js.Value) interface{} {

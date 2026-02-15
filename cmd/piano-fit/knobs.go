@@ -84,7 +84,7 @@ func initCandidate(
 
 	// Piano group knobs.
 	if groups["piano"] {
-		addKnob(knobDef{Name: "output_gain", Min: 0.4, Max: 1.8}, float64(base.OutputGain))
+		addKnob(knobDef{Name: "output_gain", Min: 0.01, Max: 5.0}, float64(base.OutputGain))
 		addKnob(knobDef{Name: "hammer_stiffness_scale", Min: 0.6, Max: 1.8}, float64(base.HammerStiffnessScale))
 		addKnob(knobDef{Name: "hammer_exponent_scale", Min: 0.8, Max: 1.2}, float64(base.HammerExponentScale))
 		addKnob(knobDef{Name: "hammer_damping_scale", Min: 0.6, Max: 1.8}, float64(base.HammerDampingScale))

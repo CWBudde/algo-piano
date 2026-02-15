@@ -1,6 +1,9 @@
 package piano
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestStringBankUnisonStringCountByRange(t *testing.T) {
 	sb := NewStringBank(48000, NewDefaultParams())
@@ -419,5 +422,159 @@ func TestPianoKeyDownWithoutStrikeIsSilentAndUndamped(t *testing.T) {
 	p.NoteOff(60)
 	if g.isUndamped() {
 		t.Fatalf("expected note-off to re-engage damper when sustain is up")
+	}
+}
+
+func TestStringModelDefaultsToDWG(t *testing.T) {
+	params := NewDefaultParams()
+	if params.StringModel != StringModelDWG {
+		t.Fatalf("expected default params to use DWG model, got=%q", params.StringModel)
+	}
+
+	sb := NewStringBank(48000, params)
+	if sb.StringModel() != StringModelDWG {
+		t.Fatalf("expected default string bank model to be DWG, got=%q", sb.StringModel())
+	}
+	if sb.Group(60) == nil {
+		t.Fatalf("expected DWG group allocation in default model")
+	}
+}
+
+func TestStringBankModalModelSelectable(t *testing.T) {
+	params := NewDefaultParams()
+	params.StringModel = StringModelModal
+	params.CouplingEnabled = false
+	sb := NewStringBank(48000, params)
+	if sb.StringModel() != StringModelModal {
+		t.Fatalf("expected modal model, got=%q", sb.StringModel())
+	}
+	if sb.Group(60) != nil {
+		t.Fatalf("expected no DWG group when modal model is selected")
+	}
+	if sb.ModalGroup(60) == nil {
+		t.Fatalf("expected modal group allocation for note 60")
+	}
+
+	h := NewHammerExciter(48000, params)
+	sb.SetKeyDown(60, true)
+	h.Trigger(60, 110)
+
+	totalAbs := 0.0
+	for i := 0; i < 12; i++ {
+		block := sb.Process(128, h)
+		for _, s := range block {
+			totalAbs += math.Abs(float64(s))
+		}
+	}
+	if totalAbs <= 1e-5 {
+		t.Fatalf("expected non-silent modal output, totalAbs=%e", totalAbs)
+	}
+}
+
+func TestStringBankModalProcessHasNoPerBlockHeapAllocs(t *testing.T) {
+	params := NewDefaultParams()
+	params.StringModel = StringModelModal
+	params.CouplingEnabled = true
+	params.CouplingMode = CouplingModeStatic
+	params.CouplingOctaveGain = 0.0012
+	params.CouplingFifthGain = 0.0004
+
+	sb := NewStringBank(48000, params)
+	h := NewHammerExciter(48000, params)
+	sb.SetSustain(true)
+	sb.SetKeyDown(60, true)
+	h.Trigger(60, 100)
+
+	for i := 0; i < 32; i++ {
+		_ = sb.Process(128, h)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_ = sb.Process(128, h)
+	})
+	if allocs != 0 {
+		t.Fatalf("expected zero per-block heap allocs in modal path, got %.3f", allocs)
+	}
+}
+
+func TestPianoSetStringModelSwitchesCore(t *testing.T) {
+	p := NewPiano(48000, 16, NewDefaultParams())
+	if p == nil || p.ringing == nil || p.ringing.bank == nil {
+		t.Fatalf("expected initialized piano")
+	}
+	if p.ringing.bank.StringModel() != StringModelDWG {
+		t.Fatalf("expected initial DWG model, got=%q", p.ringing.bank.StringModel())
+	}
+	if !p.SetStringModel(StringModelModal) {
+		t.Fatalf("expected switch to modal model to succeed")
+	}
+	if p.ringing.bank.StringModel() != StringModelModal {
+		t.Fatalf("expected modal model after switch, got=%q", p.ringing.bank.StringModel())
+	}
+	if !p.SetStringModel(StringModelDWG) {
+		t.Fatalf("expected switch back to DWG to succeed")
+	}
+	if p.ringing.bank.StringModel() != StringModelDWG {
+		t.Fatalf("expected DWG model after switch back, got=%q", p.ringing.bank.StringModel())
+	}
+	if p.SetStringModel(StringModel("invalid")) {
+		t.Fatalf("expected invalid model switch to fail")
+	}
+}
+
+func TestModalPartialsParameterControlsModeCount(t *testing.T) {
+	a := NewDefaultParams()
+	a.StringModel = StringModelModal
+	a.ModalPartials = 4
+	sbA := NewStringBank(48000, a)
+	gA := sbA.ModalGroup(60)
+	if gA == nil || len(gA.strings) == 0 {
+		t.Fatalf("expected modal group with strings")
+	}
+	countA := len(gA.strings[0].modes)
+	if countA < 1 {
+		t.Fatalf("expected at least one mode")
+	}
+
+	b := NewDefaultParams()
+	b.StringModel = StringModelModal
+	b.ModalPartials = 12
+	sbB := NewStringBank(48000, b)
+	gB := sbB.ModalGroup(60)
+	if gB == nil || len(gB.strings) == 0 {
+		t.Fatalf("expected modal group with strings")
+	}
+	countB := len(gB.strings[0].modes)
+	if countB < countA {
+		t.Fatalf("expected more allowed partials to keep >= modes: low=%d high=%d", countA, countB)
+	}
+}
+
+func TestModalExcitationParameterScalesOutputEnergy(t *testing.T) {
+	low := NewDefaultParams()
+	low.StringModel = StringModelModal
+	low.ModalExcitation = 0.5
+	low.CouplingEnabled = false
+	low.ResonanceEnabled = false
+	lowP := NewPiano(48000, 16, low)
+
+	high := NewDefaultParams()
+	high.StringModel = StringModelModal
+	high.ModalExcitation = 2.0
+	high.CouplingEnabled = false
+	high.ResonanceEnabled = false
+	highP := NewPiano(48000, 16, high)
+
+	lowP.NoteOn(60, 110)
+	highP.NoteOn(60, 110)
+
+	lowRMS := 0.0
+	highRMS := 0.0
+	for i := 0; i < 12; i++ {
+		lowRMS += stereoRMS(lowP.Process(128))
+		highRMS += stereoRMS(highP.Process(128))
+	}
+	if highRMS <= lowRMS*1.3 {
+		t.Fatalf("expected higher modal_excitation to increase energy: low=%f high=%f", lowRMS, highRMS)
 	}
 }

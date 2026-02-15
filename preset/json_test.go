@@ -29,6 +29,12 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
   "hammer_contact_time_scale": 0.9,
   "unison_detune_scale": 0.8,
   "unison_crossfeed": 0.001,
+  "string_model": "modal",
+  "modal_partials": 10,
+  "modal_gain_exponent": 1.4,
+  "modal_excitation": 0.85,
+  "modal_undamped_loss": 0.9,
+  "modal_damped_loss": 1.2,
   "coupling_enabled": true,
   "coupling_octave_gain": 0.00031,
   "coupling_fifth_gain": 0.00012,
@@ -76,6 +82,12 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
 		p.HammerContactTimeScale != 0.9 ||
 		p.UnisonDetuneScale != 0.8 ||
 		p.UnisonCrossfeed != 0.001 ||
+		p.StringModel != "modal" ||
+		p.ModalPartials != 10 ||
+		p.ModalGainExponent != 1.4 ||
+		p.ModalExcitation != 0.85 ||
+		p.ModalUndampedLoss != 0.9 ||
+		p.ModalDampedLoss != 1.2 ||
 		!p.CouplingEnabled ||
 		p.CouplingOctaveGain != 0.00031 ||
 		p.CouplingFifthGain != 0.00012 ||
@@ -144,5 +156,29 @@ func TestLoadJSONRejectsInvalidCouplingMode(t *testing.T) {
 	}
 	if _, err := LoadJSON(presetPath); err == nil {
 		t.Fatalf("expected error for invalid coupling_mode")
+	}
+}
+
+func TestLoadJSONRejectsInvalidStringModel(t *testing.T) {
+	dir := t.TempDir()
+	presetPath := filepath.Join(dir, "preset.json")
+	content := `{"string_model":"invalid"}`
+	if err := os.WriteFile(presetPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write preset: %v", err)
+	}
+	if _, err := LoadJSON(presetPath); err == nil {
+		t.Fatalf("expected error for invalid string_model")
+	}
+}
+
+func TestLoadJSONRejectsInvalidModalFields(t *testing.T) {
+	dir := t.TempDir()
+	presetPath := filepath.Join(dir, "preset.json")
+	content := `{"modal_partials":0}`
+	if err := os.WriteFile(presetPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write preset: %v", err)
+	}
+	if _, err := LoadJSON(presetPath); err == nil {
+		t.Fatalf("expected error for invalid modal_partials")
 	}
 }

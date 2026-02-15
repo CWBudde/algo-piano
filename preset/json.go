@@ -38,6 +38,12 @@ type File struct {
 	HammerContactTimeScale     *float32               `json:"hammer_contact_time_scale"`
 	UnisonDetuneScale          *float32               `json:"unison_detune_scale"`
 	UnisonCrossfeed            *float32               `json:"unison_crossfeed"`
+	StringModel                *string                `json:"string_model"`
+	ModalPartials              *int                   `json:"modal_partials"`
+	ModalGainExponent          *float32               `json:"modal_gain_exponent"`
+	ModalExcitation            *float32               `json:"modal_excitation"`
+	ModalUndampedLoss          *float32               `json:"modal_undamped_loss"`
+	ModalDampedLoss            *float32               `json:"modal_damped_loss"`
 	CouplingEnabled            *bool                  `json:"coupling_enabled"`
 	CouplingOctaveGain         *float32               `json:"coupling_octave_gain"`
 	CouplingFifthGain          *float32               `json:"coupling_fifth_gain"`
@@ -211,6 +217,45 @@ func ApplyFile(dst *piano.Params, f *File) error {
 			return fmt.Errorf("unison_crossfeed must be >= 0")
 		}
 		dst.UnisonCrossfeed = *f.UnisonCrossfeed
+	}
+	if f.StringModel != nil {
+		model := piano.StringModel(strings.ToLower(strings.TrimSpace(*f.StringModel)))
+		switch model {
+		case piano.StringModelDWG, piano.StringModelModal:
+			dst.StringModel = model
+		default:
+			return fmt.Errorf("string_model must be one of dwg|modal")
+		}
+	}
+	if f.ModalPartials != nil {
+		if *f.ModalPartials < 1 || *f.ModalPartials > 32 {
+			return fmt.Errorf("modal_partials must be in [1,32]")
+		}
+		dst.ModalPartials = *f.ModalPartials
+	}
+	if f.ModalGainExponent != nil {
+		if *f.ModalGainExponent <= 0 {
+			return fmt.Errorf("modal_gain_exponent must be > 0")
+		}
+		dst.ModalGainExponent = *f.ModalGainExponent
+	}
+	if f.ModalExcitation != nil {
+		if *f.ModalExcitation <= 0 {
+			return fmt.Errorf("modal_excitation must be > 0")
+		}
+		dst.ModalExcitation = *f.ModalExcitation
+	}
+	if f.ModalUndampedLoss != nil {
+		if *f.ModalUndampedLoss <= 0 {
+			return fmt.Errorf("modal_undamped_loss must be > 0")
+		}
+		dst.ModalUndampedLoss = *f.ModalUndampedLoss
+	}
+	if f.ModalDampedLoss != nil {
+		if *f.ModalDampedLoss <= 0 {
+			return fmt.Errorf("modal_damped_loss must be > 0")
+		}
+		dst.ModalDampedLoss = *f.ModalDampedLoss
 	}
 	if f.CouplingEnabled != nil {
 		dst.CouplingEnabled = *f.CouplingEnabled
