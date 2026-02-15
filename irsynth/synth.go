@@ -14,6 +14,7 @@ type Config struct {
 	Seed       int64
 
 	Brightness  float64
+	Density     float64 // Controls mode frequency clustering: >1 biases low, <1 biases high
 	StereoWidth float64
 	DirectLevel float64
 	EarlyCount  int
@@ -32,6 +33,7 @@ func DefaultConfig() Config {
 		Modes:         128,
 		Seed:          1,
 		Brightness:    1.0,
+		Density:       2.0,
 		StereoWidth:   0.6,
 		DirectLevel:   0.6,
 		EarlyCount:    16,
@@ -54,6 +56,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Brightness <= 0 {
 		return fmt.Errorf("brightness must be > 0")
+	}
+	if c.Density <= 0 {
+		return fmt.Errorf("density must be > 0")
 	}
 	if c.StereoWidth < 0 {
 		return fmt.Errorf("stereo width must be >= 0")
@@ -104,11 +109,11 @@ func GenerateStereo(cfg Config) ([]float32, []float32, error) {
 		minF = maxF * 0.5
 	}
 
-	// Modal body contribution.
+	// Modal body contribution with deterministic frequency placement.
+	// Modes are log-spaced with density-controlled clustering instead of RNG-drawn.
+	// RNG is only used for amplitude jitter, phase, and stereo pan (non-critical).
 	for m := 0; m < cfg.Modes; m++ {
-		u := rng.Float64()
-		// Bias toward lower frequencies where piano body modes are denser perceptually.
-		fNorm := u * u
+		fNorm := math.Pow((float64(m)+0.5)/float64(cfg.Modes), cfg.Density)
 		f := minF * math.Pow(maxF/minF, fNorm)
 
 		brightnessExp := 0.7 + 0.9*cfg.Brightness

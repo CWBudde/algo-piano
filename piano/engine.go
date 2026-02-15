@@ -69,6 +69,11 @@ func (p *Piano) SetSoftPedal(down bool) {
 	}
 }
 
+// SetIR sets the soundboard impulse response from pre-computed buffers.
+func (p *Piano) SetIR(left, right []float32) {
+	p.convolver.SetIR(left, right)
+}
+
 // Process renders a block of audio samples (stereo interleaved).
 func (p *Piano) Process(numFrames int) []float32 {
 	monoMix := make([]float32, numFrames)
