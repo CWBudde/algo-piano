@@ -237,6 +237,23 @@ func maxAbs(x []float64) float64 {
 	return m
 }
 
+// applyFadeOut applies a cosine fade-out to the last fadeS seconds of buf.
+func applyFadeOut(buf []float64, fadeS float64, sampleRate int) {
+	if fadeS <= 0 || len(buf) == 0 {
+		return
+	}
+	fadeSamples := int(math.Round(fadeS * float64(sampleRate)))
+	if fadeSamples > len(buf) {
+		fadeSamples = len(buf)
+	}
+	start := len(buf) - fadeSamples
+	for i := 0; i < fadeSamples; i++ {
+		t := float64(i) / float64(fadeSamples) // 0..1
+		gain := 0.5 * (1.0 + math.Cos(t*math.Pi))
+		buf[start+i] *= gain
+	}
+}
+
 func lerp(a, b, t float64) float64 {
 	if t < 0 {
 		t = 0
@@ -257,6 +274,7 @@ type BodyConfig struct {
 	Density     float64
 	DirectLevel float64
 	DecayS      float64 // Single decay time for body modes
+	FadeOutS    float64 // Cosine fade-out at the end; 0 = no fade
 
 	NormalizePeak float64
 }
@@ -272,6 +290,7 @@ func DefaultBodyConfig() BodyConfig {
 		Density:       2.0,
 		DirectLevel:   0.6,
 		DecayS:        0.1,
+		FadeOutS:      0.005,
 		NormalizePeak: 0.9,
 	}
 }
@@ -345,6 +364,7 @@ func GenerateBody(cfg BodyConfig) ([]float32, error) {
 	}
 
 	highpassDC(buf, 0.995)
+	applyFadeOut(buf, cfg.FadeOutS, cfg.SampleRate)
 
 	peak := maxAbs(buf)
 	if peak < 1e-12 {
@@ -369,6 +389,7 @@ type RoomConfig struct {
 	Brightness  float64
 	LowDecayS   float64
 	HighDecayS  float64
+	FadeOutS    float64 // Cosine fade-out at the end; 0 = no fade
 
 	NormalizePeak float64
 }
@@ -385,6 +406,7 @@ func DefaultRoomConfig() RoomConfig {
 		Brightness:    0.8,
 		LowDecayS:     1.2,
 		HighDecayS:    0.2,
+		FadeOutS:      0.01,
 		NormalizePeak: 0.9,
 	}
 }
@@ -481,6 +503,8 @@ func GenerateRoom(cfg RoomConfig) ([]float32, []float32, error) {
 
 	highpassDC(left, 0.995)
 	highpassDC(right, 0.995)
+	applyFadeOut(left, cfg.FadeOutS, cfg.SampleRate)
+	applyFadeOut(right, cfg.FadeOutS, cfg.SampleRate)
 
 	peak := maxAbs(left)
 	if rp := maxAbs(right); rp > peak {

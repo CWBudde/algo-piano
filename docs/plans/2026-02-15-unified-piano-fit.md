@@ -13,6 +13,7 @@
 ### Task 1: Create cmd/piano-fit/ with utility files
 
 **Files:**
+
 - Create: `cmd/piano-fit/utils.go`
 - Create: `cmd/piano-fit/wav.go`
 
@@ -93,6 +94,7 @@ Run: `go build --tags asm ./cmd/piano-fit/...` (will fail until main.go exists, 
 This is the core new logic. The `initCandidate` function builds knob definitions based on which groups are active.
 
 **Files:**
+
 - Create: `cmd/piano-fit/knobs.go`
 - Create: `cmd/piano-fit/knobs_test.go`
 
@@ -571,6 +573,7 @@ git commit -m "feat(piano-fit): add knobs.go with group-aware initCandidate/appl
 Based on `piano-fit-ir/optimize.go` (the superset), with conditional IR synthesis.
 
 **Files:**
+
 - Create: `cmd/piano-fit/optimize.go`
 
 **Step 1: Write optimize.go**
@@ -655,6 +658,7 @@ Run: `go build --tags asm ./cmd/piano-fit/...` (may still need main.go stub)
 ### Task 4: Create output.go (unified output writing)
 
 **Files:**
+
 - Create: `cmd/piano-fit/output.go`
 
 **Step 1: Write output.go**
@@ -697,6 +701,7 @@ Report uses unified `best_knobs` key (not `best_ir_knobs`).
 ### Task 5: Create main.go (unified CLI)
 
 **Files:**
+
 - Create: `cmd/piano-fit/main.go`
 
 **Step 1: Write main.go**
@@ -704,6 +709,7 @@ Report uses unified `best_knobs` key (not `best_ir_knobs`).
 Merge flag parsing from both tools. Add `--optimize` flag. Validate that `--output-ir` is set when IR groups are active.
 
 Key validation:
+
 ```go
 groups, err := parseOptimizeGroups(*optimize)
 if err != nil {
@@ -733,6 +739,7 @@ git commit -m "feat(piano-fit): unified optimization tool with --optimize group 
 ### Task 6: Port and merge tests
 
 **Files:**
+
 - Create: `cmd/piano-fit/main_test.go`
 - Create: `cmd/piano-fit/optimize_test.go`
 
@@ -741,14 +748,17 @@ git commit -m "feat(piano-fit): unified optimization tool with --optimize group 
 Port tests from both old tools. Key tests:
 
 From `piano-fit-fast/main_test.go`:
+
 - `TestPresetIRPathRelativizesFromPresetDir`
 - `TestPresetIRPathEmpty`
 - `TestParseWorkersFlag`
 
 From `piano-fit-ir/main_test.go`:
+
 - Adapt to use `groups` parameter in `initCandidate`
 
 New tests for unified behavior:
+
 - `TestInitCandidateLegacyMixKnobs` (piano,mix with no dual-IR paths)
 - `TestInitCandidateDualIRMixKnobs` (piano,mix with dual-IR paths in preset)
 - `TestApplyCandidateDualIRMix`
@@ -789,6 +799,7 @@ Expected: All PASS
 ### Task 8: Delete old commands
 
 **Files:**
+
 - Delete: `cmd/piano-fit-fast/` (entire directory)
 - Delete: `cmd/piano-fit-ir/` (entire directory)
 
@@ -820,6 +831,7 @@ git commit -m "refactor: remove piano-fit-fast and piano-fit-ir (replaced by uni
 ### Task 9: Update documentation
 
 **Files:**
+
 - Modify: `docs/optimization-workflow.md`
 
 **Step 1: Update workflow doc**
