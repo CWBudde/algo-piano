@@ -15,6 +15,15 @@ var (
 	outputBuffer []float32
 )
 
+// Provisional modal profile from initial DWG->modal calibration run (notes 36,48,60,72,84).
+const (
+	webModalPartials     = 2
+	webModalGainExponent = float32(0.4)
+	webModalExcitation   = float32(2.7738688)
+	webModalUndampedLoss = float32(0.4)
+	webModalDampedLoss   = float32(0.9669802)
+)
+
 func main() {
 	// Keep program running
 	c := make(chan struct{})
@@ -42,6 +51,11 @@ func wasmInit(this js.Value, args []js.Value) interface{} {
 	sampleRate := args[0].Int()
 
 	params := piano.NewDefaultParams()
+	params.ModalPartials = webModalPartials
+	params.ModalGainExponent = webModalGainExponent
+	params.ModalExcitation = webModalExcitation
+	params.ModalUndampedLoss = webModalUndampedLoss
+	params.ModalDampedLoss = webModalDampedLoss
 	globalPiano = piano.NewPiano(sampleRate, 16, params)
 
 	// Pre-allocate output buffer for 128 stereo frames

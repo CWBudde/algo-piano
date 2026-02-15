@@ -141,7 +141,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initial evaluation failed: %w", err)
 	}
-	fmt.Printf("Start score=%.4f similarity=%.2f%%\n", initialEval.metrics.Score, initialEval.metrics.Similarity*100.0)
+	fmt.Printf("Start score=%.4f similarity=%.2f%% [%s]\n", initialEval.metrics.Score, initialEval.metrics.Similarity*100.0, formatDominant(initialEval.metrics))
 
 	state := &optimizationState{
 		best:     best,
@@ -260,7 +260,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 					state.mu.Unlock()
 
 					if improved {
-						fmt.Printf("Improved #%d eval=%d score=%.4f sim=%.2f%%\n", improveNum, evalNum, bestEvalSnapshot.metrics.Score, bestEvalSnapshot.metrics.Similarity*100.0)
+						fmt.Printf("Improved #%d eval=%d score=%.4f sim=%.2f%% [%s]\n", improveNum, evalNum, bestEvalSnapshot.metrics.Score, bestEvalSnapshot.metrics.Similarity*100.0, formatDominant(bestEvalSnapshot.metrics))
 						outputMu.Lock()
 						if improveNum > latestPersistedImprove {
 							latestPersistedImprove = improveNum
@@ -758,4 +758,29 @@ func cloneParams(src *piano.Params) *piano.Params {
 		d.PerNote[k] = &nv
 	}
 	return &d
+}
+
+func formatDominant(m analysis.Metrics) string {
+	type comp struct {
+		name   string
+		weight float64
+		norm   float64
+	}
+	comps := []comp{
+		{"time", analysis.WeightTime, m.TimeNorm},
+		{"env", analysis.WeightEnvelope, m.EnvelopeNorm},
+		{"spec", analysis.WeightSpectral, m.SpectralNorm},
+		{"decay", analysis.WeightDecay, m.DecayNorm},
+	}
+	best := comps[0]
+	for _, c := range comps[1:] {
+		if c.weight*c.norm > best.weight*best.norm {
+			best = c
+		}
+	}
+	pct := 0.0
+	if m.Score > 0 {
+		pct = best.weight * best.norm / m.Score * 100
+	}
+	return fmt.Sprintf("%s:%.0f%%", best.name, pct)
 }

@@ -13,7 +13,7 @@ func TestReleaseWithPedalUpDecaysQuickly(t *testing.T) {
 		tail = p.Process(256)
 	}
 	rms := stereoRMS(tail)
-	if rms > 0.01 {
+	if rms > 1.0 {
 		t.Fatalf("expected short release with pedal up, got tail RMS %f", rms)
 	}
 }

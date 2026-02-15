@@ -33,6 +33,19 @@ type lagFFTPlan struct {
 	corr  []float64
 }
 
+// Score weights for each metric component.
+const (
+	WeightTime     = 0.30
+	WeightEnvelope = 0.25
+	WeightSpectral = 0.30
+	WeightDecay    = 0.15
+
+	NormTime     = 0.25
+	NormEnvelope = 30.0
+	NormSpectral = 30.0
+	NormDecay    = 40.0
+)
+
 // Metrics contains distance and similarity measurements between two audio signals.
 type Metrics struct {
 	SampleRate int `json:"sample_rate"`
@@ -48,6 +61,13 @@ type Metrics struct {
 	RefDecayDBPerS  float64 `json:"ref_decay_db_per_s"`
 	CandDecayDBPerS float64 `json:"cand_decay_db_per_s"`
 	DecayDiffDBPerS float64 `json:"decay_diff_db_per_s"`
+
+	// Normalized component contributions (0-1 each, weighted sum = Score).
+	TimeNorm     float64 `json:"time_norm"`
+	EnvelopeNorm float64 `json:"envelope_norm"`
+	SpectralNorm float64 `json:"spectral_norm"`
+	DecayNorm    float64 `json:"decay_norm"`
+	Dominant     string  `json:"dominant"` // name of the highest-contributing component
 
 	Score      float64 `json:"score"`
 	Similarity float64 `json:"similarity"`
@@ -129,7 +149,7 @@ func Compare(reference []float64, candidate []float64, sampleRate int) Metrics {
 		m.EnvelopeRMSEDB = rms1(envDiff)
 	}
 
-	m.SpectralRMSEDB = spectralRMSEDB(refA, candA)
+	m.SpectralRMSEDB = spectralRMSEDBMulti(refA, candA)
 
 	hopSec := 128.0 / float64(sampleRate)
 	m.RefDecayDBPerS = decaySlopeDBPerS(refEnv, hopSec)
@@ -139,12 +159,31 @@ func Compare(reference []float64, candidate []float64, sampleRate int) Metrics {
 	}
 
 	// Normalize sub-metrics and combine.
-	timeNorm := clamp01(m.TimeRMSE / 0.25)
-	envNorm := clamp01(m.EnvelopeRMSEDB / 30.0)
-	specNorm := clamp01(m.SpectralRMSEDB / 30.0)
-	decNorm := clamp01(m.DecayDiffDBPerS / 40.0)
-	m.Score = clamp01(0.30*timeNorm + 0.25*envNorm + 0.30*specNorm + 0.15*decNorm)
+	m.TimeNorm = clamp01(m.TimeRMSE / NormTime)
+	m.EnvelopeNorm = clamp01(m.EnvelopeRMSEDB / NormEnvelope)
+	m.SpectralNorm = clamp01(m.SpectralRMSEDB / NormSpectral)
+	m.DecayNorm = clamp01(m.DecayDiffDBPerS / NormDecay)
+	m.Score = clamp01(WeightTime*m.TimeNorm + WeightEnvelope*m.EnvelopeNorm + WeightSpectral*m.SpectralNorm + WeightDecay*m.DecayNorm)
 	m.Similarity = clamp01(math.Exp(-4.0 * m.Score))
+
+	// Identify dominant component (highest weighted contribution).
+	type comp struct {
+		name string
+		val  float64
+	}
+	comps := []comp{
+		{"time", WeightTime * m.TimeNorm},
+		{"envelope", WeightEnvelope * m.EnvelopeNorm},
+		{"spectral", WeightSpectral * m.SpectralNorm},
+		{"decay", WeightDecay * m.DecayNorm},
+	}
+	best := comps[0]
+	for _, c := range comps[1:] {
+		if c.val > best.val {
+			best = c
+		}
+	}
+	m.Dominant = best.name
 
 	return m
 }
@@ -402,6 +441,99 @@ func rmsEnvelope(x []float64, frame int, hop int) []float64 {
 		out[i] = rms1(x[start : start+frame])
 	}
 	return out
+}
+
+// spectralRMSEDBMulti computes spectral RMSE across multiple time positions,
+// giving a more representative comparison than a single early window.
+func spectralRMSEDBMulti(a []float64, b []float64) float64 {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	if n < 512 {
+		return 0
+	}
+
+	winSize := 4096
+	if n < winSize {
+		winSize = n
+	}
+	// Round down to even for FFT.
+	winSize &^= 1
+	if winSize < 512 {
+		return spectralRMSEDB(a, b)
+	}
+
+	// Sample up to 5 positions spread across the signal.
+	positions := make([]int, 0, 5)
+	if n <= winSize {
+		positions = append(positions, 0)
+	} else {
+		nPos := 5
+		stride := (n - winSize) / (nPos - 1)
+		if stride < 1 {
+			stride = 1
+		}
+		for i := 0; i < nPos; i++ {
+			pos := i * stride
+			if pos+winSize > n {
+				pos = n - winSize
+			}
+			positions = append(positions, pos)
+		}
+	}
+
+	plan, err := getSpectralFFTPlan(winSize)
+	bins := winSize / 2
+	hann := make([]float64, winSize)
+	for i := range hann {
+		hann[i] = 0.5 - 0.5*math.Cos(2*math.Pi*float64(i)/float64(winSize-1))
+	}
+
+	var totalSum float64
+	totalCnt := 0
+
+	for _, pos := range positions {
+		aw := make([]float64, winSize)
+		bw := make([]float64, winSize)
+		for i := 0; i < winSize; i++ {
+			aw[i] = a[pos+i] * hann[i]
+			bw[i] = b[pos+i] * hann[i]
+		}
+
+		var sum float64
+		if err == nil {
+			specA := make([]complex128, bins+1)
+			specB := make([]complex128, bins+1)
+			if e := plan.forward(specA, aw); e == nil {
+				if e := plan.forward(specB, bw); e == nil {
+					for k := 1; k < bins; k++ {
+						da := linToDB(cmplx.Abs(specA[k]))
+						db := linToDB(cmplx.Abs(specB[k]))
+						d := da - db
+						sum += d * d
+					}
+					totalSum += sum
+					totalCnt += bins - 1
+					continue
+				}
+			}
+		}
+		// Fallback: naive DFT for this position.
+		for k := 1; k < bins; k++ {
+			da := linToDB(dftBinMag(aw, k))
+			db := linToDB(dftBinMag(bw, k))
+			d := da - db
+			sum += d * d
+		}
+		totalSum += sum
+		totalCnt += bins - 1
+	}
+
+	if totalCnt == 0 {
+		return 0
+	}
+	return math.Sqrt(totalSum / float64(totalCnt))
 }
 
 func spectralRMSEDB(a []float64, b []float64) float64 {

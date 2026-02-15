@@ -88,14 +88,26 @@ func main() {
 	fmt.Printf("Candidate frames: %d\n", metrics.CandidateFrames)
 	fmt.Printf("Aligned frames:   %d\n", metrics.AlignedFrames)
 	fmt.Printf("Lag:              %d samples (%.3f ms)\n", metrics.LagSamples, 1000.0*float64(metrics.LagSamples)/float64(metrics.SampleRate))
-	fmt.Printf("Time RMSE:        %.6f\n", metrics.TimeRMSE)
-	fmt.Printf("Envelope RMSE:    %.3f dB\n", metrics.EnvelopeRMSEDB)
-	fmt.Printf("Spectral RMSE:    %.3f dB\n", metrics.SpectralRMSEDB)
-	fmt.Printf("Decay slope ref:  %.3f dB/s\n", metrics.RefDecayDBPerS)
-	fmt.Printf("Decay slope cand: %.3f dB/s\n", metrics.CandDecayDBPerS)
-	fmt.Printf("Decay diff:       %.3f dB/s\n", metrics.DecayDiffDBPerS)
-	fmt.Printf("Distance score:   %.4f (0 best, 1 worst)\n", metrics.Score)
+	fmt.Println()
+	fmt.Printf("Component        Raw          Norm   Weight  Contribution\n")
+	fmt.Printf("─────────────────────────────────────────────────────────\n")
+	printComp := func(name string, raw string, norm, weight float64, dominant bool) {
+		contrib := norm * weight
+		marker := ""
+		if dominant {
+			marker = " ◄"
+		}
+		fmt.Printf("%-16s %-12s %5.1f%%  ×%.2f   → %.4f%s\n", name, raw, norm*100, weight, contrib, marker)
+	}
+	printComp("Time RMSE", fmt.Sprintf("%.6f", metrics.TimeRMSE), metrics.TimeNorm, analysis.WeightTime, metrics.Dominant == "time")
+	printComp("Envelope RMSE", fmt.Sprintf("%.1f dB", metrics.EnvelopeRMSEDB), metrics.EnvelopeNorm, analysis.WeightEnvelope, metrics.Dominant == "envelope")
+	printComp("Spectral RMSE", fmt.Sprintf("%.1f dB", metrics.SpectralRMSEDB), metrics.SpectralNorm, analysis.WeightSpectral, metrics.Dominant == "spectral")
+	printComp("Decay diff", fmt.Sprintf("%.1f dB/s", metrics.DecayDiffDBPerS), metrics.DecayNorm, analysis.WeightDecay, metrics.Dominant == "decay")
+	fmt.Printf("─────────────────────────────────────────────────────────\n")
+	fmt.Printf("Score:            %.4f  (0 best, 1 worst)\n", metrics.Score)
 	fmt.Printf("Similarity:       %.2f%%\n", metrics.Similarity*100.0)
+	fmt.Printf("Dominant factor:  %s\n", metrics.Dominant)
+	fmt.Printf("\nDecay slopes: ref=%.1f dB/s  cand=%.1f dB/s\n", metrics.RefDecayDBPerS, metrics.CandDecayDBPerS)
 }
 
 func renderCandidate(
