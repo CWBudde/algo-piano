@@ -20,6 +20,7 @@ type Voice struct {
 	active           bool
 	age              int // samples since note on
 	released         bool
+	releaseAge       int // samples since note release
 	sustainDown      bool
 	softDown         bool
 }
@@ -83,6 +84,7 @@ func NewVoice(sampleRate, note, velocity int, params *Params) *Voice {
 		resFilters:       nil,
 		active:           true,
 		released:         false,
+		releaseAge:       0,
 		sustainDown:      false,
 		softDown:         false,
 	}
@@ -120,7 +122,11 @@ func (v *Voice) exciteStrings(force float32, strikePos float32) {
 
 // Release triggers the note release.
 func (v *Voice) Release() {
+	if v.released {
+		return
+	}
 	v.released = true
+	v.releaseAge = 0
 	if !v.sustainDown {
 		for _, str := range v.strings {
 			str.SetDamper(true)
@@ -236,16 +242,17 @@ func (v *Voice) Process(numFrames int) []float32 {
 
 		if v.released {
 			decayRate := float32(0.9995)
-			sample *= approx.FastExp(float32(-v.age) * (1.0 - decayRate))
+			sample *= approx.FastExp(float32(-v.releaseAge) * (1.0 - decayRate))
+			v.releaseAge++
 		}
 
 		output[i] = sample
 		v.age++
 
-		if v.released && !v.sustainDown && v.age > v.sampleRate*2 {
+		if v.released && !v.sustainDown && v.releaseAge > v.sampleRate*2 {
 			v.active = false
 		}
-		if v.released && v.sustainDown && v.age > v.sampleRate*8 {
+		if v.released && v.sustainDown && v.releaseAge > v.sampleRate*8 {
 			v.active = false
 		}
 	}
