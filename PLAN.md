@@ -327,6 +327,7 @@ This phase is split into execution subphases to make progress and ownership expl
   - [x] frequency alignment between source/target harmonic frequencies
   - [x] approximate inter-string distance penalty
   - [x] detune penalty (larger detune => weaker coupling)
+  - [x] unison-count scaling across low/mid/high note regimes (1/2/3 strings)
 - [x] Build and persist an approximate string-distance map across the instrument.
 - [x] Precompute sparse top-K coupling edges from the continuous model (threshold + neighbor cap).
 - [x] Add normalized coupling scaling (per-source edge normalization + polyphony normalization).

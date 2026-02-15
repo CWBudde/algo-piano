@@ -426,7 +426,7 @@ func (sb *StringBank) initPhysicalCouplingGraph(sampleRate int) {
 			continue
 		}
 		edges := make([]couplingEdge, 0, len(candidates))
-		outGain := couplingPhysicalBaseGain * sb.couplingAmount
+		outGain := couplingPhysicalBaseGain * sb.couplingAmount * sb.sourceStringCouplingScale(src)
 		for _, c := range candidates {
 			edges = append(edges, couplingEdge{
 				to:   c.to,
@@ -489,10 +489,34 @@ func (sb *StringBank) physicalCouplingWeight(src int, dst int, nyquist float32) 
 	}
 	dist := sb.distanceMap[src][dst]
 	if sb.couplingDistanceExponent <= 0 {
-		return sum
+		return sum * sb.targetStringCouplingScale(dst)
 	}
 	distPenalty := float32(1.0 / math.Pow(float64(1.0+dist), float64(sb.couplingDistanceExponent)))
-	return sum * distPenalty
+	return sum * distPenalty * sb.targetStringCouplingScale(dst)
+}
+
+func (sb *StringBank) sourceStringCouplingScale(note int) float32 {
+	g := sb.Group(note)
+	if g == nil {
+		return 1.0
+	}
+	return stringCountCouplingScale(len(g.strings))
+}
+
+func (sb *StringBank) targetStringCouplingScale(note int) float32 {
+	g := sb.Group(note)
+	if g == nil {
+		return 1.0
+	}
+	return stringCountCouplingScale(len(g.strings))
+}
+
+func stringCountCouplingScale(stringCount int) float32 {
+	if stringCount <= 0 {
+		return 1.0
+	}
+	const maxUnison = 3.0
+	return float32(math.Sqrt(float64(stringCount) / maxUnison))
 }
 
 func (sb *StringBank) Group(note int) *RingingStringGroup {
