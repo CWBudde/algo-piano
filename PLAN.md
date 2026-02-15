@@ -17,7 +17,7 @@ Conventions used in this plan:
 ## Phase 0 — Repo skeleton + build ("hello audio") ✓
 
 - [x] Create basic Go project layout
-  - [x] Initialize module: `go mod init github.com/MeKo-Christian/algo-piano`
+  - [x] Initialize module: `go mod init github.com/cwbudde/algo-piano`
   - [x] Add `cmd/` for executables
     - [x] `cmd/piano-render` (renders a short WAV for one note)
     - [x] `cmd/piano-play` (placeholder for realtime playback)
