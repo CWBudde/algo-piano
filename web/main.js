@@ -6,12 +6,16 @@ let wasmMemory = null;
 let wasmMemoryBuffer = null;
 let initAudioPromise = null;
 const pendingNotes = new Set();
+const heldNotes = new Set();
+const sustainedNotes = new Set();
+const sustainReleaseTimers = new Map();
 let wasmReady = false;
 let audioReady = false;
 let sustainPedalDown = false;
 let damperEngaged = true;
 let sustainLevel = 50;
-let noteVelocity = 84;
+let sustainReleaseMs = 1800;
+let noteVelocity = 96;
 const RENDER_CHUNK_FRAMES = 128;
 const SCRIPT_BUFFER_SIZE = 256;
 
@@ -166,9 +170,14 @@ function attachKeyboardListeners() {
         sustainLevelSlider.style.background = `linear-gradient(90deg, rgba(222, 189, 126, 0.9) 0%, rgba(222, 189, 126, 0.42) ${pct}, rgba(31, 34, 41, 0.85) ${pct}, rgba(31, 34, 41, 0.85) 100%)`;
     }
 
-    function updateVelocityFromLevel(value) {
-        // Map 0..100 to MIDI velocity 36..127.
-        noteVelocity = Math.max(36, Math.min(127, Math.round(36 + (value / 100) * 91)));
+    function updateSustainReleaseFromLevel(value) {
+        const normalized = Math.max(0, Math.min(100, value)) / 100;
+        if (normalized >= 0.999) {
+            sustainReleaseMs = Infinity;
+            return;
+        }
+        // 0% -> near-immediate release, 100% -> hold until pedal-up.
+        sustainReleaseMs = Math.round(30 + Math.pow(normalized, 1.7) * 6000);
     }
 
     function syncPedalUI() {
@@ -195,7 +204,7 @@ function attachKeyboardListeners() {
     sustainLevel = parseInt(sustainLevelSlider.value, 10) || 50;
     sustainLevelValue.textContent = `${sustainLevel}%`;
     updateSliderFill(sustainLevel);
-    updateVelocityFromLevel(sustainLevel);
+    updateSustainReleaseFromLevel(sustainLevel);
     syncPedalUI();
 
     keys.forEach(key => {
@@ -245,7 +254,13 @@ function attachKeyboardListeners() {
         sustainLevel = parseInt(event.target.value, 10) || 50;
         sustainLevelValue.textContent = `${sustainLevel}%`;
         updateSliderFill(sustainLevel);
-        updateVelocityFromLevel(sustainLevel);
+        updateSustainReleaseFromLevel(sustainLevel);
+
+        if (sustainPedalDown) {
+            for (const note of sustainedNotes) {
+                scheduleSustainRelease(note);
+            }
+        }
     });
 
     // Computer keyboard
@@ -285,6 +300,59 @@ function attachKeyboardListeners() {
             if (keyElement) keyElement.classList.remove('active');
         }
     });
+}
+
+function clearSustainReleaseTimer(note) {
+    const timer = sustainReleaseTimers.get(note);
+    if (timer !== undefined) {
+        clearTimeout(timer);
+        sustainReleaseTimers.delete(note);
+    }
+}
+
+function releaseNote(note) {
+    clearSustainReleaseTimer(note);
+    sustainedNotes.delete(note);
+    if (!audioReady) return;
+
+    if (typeof wasmNoteOff !== 'undefined') {
+        wasmNoteOff(note);
+    }
+}
+
+function scheduleSustainRelease(note) {
+    clearSustainReleaseTimer(note);
+    if (!Number.isFinite(sustainReleaseMs)) {
+        return;
+    }
+
+    const timer = setTimeout(() => {
+        sustainReleaseTimers.delete(note);
+        if (!sustainPedalDown) {
+            return;
+        }
+        if (heldNotes.has(note)) {
+            return;
+        }
+        releaseNote(note);
+    }, sustainReleaseMs);
+    sustainReleaseTimers.set(note, timer);
+}
+
+function flushSustainedNotes() {
+    const notesToRelease = [];
+    for (const note of sustainedNotes) {
+        if (!heldNotes.has(note)) {
+            notesToRelease.push(note);
+        } else {
+            clearSustainReleaseTimer(note);
+            sustainedNotes.delete(note);
+        }
+    }
+
+    for (const note of notesToRelease) {
+        releaseNote(note);
+    }
 }
 
 function buildKeyMap() {
@@ -398,6 +466,10 @@ async function initAudio() {
 }
 
 function handleNoteOn(note) {
+    heldNotes.add(note);
+    clearSustainReleaseTimer(note);
+    sustainedNotes.delete(note);
+
     if (!audioReady) {
         pendingNotes.add(note);
         initAudio()
@@ -419,15 +491,28 @@ function handleNoteOn(note) {
 
 function handleNoteOff(note) {
     pendingNotes.delete(note);
+    heldNotes.delete(note);
     if (!audioReady) return;
 
-    if (typeof wasmNoteOff !== 'undefined') {
-        wasmNoteOff(note);
+    if (sustainPedalDown) {
+        sustainedNotes.add(note);
+        scheduleSustainRelease(note);
+        return;
     }
+
+    releaseNote(note);
 }
 
 function handleSustain(down) {
     sustainPedalDown = down;
+    if (!down) {
+        flushSustainedNotes();
+    } else if (Number.isFinite(sustainReleaseMs)) {
+        for (const note of sustainedNotes) {
+            scheduleSustainRelease(note);
+        }
+    }
+
     if (!audioReady) return;
 
     if (typeof wasmSetSustain !== 'undefined') {

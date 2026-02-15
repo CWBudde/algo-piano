@@ -328,6 +328,7 @@ type BodyConfig struct {
 	Brightness     float64
 	PlateRatio     float64 // Lx/Ly aspect ratio of soundboard (~1.0-3.0)
 	StiffnessRatio float64 // Dx/Dy orthotropic stiffness ratio (~5-20 for spruce)
+	ModeWarp       float64 // Power-law warp on eigenfreq ratios; 1.0 = pure Kirchhoff, >1 clusters low, <1 spreads
 	DirectLevel    float64
 	LowDecayS      float64 // Decay time for modes below CrossoverHz
 	HighDecayS     float64 // Decay time for modes above CrossoverHz
@@ -347,6 +348,7 @@ func DefaultBodyConfig() BodyConfig {
 		Brightness:     1.0,
 		PlateRatio:     1.6,  // typical grand piano soundboard aspect ratio
 		StiffnessRatio: 12.0, // spruce Dx/Dy (~10-15)
+		ModeWarp:       1.0,  // pure Kirchhoff placement
 		DirectLevel:    0.6,
 		LowDecayS:      0.15,
 		HighDecayS:     0.03,
@@ -374,6 +376,9 @@ func (c *BodyConfig) Validate() error {
 	}
 	if c.StiffnessRatio <= 0 {
 		return fmt.Errorf("stiffness ratio must be > 0")
+	}
+	if c.ModeWarp <= 0 {
+		return fmt.Errorf("mode warp must be > 0")
 	}
 	if c.DirectLevel < 0 {
 		return fmt.Errorf("direct level must be >= 0")
@@ -413,9 +418,26 @@ func GenerateBody(cfg BodyConfig) ([]float32, error) {
 	}
 	minF := 35.0
 
-	// Compute Kirchhoff plate eigenfrequencies.
-	// f_{mn}/f_{11} = sqrt(S·m⁴ + 2·√S·m²n²R² + n⁴R⁴) / sqrt(S + 2·√S·R² + R⁴)
+	// Compute Kirchhoff plate eigenfrequencies with optional warp.
 	freqs := plateEigenfreqs(minF, maxF, cfg.Modes, cfg.PlateRatio, cfg.StiffnessRatio)
+
+	// Apply mode warp: power-law on eigenfrequency ratios relative to fundamental.
+	// ModeWarp=1 keeps pure Kirchhoff, >1 clusters modes toward low freqs, <1 spreads them.
+	if cfg.ModeWarp != 1.0 && len(freqs) > 1 {
+		f0 := freqs[0]
+		for i := 1; i < len(freqs); i++ {
+			ratio := freqs[i] / f0
+			freqs[i] = f0 * math.Pow(ratio, cfg.ModeWarp)
+		}
+		// Re-cap to maxF after warping.
+		for i := len(freqs) - 1; i >= 1; i-- {
+			if freqs[i] > maxF {
+				freqs = freqs[:i]
+			} else {
+				break
+			}
+		}
+	}
 
 	// Body modes with 2-way frequency-dependent decay.
 	logCrossover := math.Log(cfg.CrossoverHz)
