@@ -8,12 +8,12 @@ Get progressively closer to a reference recording without regressions, using alt
 
 The `piano-fit` tool optimizes different parameter groups selected via `--optimize`:
 
-| Groups | What it optimizes | IR handling |
-| ------ | ----------------- | ----------- |
-| `piano,mix` | Piano synthesis knobs (hammer, unison, per-note, output gain, IR mix) | Fixed IR loaded from preset |
-| `body-ir,mix` | Body IR synthesis knobs + mix levels | Generates mono body IR per eval |
-| `body-ir,room-ir,mix` | Body + room IR synthesis knobs + mix | Generates body + room IRs per eval |
-| `piano,body-ir,room-ir,mix` | All knobs jointly | Generates IRs + optimizes piano knobs |
+| Groups                      | What it optimizes                                                     | IR handling                           |
+| --------------------------- | --------------------------------------------------------------------- | ------------------------------------- |
+| `piano,mix`                 | Piano synthesis knobs (hammer, unison, per-note, output gain, IR mix) | Fixed IR loaded from preset           |
+| `body-ir,mix`               | Body IR synthesis knobs + mix levels                                  | Generates mono body IR per eval       |
+| `body-ir,room-ir,mix`       | Body + room IR synthesis knobs + mix                                  | Generates body + room IRs per eval    |
+| `piano,body-ir,room-ir,mix` | All knobs jointly                                                     | Generates IRs + optimizes piano knobs |
 
 The idea: alternate between piano-only and IR stages so each builds on the previous best result.
 
@@ -45,7 +45,7 @@ go run --tags asm ./cmd/piano-fit \
     --output-preset out/stages/stage1.json \
     --optimize piano,mix \
     --note 60 \
-    --time-budget 300 \
+    --time-budget 600 \
     --max-evals 5000 \
     --workers auto
 ```
@@ -64,7 +64,7 @@ go run --tags asm ./cmd/piano-fit \
     --output-ir out/stages/stage2-ir.wav \
     --optimize body-ir,mix \
     --note 60 \
-    --time-budget 300 \
+    --time-budget 600 \
     --max-evals 2000 \
     --workers auto \
     --resume=false
@@ -83,7 +83,7 @@ go run --tags asm ./cmd/piano-fit \
     --output-preset out/stages/stage3.json \
     --optimize piano,mix \
     --note 60 \
-    --time-budget 300 \
+    --time-budget 600 \
     --max-evals 5000 \
     --workers auto \
     --resume=false

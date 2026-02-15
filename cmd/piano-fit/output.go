@@ -71,8 +71,8 @@ func writeOutputs(
 			return err
 		}
 
-		p.BodyIRWavPath = presetIRPath(outputPreset, bodyIRPath)
-		p.RoomIRWavPath = presetIRPath(outputPreset, roomIRPath)
+		p.BodyIRWavPath = bodyIRPath
+		p.RoomIRWavPath = roomIRPath
 		// Clear legacy IR path since we use dual-IR now.
 		p.IRWavPath = ""
 	}

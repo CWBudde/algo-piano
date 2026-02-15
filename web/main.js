@@ -1,9 +1,14 @@
-// Main thread JavaScript - loads WASM and sets up AudioWorklet
+// Main thread JavaScript - loads WASM and drives audio rendering
 
 let audioContext = null;
-let pianoWorkletNode = null;
+let outputNode = null;
+let wasmMemoryBuffer = null;
+let initAudioPromise = null;
+const pendingNotes = new Set();
 let wasmReady = false;
 let audioReady = false;
+const RENDER_CHUNK_FRAMES = 128;
+const SCRIPT_BUFFER_SIZE = 256;
 
 async function init() {
     try {
@@ -237,81 +242,124 @@ function buildKeyMap() {
 
 async function initAudio() {
     if (audioReady) return;
+    if (initAudioPromise) return initAudioPromise;
 
-    try {
+    initAudioPromise = (async () => {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
-        // Initialize WASM with sample rate
+        // Initialize WASM with sample rate.
         wasmInit(audioContext.sampleRate);
+        wasmMemoryBuffer = wasmGetMemoryBuffer();
 
-        // Load AudioWorklet
-        await audioContext.audioWorklet.addModule('piano-worklet.js');
+        // Match algo-dsp's main-thread rendering model so WASM exports are in scope.
+        outputNode = audioContext.createScriptProcessor(SCRIPT_BUFFER_SIZE, 0, 2);
+        outputNode.onaudioprocess = (event) => {
+            const outputBuffer = event.outputBuffer;
+            const left = outputBuffer.getChannelData(0);
+            const hasStereo = outputBuffer.numberOfChannels > 1;
+            const right = hasStereo ? outputBuffer.getChannelData(1) : null;
 
-        // Create worklet node
-        pianoWorkletNode = new AudioWorkletNode(
-            audioContext,
-            'piano-worklet-processor',
-            {
-                numberOfInputs: 0,
-                numberOfOutputs: 1,
-                outputChannelCount: [2]
+            if (!audioReady || typeof wasmProcessBlock === 'undefined') {
+                left.fill(0);
+                if (right) right.fill(0);
+                return;
             }
-        );
 
-        // Send WASM memory buffer to worklet
-        const memoryBuffer = wasmGetMemoryBuffer();
-        pianoWorkletNode.port.postMessage({
-            type: 'memoryBuffer',
-            data: { buffer: memoryBuffer }
-        });
+            // Refresh in case WASM memory has grown.
+            wasmMemoryBuffer = wasmGetMemoryBuffer();
+            if (!wasmMemoryBuffer) {
+                left.fill(0);
+                if (right) right.fill(0);
+                return;
+            }
 
-        pianoWorkletNode.connect(audioContext.destination);
+            let offset = 0;
+            while (offset < left.length) {
+                const frames = Math.min(RENDER_CHUNK_FRAMES, left.length - offset);
+                const bufferPtr = wasmProcessBlock(frames);
+
+                if (bufferPtr === 0) {
+                    left.fill(0, offset);
+                    if (right) right.fill(0, offset);
+                    break;
+                }
+
+                const interleaved = new Float32Array(
+                    wasmMemoryBuffer,
+                    bufferPtr,
+                    frames * 2
+                );
+
+                for (let i = 0; i < frames; i++) {
+                    left[offset + i] = interleaved[i * 2];
+                    if (right) right[offset + i] = interleaved[i * 2 + 1];
+                }
+
+                offset += frames;
+            }
+        };
+
+        outputNode.connect(audioContext.destination);
+        await audioContext.resume();
 
         audioReady = true;
         updateStatus(`Ready! Sample rate: ${audioContext.sampleRate} Hz`);
 
         // Try to load IR
         loadIR();
+    })();
 
+    try {
+        await initAudioPromise;
     } catch (error) {
+        audioReady = false;
+        wasmMemoryBuffer = null;
+        if (outputNode) {
+            outputNode.disconnect();
+            outputNode = null;
+        }
         console.error('Failed to initialize audio:', error);
         updateStatus('Error initializing audio: ' + error.message);
+        throw error;
+    } finally {
+        initAudioPromise = null;
     }
 }
 
 function handleNoteOn(note) {
     if (!audioReady) {
-        initAudio();
+        pendingNotes.add(note);
+        initAudio()
+            .then(() => {
+                if (audioReady && pendingNotes.has(note) && typeof wasmNoteOn !== 'undefined') {
+                    wasmNoteOn(note, 80);
+                }
+            })
+            .catch(() => {
+                // initAudio already updates UI with the error details.
+            });
         return;
     }
 
-    if (pianoWorkletNode) {
-        pianoWorkletNode.port.postMessage({
-            type: 'noteOn',
-            data: { note, velocity: 80 }
-        });
+    if (typeof wasmNoteOn !== 'undefined') {
+        wasmNoteOn(note, 80);
     }
 }
 
 function handleNoteOff(note) {
+    pendingNotes.delete(note);
     if (!audioReady) return;
 
-    if (pianoWorkletNode) {
-        pianoWorkletNode.port.postMessage({
-            type: 'noteOff',
-            data: { note }
-        });
+    if (typeof wasmNoteOff !== 'undefined') {
+        wasmNoteOff(note);
     }
 }
 
 function handleSustain(down) {
     if (!audioReady) return;
 
-    if (pianoWorkletNode) {
-        pianoWorkletNode.port.postMessage({
-            type: 'sustain',
-            data: { down }
-        });
+    if (typeof wasmSetSustain !== 'undefined') {
+        wasmSetSustain(down);
     }
 }
 

@@ -91,6 +91,29 @@ func WriteStereoInterleavedWAV(path string, samples []float32, sampleRate int) e
 	return enc.Write(buf)
 }
 
+func WriteMonoWAV(path string, data []float32, sampleRate int) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	enc := wav.NewEncoder(f, sampleRate, 16, 1, 1)
+	defer enc.Close()
+
+	buf := &audio.Float32Buffer{
+		Format: &audio.Format{
+			SampleRate:  sampleRate,
+			NumChannels: 1,
+		},
+		Data:           data,
+		SourceBitDepth: 16,
+	}
+	return enc.Write(buf)
+}
+
 func StereoToMono64(st []float32) []float64 {
 	if len(st) < 2 {
 		return nil

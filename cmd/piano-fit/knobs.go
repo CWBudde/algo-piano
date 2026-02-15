@@ -10,10 +10,11 @@ import (
 )
 
 type knobDef struct {
-	Name  string
-	Min   float64
-	Max   float64
-	IsInt bool
+	Name     string
+	Min      float64
+	Max      float64
+	IsInt    bool
+	LogScale bool // Map [0,1] logarithmically; Min must be > 0
 }
 
 type candidate struct {
@@ -104,8 +105,9 @@ func initCandidate(
 		addKnob(knobDef{Name: "body_brightness", Min: 0.5, Max: 2.5}, bodyCfg.Brightness)
 		addKnob(knobDef{Name: "body_density", Min: 0.5, Max: 4.0}, bodyCfg.Density)
 		addKnob(knobDef{Name: "body_direct", Min: 0.1, Max: 1.2}, bodyCfg.DirectLevel)
-		addKnob(knobDef{Name: "body_decay", Min: 0.01, Max: 0.5}, bodyCfg.DecayS)
-		addKnob(knobDef{Name: "body_duration", Min: 0.02, Max: 0.3}, bodyCfg.DurationS)
+		addKnob(knobDef{Name: "body_decay", Min: 0.001, Max: 0.5, LogScale: true}, bodyCfg.DecayS)
+		addKnob(knobDef{Name: "body_duration", Min: 0.005, Max: 0.3, LogScale: true}, bodyCfg.DurationS)
+		addKnob(knobDef{Name: "body_fadeout", Min: 0.001, Max: 0.05, LogScale: true}, bodyCfg.FadeOutS)
 	}
 
 	// Room IR group knobs.
@@ -114,9 +116,10 @@ func initCandidate(
 		addKnob(knobDef{Name: "room_late", Min: 0.0, Max: 0.15}, roomCfg.LateLevel)
 		addKnob(knobDef{Name: "room_stereo_width", Min: 0.0, Max: 1.0}, roomCfg.StereoWidth)
 		addKnob(knobDef{Name: "room_brightness", Min: 0.3, Max: 2.0}, roomCfg.Brightness)
-		addKnob(knobDef{Name: "room_low_decay", Min: 0.3, Max: 3.0}, roomCfg.LowDecayS)
-		addKnob(knobDef{Name: "room_high_decay", Min: 0.05, Max: 0.8}, roomCfg.HighDecayS)
-		addKnob(knobDef{Name: "room_duration", Min: 0.3, Max: 2.0}, roomCfg.DurationS)
+		addKnob(knobDef{Name: "room_low_decay", Min: 0.05, Max: 3.0, LogScale: true}, roomCfg.LowDecayS)
+		addKnob(knobDef{Name: "room_high_decay", Min: 0.01, Max: 0.8, LogScale: true}, roomCfg.HighDecayS)
+		addKnob(knobDef{Name: "room_duration", Min: 0.1, Max: 2.0, LogScale: true}, roomCfg.DurationS)
+		addKnob(knobDef{Name: "room_fadeout", Min: 0.005, Max: 0.1, LogScale: true}, roomCfg.FadeOutS)
 	}
 
 	// Mix group knobs: dual-IR vs legacy mode.
@@ -211,6 +214,8 @@ func applyCandidate(
 			bodyCfg.DecayS = v
 		case "body_duration":
 			bodyCfg.DurationS = v
+		case "body_fadeout":
+			bodyCfg.FadeOutS = v
 		// Room IR knobs.
 		case "room_early":
 			roomCfg.EarlyCount = int(math.Round(v))
@@ -226,6 +231,8 @@ func applyCandidate(
 			roomCfg.HighDecayS = v
 		case "room_duration":
 			roomCfg.DurationS = v
+		case "room_fadeout":
+			roomCfg.FadeOutS = v
 		// Mix knobs (dual-IR).
 		case "body_dry":
 			params.BodyDryMix = float32(v)
@@ -270,7 +277,12 @@ func fromNormalized(pos []float64, defs []knobDef) candidate {
 		if i < len(pos) {
 			x = clamp(pos[i], 0, 1)
 		}
-		v := defs[i].Min + x*(defs[i].Max-defs[i].Min)
+		var v float64
+		if defs[i].LogScale {
+			v = math.Exp(math.Log(defs[i].Min) + x*(math.Log(defs[i].Max)-math.Log(defs[i].Min)))
+		} else {
+			v = defs[i].Min + x*(defs[i].Max-defs[i].Min)
+		}
 		if defs[i].IsInt {
 			v = math.Round(v)
 		}

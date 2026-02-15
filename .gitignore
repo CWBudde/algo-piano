@@ -2,14 +2,16 @@
 bin/
 piano-render
 piano-fit-fast
+piano-fit
+!piano-fit/
 !piano-fit-fast/
+!piano-render/
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 *.test
-!piano-render/
 
 # Test output
 *.wav
@@ -18,6 +20,7 @@ piano-fit-fast
 output.wav
 bench-*.wav
 tests/*.wav
+out/stages/
 
 # IDEs
 .vscode/

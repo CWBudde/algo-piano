@@ -14,24 +14,26 @@ Merge both tools into a single `piano-fit` command with a `--optimize` flag that
 
 ## Knob Groups
 
-| Group | Knobs | Count |
-|-------|-------|-------|
-| `piano` | output_gain, hammer_*, unison_*, per_note.N.loss/inharmonicity/strike_position, render.velocity, render.release_after | 12 |
-| `body-ir` | body_modes, body_brightness, body_density, body_direct, body_decay, body_duration | 6 |
-| `room-ir` | room_early, room_late, room_stereo_width, room_brightness, room_low_decay, room_high_decay, room_duration | 7 |
-| `mix` | body_dry, body_gain, room_wet, room_gain (or legacy ir_wet_mix, ir_dry_mix, ir_gain) | 3-4 |
+| Group     | Knobs                                                                                                                  | Count |
+| --------- | ---------------------------------------------------------------------------------------------------------------------- | ----- |
+| `piano`   | output*gain, hammer*_, unison\__, per_note.N.loss/inharmonicity/strike_position, render.velocity, render.release_after | 12    |
+| `body-ir` | body_modes, body_brightness, body_density, body_direct, body_decay, body_duration                                      | 6     |
+| `room-ir` | room_early, room_late, room_stereo_width, room_brightness, room_low_decay, room_high_decay, room_duration              | 7     |
+| `mix`     | body_dry, body_gain, room_wet, room_gain (or legacy ir_wet_mix, ir_dry_mix, ir_gain)                                   | 3-4   |
 
 Default: `--optimize=piano,mix` (equivalent to old `piano-fit-fast`).
 
 ## Evaluation Logic
 
 When `body-ir` or `room-ir` is in the optimize set:
+
 1. Generate body/room IR from candidate knobs via `irsynth.GenerateBody`/`irsynth.GenerateRoom`.
 2. Clear IR WAV paths on params so `NewPiano` doesn't load from disk.
 3. Set IR buffers directly via `Piano.SetBodyIR()`/`Piano.SetRoomIR()`.
 4. Render and compare.
 
 When neither IR group is active:
+
 1. Apply piano/mix knobs to params.
 2. `NewPiano` loads IR from disk via paths in the preset.
 3. Render and compare.
@@ -41,6 +43,7 @@ When neither IR group is active:
 All flags from both tools, unified:
 
 **Core:**
+
 - `--reference` (default: `reference/c4.wav`)
 - `--preset` (default: `assets/presets/default.json`)
 - `--output-preset` (required)
@@ -56,10 +59,12 @@ All flags from both tools, unified:
 - `--resume-report`
 
 **IR-specific (required when body-ir/room-ir active):**
+
 - `--output-ir` (base path; body and room WAVs derived as `*-body.wav`, `*-room.wav`)
 - `--work-dir` (default: `out/piano-fit`)
 
 **Rendering:**
+
 - `--velocity` (default: 118)
 - `--release-after` (default: 3.5)
 - `--decay-dbfs` (default: -90)
@@ -72,13 +77,16 @@ All flags from both tools, unified:
 - `--render-block-size` (default: 128)
 
 **Refinement:**
+
 - `--refine-top-k` (default: 3)
 - `--top-k` (default: 5)
 
 **Output:**
+
 - `--write-best-candidate` (optional WAV snapshot)
 
 **Mayfly:**
+
 - `--mayfly-variant` (default: desma)
 - `--mayfly-pop` (default: 10)
 - `--mayfly-round-evals` (default: 240)

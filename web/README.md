@@ -1,6 +1,6 @@
 # Algo Piano Web Demo
 
-Browser-based piano demo using WebAssembly and AudioWorklet.
+Browser-based piano demo using WebAssembly and a main-thread audio callback.
 
 ## Local Development
 
@@ -37,8 +37,7 @@ Then open: http://localhost:8080
 
 - `index.html` - Main page
 - `styles.css` - Keyboard styling
-- `main.js` - Main thread: WASM loader, UI
-- `piano-worklet.js` - AudioWorklet processor
+- `main.js` - Main thread: WASM loader, UI, and audio rendering
 - `wasm_exec.js` - Go WASM runtime (from Go SDK)
 - `dist/piano.wasm` - Compiled Go synthesizer
 - `dist/assets/ir/` - Impulse response files
