@@ -105,6 +105,7 @@ func initCandidate(
 		addKnob(knobDef{Name: "body_brightness", Min: 0.5, Max: 2.5}, bodyCfg.Brightness)
 		addKnob(knobDef{Name: "body_plate_ratio", Min: 0.8, Max: 3.0}, bodyCfg.PlateRatio)
 		addKnob(knobDef{Name: "body_stiffness_ratio", Min: 3.0, Max: 25.0, LogScale: true}, bodyCfg.StiffnessRatio)
+		addKnob(knobDef{Name: "body_mode_warp", Min: 0.5, Max: 2.0}, bodyCfg.ModeWarp)
 		addKnob(knobDef{Name: "body_direct", Min: 0.1, Max: 1.2}, bodyCfg.DirectLevel)
 		addKnob(knobDef{Name: "body_low_decay", Min: 0.01, Max: 0.5, LogScale: true}, bodyCfg.LowDecayS)
 		addKnob(knobDef{Name: "body_high_decay", Min: 0.001, Max: 0.15, LogScale: true}, bodyCfg.HighDecayS)
@@ -213,6 +214,8 @@ func applyCandidate(
 			bodyCfg.PlateRatio = v
 		case "body_stiffness_ratio":
 			bodyCfg.StiffnessRatio = v
+		case "body_mode_warp":
+			bodyCfg.ModeWarp = v
 		case "body_direct":
 			bodyCfg.DirectLevel = v
 		case "body_low_decay":
