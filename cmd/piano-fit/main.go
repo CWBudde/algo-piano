@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime/pprof"
 	"strings"
 
 	fitcommon "github.com/cwbudde/algo-piano/internal/fitcommon"
@@ -45,10 +46,20 @@ func main() {
 	resumeReport := flag.String("resume-report", "", "Optional report JSON path to resume from (default: current report path)")
 	workers := flag.String("workers", "1", "Parallel optimization workers running independent Mayfly rounds (number or 'auto')")
 
+	cpuProfile := flag.String("cpuprofile", "", "Write CPU profile to file")
 	mayflyVariant := flag.String("mayfly-variant", "desma", "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
 	mayflyPop := flag.Int("mayfly-pop", 10, "Male and female population size per Mayfly run")
 	mayflyRoundEvals := flag.Int("mayfly-round-evals", 240, "Target eval budget per Mayfly round")
 	flag.Parse()
+
+	if *cpuProfile != "" {
+		f, err := os.Create(*cpuProfile)
+		if err != nil {
+			die("cpuprofile: %v", err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 
 	groups, err := parseOptimizeGroups(*optimize)
 	if err != nil {

@@ -29,6 +29,10 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
   "hammer_contact_time_scale": 0.9,
   "unison_detune_scale": 0.8,
   "unison_crossfeed": 0.001,
+  "coupling_enabled": true,
+  "coupling_octave_gain": 0.00031,
+  "coupling_fifth_gain": 0.00012,
+  "coupling_max_force": 0.0007,
   "soft_pedal_strike_offset": 0.1,
   "soft_pedal_hardness": 0.75,
   "per_note": {
@@ -66,6 +70,10 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
 		p.HammerContactTimeScale != 0.9 ||
 		p.UnisonDetuneScale != 0.8 ||
 		p.UnisonCrossfeed != 0.001 ||
+		!p.CouplingEnabled ||
+		p.CouplingOctaveGain != 0.00031 ||
+		p.CouplingFifthGain != 0.00012 ||
+		p.CouplingMaxForce != 0.0007 ||
 		p.SoftPedalStrikeOffset != 0.1 ||
 		p.SoftPedalHardness != 0.75 {
 		t.Fatalf("extended tuning fields mismatch: %+v", p)

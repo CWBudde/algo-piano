@@ -75,3 +75,58 @@ func TestHammerInfluenceScalesApplyToHammerExciter(t *testing.T) {
 		t.Fatalf("expected positive hammer state after scaling")
 	}
 }
+
+func TestStringBankBuildsOctaveCouplingEdges(t *testing.T) {
+	params := NewDefaultParams()
+	params.CouplingEnabled = true
+	params.CouplingOctaveGain = 0.001
+	params.CouplingFifthGain = 0.0
+	sb := NewStringBank(48000, params)
+
+	edges := sb.coupling[60]
+	hasUp := false
+	hasDown := false
+	for _, e := range edges {
+		if e.to == 72 {
+			hasUp = true
+		}
+		if e.to == 48 {
+			hasDown = true
+		}
+	}
+	if !hasUp || !hasDown {
+		t.Fatalf("expected octave coupling edges from 60 to 72/48, got=%v", edges)
+	}
+}
+
+func TestCouplingEnergizesOctaveWithoutResonanceEngine(t *testing.T) {
+	withParams := NewDefaultParams()
+	withParams.ResonanceEnabled = false
+	withParams.CouplingEnabled = true
+	withParams.CouplingOctaveGain = 0.002
+	withParams.CouplingFifthGain = 0.0
+	withParams.CouplingMaxForce = 0.005
+	with := NewPiano(48000, 16, withParams)
+	with.SetSustainPedal(true)
+	with.NoteOn(60, 115)
+	heldWith := with.ringing.bank.Group(72)
+
+	withoutParams := NewDefaultParams()
+	withoutParams.ResonanceEnabled = false
+	withoutParams.CouplingEnabled = false
+	without := NewPiano(48000, 16, withoutParams)
+	without.SetSustainPedal(true)
+	without.NoteOn(60, 115)
+	heldWithout := without.ringing.bank.Group(72)
+
+	for i := 0; i < 40; i++ {
+		_ = with.Process(128)
+		_ = without.Process(128)
+	}
+
+	withEnergy := voiceInternalEnergy(heldWith)
+	withoutEnergy := voiceInternalEnergy(heldWithout)
+	if withEnergy <= withoutEnergy*2.0 {
+		t.Fatalf("expected coupling to energize octave string: with=%e without=%e", withEnergy, withoutEnergy)
+	}
+}

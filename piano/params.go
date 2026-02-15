@@ -33,6 +33,12 @@ type Params struct {
 	UnisonDetuneScale float32
 	UnisonCrossfeed   float32
 
+	// Sparse string-bank coupling controls.
+	CouplingEnabled    bool
+	CouplingOctaveGain float32
+	CouplingFifthGain  float32
+	CouplingMaxForce   float32
+
 	SoftPedalStrikeOffset float32
 	SoftPedalHardness     float32
 }
@@ -68,6 +74,10 @@ func NewDefaultParams() *Params {
 		HammerContactTimeScale:     1.0,
 		UnisonDetuneScale:          1.0,
 		UnisonCrossfeed:            0.0008,
+		CouplingEnabled:            true,
+		CouplingOctaveGain:         0.00018,
+		CouplingFifthGain:          0.00008,
+		CouplingMaxForce:           0.00045,
 		SoftPedalStrikeOffset:      0.08,
 		SoftPedalHardness:          0.78,
 	}

@@ -14,6 +14,10 @@
   "hammer_contact_time_scale": 1.0654026,
   "unison_detune_scale": 0.9019648,
   "unison_crossfeed": 0.0037426183,
+  "coupling_enabled": true,
+  "coupling_octave_gain": 0.00018,
+  "coupling_fifth_gain": 0.00008,
+  "coupling_max_force": 0.00045,
   "soft_pedal_strike_offset": 0.08,
   "soft_pedal_hardness": 0.78,
   "per_note": {

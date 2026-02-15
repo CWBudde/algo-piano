@@ -6,10 +6,12 @@ func TestSympatheticResonanceEnergizesSilentHeldString(t *testing.T) {
 	withParams := NewDefaultParams()
 	withParams.ResonanceEnabled = true
 	withParams.ResonanceGain = 0.00025
+	withParams.CouplingEnabled = false
 	with, withHeld := setupSympatheticScenario(withParams)
 
 	withoutParams := NewDefaultParams()
 	withoutParams.ResonanceEnabled = false
+	withoutParams.CouplingEnabled = false
 	without, withoutHeld := setupSympatheticScenario(withoutParams)
 
 	for i := 0; i < 40; i++ {

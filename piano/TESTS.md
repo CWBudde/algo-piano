@@ -14,6 +14,8 @@ This maps each split source file to its direct and indirect test coverage.
 
 - `TestStringBankUnisonStringCountByRange` (`ringing_test.go`)
 - `TestStringBankDetuneScaleZeroCollapsesDetuning` (`ringing_test.go`)
+- `TestStringBankBuildsOctaveCouplingEdges` (`ringing_test.go`)
+- `TestCouplingEnergizesOctaveWithoutResonanceEngine` (`ringing_test.go`)
 - `TestSoftPedalReducesAttackBrightness` (`pedals_test.go`)
 - `TestPerNoteResonanceFilterIsFrequencySelective` (`resonance_test.go`)
 - `TestSympatheticResonanceEnergizesSilentHeldString` (`resonance_test.go`)
