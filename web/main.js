@@ -2,6 +2,7 @@
 
 let audioContext = null;
 let outputNode = null;
+let wasmMemory = null;
 let wasmMemoryBuffer = null;
 let initAudioPromise = null;
 const pendingNotes = new Set();
@@ -18,6 +19,11 @@ async function init() {
             fetch('dist/piano.wasm'),
             go.importObject
         );
+        wasmMemory = result.instance.exports.mem || result.instance.exports.memory || null;
+        if (!wasmMemory) {
+            throw new Error('WASM memory export not found');
+        }
+        window.__algoPianoWasmMemory = wasmMemory;
         go.run(result.instance);
 
         // Wait a bit for WASM exports to be set
@@ -249,7 +255,10 @@ async function initAudio() {
 
         // Initialize WASM with sample rate.
         wasmInit(audioContext.sampleRate);
-        wasmMemoryBuffer = wasmGetMemoryBuffer();
+        wasmMemoryBuffer = wasmMemory ? wasmMemory.buffer : null;
+        if (!wasmMemoryBuffer) {
+            throw new Error('WASM memory buffer unavailable');
+        }
 
         // Match algo-dsp's main-thread rendering model so WASM exports are in scope.
         outputNode = audioContext.createScriptProcessor(SCRIPT_BUFFER_SIZE, 0, 2);
@@ -259,43 +268,49 @@ async function initAudio() {
             const hasStereo = outputBuffer.numberOfChannels > 1;
             const right = hasStereo ? outputBuffer.getChannelData(1) : null;
 
-            if (!audioReady || typeof wasmProcessBlock === 'undefined') {
-                left.fill(0);
-                if (right) right.fill(0);
-                return;
-            }
-
-            // Refresh in case WASM memory has grown.
-            wasmMemoryBuffer = wasmGetMemoryBuffer();
-            if (!wasmMemoryBuffer) {
-                left.fill(0);
-                if (right) right.fill(0);
-                return;
-            }
-
-            let offset = 0;
-            while (offset < left.length) {
-                const frames = Math.min(RENDER_CHUNK_FRAMES, left.length - offset);
-                const bufferPtr = wasmProcessBlock(frames);
-
-                if (bufferPtr === 0) {
-                    left.fill(0, offset);
-                    if (right) right.fill(0, offset);
-                    break;
+            try {
+                if (!audioReady || typeof wasmProcessBlock === 'undefined' || !wasmMemory) {
+                    left.fill(0);
+                    if (right) right.fill(0);
+                    return;
                 }
 
-                const interleaved = new Float32Array(
-                    wasmMemoryBuffer,
-                    bufferPtr,
-                    frames * 2
-                );
-
-                for (let i = 0; i < frames; i++) {
-                    left[offset + i] = interleaved[i * 2];
-                    if (right) right[offset + i] = interleaved[i * 2 + 1];
+                // Refresh in case WASM memory has grown.
+                wasmMemoryBuffer = wasmMemory.buffer;
+                if (!wasmMemoryBuffer) {
+                    left.fill(0);
+                    if (right) right.fill(0);
+                    return;
                 }
 
-                offset += frames;
+                let offset = 0;
+                while (offset < left.length) {
+                    const frames = Math.min(RENDER_CHUNK_FRAMES, left.length - offset);
+                    const bufferPtr = wasmProcessBlock(frames);
+
+                    if (bufferPtr === 0) {
+                        left.fill(0, offset);
+                        if (right) right.fill(0, offset);
+                        break;
+                    }
+
+                    const interleaved = new Float32Array(
+                        wasmMemoryBuffer,
+                        bufferPtr,
+                        frames * 2
+                    );
+
+                    for (let i = 0; i < frames; i++) {
+                        left[offset + i] = interleaved[i * 2];
+                        if (right) right[offset + i] = interleaved[i * 2 + 1];
+                    }
+
+                    offset += frames;
+                }
+            } catch (error) {
+                console.error('Audio render error:', error);
+                left.fill(0);
+                if (right) right.fill(0);
             }
         };
 
