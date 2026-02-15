@@ -298,12 +298,12 @@ This phase implements the structural change needed for realistic sustain-pedal b
 - introduce explicit inter-string coupling paths for sympathetic resonance
 
 - [ ] Split voice responsibilities: excitation vs ringing
-  - [ ] Introduce explicit engine-side components for:
-    - [ ] key/voice control state (note on/off, velocity, pedal state)
-    - [ ] hammer excitation events (short nonlinear contact window)
-    - [ ] persistent ringing state (long-lived string waveguides)
-  - [ ] Refactor `Voice` so it no longer owns string lifetime; it should target pre-existing strings.
-  - [ ] Keep `Piano.NoteOn/NoteOff/SetSustainPedal` public API unchanged during refactor.
+  - [x] Introduce explicit engine-side components for:
+    - [x] key/voice control state (note on/off, velocity, pedal state)
+    - [x] hammer excitation events (short nonlinear contact window)
+    - [x] persistent ringing state (long-lived string waveguides)
+  - [x] Refactor `Voice` so it no longer owns string lifetime; it should target pre-existing strings.
+  - [x] Keep `Piano.NoteOn/NoteOff/SetSustainPedal` public API unchanged during refactor.
 - [ ] Implement a persistent full-string bank
   - [ ] Allocate full piano string set at init (1-3 strings per note across the keyboard), independent of active notes.
   - [ ] Maintain per-string damper state independent from note allocation.

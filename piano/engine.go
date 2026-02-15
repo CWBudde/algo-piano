@@ -1,10 +1,12 @@
 package piano
 
-// Piano is the global engine managing voice allocation and polyphony.
+// Piano is the global engine managing note control, excitation, and ringing state.
 type Piano struct {
 	sampleRate    int
-	voices        []*Voice
 	params        *Params
+	keys          *keyStateTracker
+	hammerExciter *HammerExciter
+	ringing       *RingingState
 	bodyConvolver *BodyConvolver
 	roomConvolver *SoundboardConvolver
 	resonance     *ResonanceEngine
@@ -14,10 +16,13 @@ type Piano struct {
 
 // NewPiano creates a new piano engine.
 func NewPiano(sampleRate int, maxPolyphony int, params *Params) *Piano {
+	_ = maxPolyphony // Retained in API for compatibility; ringing state is persistent.
 	p := &Piano{
 		sampleRate:    sampleRate,
-		voices:        make([]*Voice, 0, maxPolyphony),
 		params:        params,
+		keys:          newKeyStateTracker(),
+		hammerExciter: NewHammerExciter(sampleRate, params),
+		ringing:       NewRingingState(sampleRate, params),
 		bodyConvolver: NewBodyConvolver(sampleRate),
 		roomConvolver: NewSoundboardConvolver(sampleRate),
 	}
@@ -51,35 +56,27 @@ func NewPiano(sampleRate int, maxPolyphony int, params *Params) *Piano {
 
 // NoteOn triggers a new note.
 func (p *Piano) NoteOn(note int, velocity int) {
-	v := NewVoice(p.sampleRate, note, velocity, p.params)
-	v.SetSustain(p.sustainPedal)
-	v.SetSoftPedal(p.softPedal)
-	p.voices = append(p.voices, v)
+	p.keys.NoteOn(note, velocity)
+	p.ringing.SetKeyDown(note, true)
+	p.hammerExciter.Trigger(note, velocity)
 }
 
 // NoteOff releases a note.
 func (p *Piano) NoteOff(note int) {
-	for _, v := range p.voices {
-		if v.note == note {
-			v.Release()
-		}
-	}
+	p.keys.NoteOff(note)
+	p.ringing.SetKeyDown(note, false)
 }
 
 // SetSustainPedal sets sustain pedal state (true = down, false = up).
 func (p *Piano) SetSustainPedal(down bool) {
 	p.sustainPedal = down
-	for _, v := range p.voices {
-		v.SetSustain(down)
-	}
+	p.ringing.SetSustain(down)
 }
 
 // SetSoftPedal sets una corda / soft pedal state (true = down, false = up).
 func (p *Piano) SetSoftPedal(down bool) {
 	p.softPedal = down
-	for _, v := range p.voices {
-		v.SetSoftPedal(down)
-	}
+	p.hammerExciter.SetSoftPedal(down)
 }
 
 // SetIR sets the room impulse response from pre-computed stereo buffers.
@@ -100,23 +97,13 @@ func (p *Piano) SetRoomIR(left, right []float32) {
 
 // Process renders a block of audio samples (stereo interleaved).
 func (p *Piano) Process(numFrames int) []float32 {
-	monoMix := make([]float32, numFrames)
-
-	for _, v := range p.voices {
-		if !v.active {
-			continue
-		}
-		voiceOutput := v.Process(numFrames)
-		for i := 0; i < numFrames; i++ {
-			monoMix[i] += voiceOutput[i]
-		}
-	}
+	monoMix := p.ringing.Process(numFrames, p.hammerExciter)
 
 	if p.resonance != nil {
-		p.resonance.InjectFromBridge(monoMix, p.voices)
+		p.resonance.InjectFromBridge(monoMix, p.ringing.ResonanceTargets())
 	}
 
-	// Signal flow: voices → body convolver (mono→mono) → room convolver (mono→stereo)
+	// Signal flow: string bank → body convolver (mono→mono) → room convolver (mono→stereo)
 	bodyMono := p.bodyConvolver.Process(monoMix)
 	stereoRoom := p.roomConvolver.Process(bodyMono)
 
@@ -162,14 +149,6 @@ func (p *Piano) Process(numFrames int) []float32 {
 		stereoOutput[i*2] = l * outGain
 		stereoOutput[i*2+1] = r * outGain
 	}
-
-	activeVoices := make([]*Voice, 0, len(p.voices))
-	for _, v := range p.voices {
-		if v.active {
-			activeVoices = append(activeVoices, v)
-		}
-	}
-	p.voices = activeVoices
 
 	return stereoOutput
 }

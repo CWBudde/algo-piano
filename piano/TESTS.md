@@ -10,14 +10,19 @@ This maps each split source file to its direct and indirect test coverage.
 - `TestSoftPedalReducesAttackBrightness` (`pedals_test.go`)
 - `TestSympatheticResonanceEnergizesSilentHeldString` (`resonance_test.go`)
 
-## `voice.go`
+## `ringing.go`
 
-- `TestVoiceUnisonStringCountByRange` (`voice_test.go`)
-- `TestSoftPedalAdjustsVoiceStrikeAndHammerHardness` (`pedals_test.go`)
+- `TestStringBankUnisonStringCountByRange` (`ringing_test.go`)
+- `TestStringBankDetuneScaleZeroCollapsesDetuning` (`ringing_test.go`)
 - `TestSoftPedalReducesAttackBrightness` (`pedals_test.go`)
 - `TestPerNoteResonanceFilterIsFrequencySelective` (`resonance_test.go`)
 - `TestSympatheticResonanceEnergizesSilentHeldString` (`resonance_test.go`)
 - `TestLongRenderHasNoNaNOrInf` (`integration_test.go`)
+
+## `control.go`
+
+- `TestHammerInfluenceScalesApplyToHammerExciter` (`ringing_test.go`)
+- `TestSoftPedalAdjustsHammerExciterStrikeAndHardness` (`pedals_test.go`)
 
 ## `string_waveguide.go`
 
@@ -30,7 +35,7 @@ This maps each split source file to its direct and indirect test coverage.
 ## `hammer.go`
 
 - `TestHammerVelocityIncreasesBrightnessProxy` (`hammer_test.go`)
-- `TestSoftPedalAdjustsVoiceStrikeAndHammerHardness` (`pedals_test.go`)
+- `TestSoftPedalAdjustsHammerExciterStrikeAndHardness` (`pedals_test.go`)
 
 ## `resonance.go`
 
@@ -56,7 +61,7 @@ This maps each split source file to its direct and indirect test coverage.
 - Covered indirectly via frequency and math paths in:
   - `TestTuningAccuracy` (`string_waveguide_test.go`)
   - `TestUnisonDetuneProducesBeating` (`string_waveguide_test.go`)
-  - `TestVoiceUnisonStringCountByRange` (`voice_test.go`)
+  - `TestStringBankUnisonStringCountByRange` (`ringing_test.go`)
   - `TestPartitionedConvolverMatchesDirectConvolution` (`convolver_test.go`)
 
 ## External dependency sanity checks

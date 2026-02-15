@@ -6,6 +6,12 @@ import (
 	dspcore "github.com/cwbudde/algo-dsp/dsp/core"
 )
 
+type resonanceTarget interface {
+	isUndamped() bool
+	filterResonanceDrive(x float32) float32
+	injectResonance(energy float32)
+}
+
 // ResonanceEngine injects a band-limited bridge signal into undamped strings.
 type ResonanceEngine struct {
 	injectionGain float32
@@ -45,8 +51,8 @@ func (r *ResonanceEngine) bandLimit(x float32) float32 {
 	return lp
 }
 
-func (r *ResonanceEngine) InjectFromBridge(bridge []float32, voices []*Voice) {
-	if r == nil || r.injectionGain <= 0 || len(bridge) == 0 || len(voices) == 0 {
+func (r *ResonanceEngine) InjectFromBridge(bridge []float32, targets []resonanceTarget) {
+	if r == nil || r.injectionGain <= 0 || len(bridge) == 0 || len(targets) == 0 {
 		return
 	}
 	for i := 0; i < len(bridge); i++ {
@@ -55,15 +61,15 @@ func (r *ResonanceEngine) InjectFromBridge(bridge []float32, voices []*Voice) {
 			continue
 		}
 		energy := x * r.injectionGain
-		for _, v := range voices {
-			if !v.isUndamped() {
+		for _, t := range targets {
+			if !t.isUndamped() {
 				continue
 			}
 			vEnergy := energy
 			if r.perNoteFilter {
-				vEnergy = v.filterResonanceDrive(x) * r.injectionGain
+				vEnergy = t.filterResonanceDrive(x) * r.injectionGain
 			}
-			v.injectResonance(vEnergy)
+			t.injectResonance(vEnergy)
 		}
 	}
 }
