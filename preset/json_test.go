@@ -33,6 +33,12 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
   "coupling_octave_gain": 0.00031,
   "coupling_fifth_gain": 0.00012,
   "coupling_max_force": 0.0007,
+  "coupling_mode": "physical",
+  "coupling_amount": 0.6,
+  "coupling_harmonic_falloff": 1.5,
+  "coupling_detune_sigma_cents": 19,
+  "coupling_distance_exponent": 1.3,
+  "coupling_max_neighbors": 12,
   "soft_pedal_strike_offset": 0.1,
   "soft_pedal_hardness": 0.75,
   "per_note": {
@@ -74,6 +80,12 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
 		p.CouplingOctaveGain != 0.00031 ||
 		p.CouplingFifthGain != 0.00012 ||
 		p.CouplingMaxForce != 0.0007 ||
+		p.CouplingMode != "physical" ||
+		p.CouplingAmount != 0.6 ||
+		p.CouplingHarmonicFalloff != 1.5 ||
+		p.CouplingDetuneSigmaCents != 19 ||
+		p.CouplingDistanceExponent != 1.3 ||
+		p.CouplingMaxNeighbors != 12 ||
 		p.SoftPedalStrikeOffset != 0.1 ||
 		p.SoftPedalHardness != 0.75 {
 		t.Fatalf("extended tuning fields mismatch: %+v", p)
@@ -120,5 +132,17 @@ func TestLoadJSONRejectsInvalidExtendedFields(t *testing.T) {
 	}
 	if _, err := LoadJSON(presetPath); err == nil {
 		t.Fatalf("expected error for invalid ir_wet_mix")
+	}
+}
+
+func TestLoadJSONRejectsInvalidCouplingMode(t *testing.T) {
+	dir := t.TempDir()
+	presetPath := filepath.Join(dir, "preset.json")
+	content := `{"coupling_mode":"invalid"}`
+	if err := os.WriteFile(presetPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write preset: %v", err)
+	}
+	if _, err := LoadJSON(presetPath); err == nil {
+		t.Fatalf("expected error for invalid coupling_mode")
 	}
 }

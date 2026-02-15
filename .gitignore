@@ -6,6 +6,7 @@ piano-fit
 !piano-fit/
 !piano-fit-fast/
 !piano-render/
+/piano-wasm
 *.exe
 *.exe~
 *.dll

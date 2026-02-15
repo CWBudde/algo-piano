@@ -79,6 +79,7 @@ func TestHammerInfluenceScalesApplyToHammerExciter(t *testing.T) {
 func TestStringBankBuildsOctaveCouplingEdges(t *testing.T) {
 	params := NewDefaultParams()
 	params.CouplingEnabled = true
+	params.CouplingMode = CouplingModeStatic
 	params.CouplingOctaveGain = 0.001
 	params.CouplingFifthGain = 0.0
 	sb := NewStringBank(48000, params)
@@ -103,6 +104,7 @@ func TestCouplingEnergizesOctaveWithoutResonanceEngine(t *testing.T) {
 	withParams := NewDefaultParams()
 	withParams.ResonanceEnabled = false
 	withParams.CouplingEnabled = true
+	withParams.CouplingMode = CouplingModeStatic
 	withParams.CouplingOctaveGain = 0.002
 	withParams.CouplingFifthGain = 0.0
 	withParams.CouplingMaxForce = 0.005
@@ -128,5 +130,142 @@ func TestCouplingEnergizesOctaveWithoutResonanceEngine(t *testing.T) {
 	withoutEnergy := voiceInternalEnergy(heldWithout)
 	if withEnergy <= withoutEnergy*2.0 {
 		t.Fatalf("expected coupling to energize octave string: with=%e without=%e", withEnergy, withoutEnergy)
+	}
+}
+
+func TestStringBankProcessHasNoPerBlockHeapAllocs(t *testing.T) {
+	params := NewDefaultParams()
+	params.CouplingEnabled = true
+	params.CouplingMode = CouplingModeStatic
+	params.CouplingOctaveGain = 0.0015
+	params.CouplingFifthGain = 0.0005
+	params.CouplingMaxForce = 0.003
+
+	sb := NewStringBank(48000, params)
+	h := NewHammerExciter(48000, params)
+	sb.SetSustain(true)
+	sb.SetKeyDown(60, true)
+	h.Trigger(60, 100)
+
+	// Warm up graph activation and internal states before measuring allocations.
+	for i := 0; i < 32; i++ {
+		_ = sb.Process(128, h)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		_ = sb.Process(128, h)
+	})
+	if allocs != 0 {
+		t.Fatalf("expected zero per-block heap allocs in string-bank process path, got %.3f", allocs)
+	}
+}
+
+func TestStringBankCouplingModeOffDisablesEdges(t *testing.T) {
+	params := NewDefaultParams()
+	params.CouplingEnabled = true
+	params.CouplingMode = CouplingModeOff
+	sb := NewStringBank(48000, params)
+	if sb.couplingEnabled {
+		t.Fatalf("expected coupling disabled in off mode")
+	}
+	for note := 0; note < 128; note++ {
+		if len(sb.coupling[note]) != 0 {
+			t.Fatalf("expected no coupling edges in off mode, note=%d edges=%v", note, sb.coupling[note])
+		}
+	}
+}
+
+func TestStringBankPhysicalCouplingBuildsSparseTopKGraph(t *testing.T) {
+	params := NewDefaultParams()
+	params.CouplingMode = CouplingModePhysical
+	params.CouplingAmount = 1.0
+	params.CouplingMaxNeighbors = 6
+	sb := NewStringBank(48000, params)
+
+	edges := sb.coupling[60]
+	if len(edges) == 0 {
+		t.Fatalf("expected physical coupling edges for note 60")
+	}
+	if len(edges) > 6 {
+		t.Fatalf("expected top-k cap to limit edges: got %d", len(edges))
+	}
+	for note := 0; note < 128; note++ {
+		if len(sb.coupling[note]) > 6 {
+			t.Fatalf("expected <=6 edges per note, note=%d got=%d", note, len(sb.coupling[note]))
+		}
+	}
+}
+
+func TestPhysicalCouplingAmountScalesOutgoingGain(t *testing.T) {
+	fullParams := NewDefaultParams()
+	fullParams.CouplingMode = CouplingModePhysical
+	fullParams.CouplingAmount = 1.0
+	fullParams.CouplingMaxNeighbors = 12
+	full := NewStringBank(48000, fullParams)
+
+	softParams := NewDefaultParams()
+	softParams.CouplingMode = CouplingModePhysical
+	softParams.CouplingAmount = 0.25
+	softParams.CouplingMaxNeighbors = 12
+	soft := NewStringBank(48000, softParams)
+
+	sumGain := func(edges []couplingEdge) float32 {
+		total := float32(0)
+		for _, e := range edges {
+			total += e.gain
+		}
+		return total
+	}
+	fullGain := sumGain(full.coupling[60])
+	softGain := sumGain(soft.coupling[60])
+	if fullGain <= 0 || softGain <= 0 {
+		t.Fatalf("expected positive coupling gains: full=%e soft=%e", fullGain, softGain)
+	}
+	ratio := softGain / fullGain
+	if ratio < 0.2 || ratio > 0.3 {
+		t.Fatalf("expected coupling amount scaling around 0.25, got ratio=%f (full=%e soft=%e)", ratio, fullGain, softGain)
+	}
+}
+
+func TestPhysicalCouplingDetuneSigmaPenalizesOffHarmonicTargets(t *testing.T) {
+	tightParams := NewDefaultParams()
+	tightParams.CouplingMode = CouplingModePhysical
+	tightParams.CouplingDetuneSigmaCents = 8.0
+	tight := NewStringBank(48000, tightParams)
+
+	looseParams := NewDefaultParams()
+	looseParams.CouplingMode = CouplingModePhysical
+	looseParams.CouplingDetuneSigmaCents = 80.0
+	loose := NewStringBank(48000, looseParams)
+
+	tightWeight := tight.physicalCouplingWeight(60, 73, 24000)
+	looseWeight := loose.physicalCouplingWeight(60, 73, 24000)
+	if tightWeight >= looseWeight {
+		t.Fatalf("expected tighter detune sigma to reduce off-harmonic coupling: tight=%e loose=%e", tightWeight, looseWeight)
+	}
+}
+
+func TestPhysicalCouplingDistanceExponentReducesFarTargets(t *testing.T) {
+	baseParams := NewDefaultParams()
+	baseParams.CouplingMode = CouplingModePhysical
+	baseParams.CouplingDistanceExponent = 0.0
+	base := NewStringBank(48000, baseParams)
+
+	steepParams := NewDefaultParams()
+	steepParams.CouplingMode = CouplingModePhysical
+	steepParams.CouplingDistanceExponent = 3.0
+	steep := NewStringBank(48000, steepParams)
+
+	baseNear := base.physicalCouplingWeight(60, 72, 24000)
+	baseFar := base.physicalCouplingWeight(60, 84, 24000)
+	steepNear := steep.physicalCouplingWeight(60, 72, 24000)
+	steepFar := steep.physicalCouplingWeight(60, 84, 24000)
+	if baseNear <= 0 || baseFar <= 0 || steepNear <= 0 || steepFar <= 0 {
+		t.Fatalf("expected positive weights for distance penalty test")
+	}
+	baseRatio := baseNear / baseFar
+	steepRatio := steepNear / steepFar
+	if steepRatio <= baseRatio*1.4 {
+		t.Fatalf("expected steeper distance exponent to amplify near/far contrast: base=%f steep=%f", baseRatio, steepRatio)
 	}
 }

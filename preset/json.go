@@ -42,6 +42,12 @@ type File struct {
 	CouplingOctaveGain         *float32               `json:"coupling_octave_gain"`
 	CouplingFifthGain          *float32               `json:"coupling_fifth_gain"`
 	CouplingMaxForce           *float32               `json:"coupling_max_force"`
+	CouplingMode               *string                `json:"coupling_mode"`
+	CouplingAmount             *float32               `json:"coupling_amount"`
+	CouplingHarmonicFalloff    *float32               `json:"coupling_harmonic_falloff"`
+	CouplingDetuneSigmaCents   *float32               `json:"coupling_detune_sigma_cents"`
+	CouplingDistanceExponent   *float32               `json:"coupling_distance_exponent"`
+	CouplingMaxNeighbors       *int                   `json:"coupling_max_neighbors"`
 	SoftPedalStrikeOffset      *float32               `json:"soft_pedal_strike_offset"`
 	SoftPedalHardness          *float32               `json:"soft_pedal_hardness"`
 	PerNote                    map[string]NoteSetting `json:"per_note"`
@@ -226,6 +232,45 @@ func ApplyFile(dst *piano.Params, f *File) error {
 			return fmt.Errorf("coupling_max_force must be > 0")
 		}
 		dst.CouplingMaxForce = *f.CouplingMaxForce
+	}
+	if f.CouplingMode != nil {
+		mode := piano.CouplingMode(strings.ToLower(strings.TrimSpace(*f.CouplingMode)))
+		switch mode {
+		case piano.CouplingModeOff, piano.CouplingModeStatic, piano.CouplingModePhysical:
+			dst.CouplingMode = mode
+		default:
+			return fmt.Errorf("coupling_mode must be one of off|static|physical")
+		}
+	}
+	if f.CouplingAmount != nil {
+		if *f.CouplingAmount < 0 || *f.CouplingAmount > 1 {
+			return fmt.Errorf("coupling_amount must be in [0,1]")
+		}
+		dst.CouplingAmount = *f.CouplingAmount
+	}
+	if f.CouplingHarmonicFalloff != nil {
+		if *f.CouplingHarmonicFalloff <= 0 {
+			return fmt.Errorf("coupling_harmonic_falloff must be > 0")
+		}
+		dst.CouplingHarmonicFalloff = *f.CouplingHarmonicFalloff
+	}
+	if f.CouplingDetuneSigmaCents != nil {
+		if *f.CouplingDetuneSigmaCents <= 0 {
+			return fmt.Errorf("coupling_detune_sigma_cents must be > 0")
+		}
+		dst.CouplingDetuneSigmaCents = *f.CouplingDetuneSigmaCents
+	}
+	if f.CouplingDistanceExponent != nil {
+		if *f.CouplingDistanceExponent < 0 {
+			return fmt.Errorf("coupling_distance_exponent must be >= 0")
+		}
+		dst.CouplingDistanceExponent = *f.CouplingDistanceExponent
+	}
+	if f.CouplingMaxNeighbors != nil {
+		if *f.CouplingMaxNeighbors <= 0 {
+			return fmt.Errorf("coupling_max_neighbors must be > 0")
+		}
+		dst.CouplingMaxNeighbors = *f.CouplingMaxNeighbors
 	}
 	if f.SoftPedalStrikeOffset != nil {
 		if *f.SoftPedalStrikeOffset < 0 {

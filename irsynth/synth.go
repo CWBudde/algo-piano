@@ -342,18 +342,18 @@ type BodyConfig struct {
 func DefaultBodyConfig() BodyConfig {
 	return BodyConfig{
 		SampleRate:     96000,
-		DurationS:      0.05,
-		Modes:          32,
+		DurationS:      0.031,
+		Modes:          87,
 		Seed:           1,
 		Brightness:     1.0,
-		PlateRatio:     1.6,  // typical grand piano soundboard aspect ratio
-		StiffnessRatio: 12.0, // spruce Dx/Dy (~10-15)
-		ModeWarp:       1.0,  // pure Kirchhoff placement
-		DirectLevel:    0.6,
-		LowDecayS:      0.15,
-		HighDecayS:     0.03,
-		CrossoverHz:    800.0,
-		FadeOutS:       0.005,
+		PlateRatio:     2.36,
+		StiffnessRatio: 8.33,
+		ModeWarp:       1.20,
+		DirectLevel:    0.77,
+		LowDecayS:      0.013,
+		HighDecayS:     0.031,
+		CrossoverHz:    1145.0,
+		FadeOutS:       0.010,
 		NormalizePeak:  0.9,
 	}
 }
