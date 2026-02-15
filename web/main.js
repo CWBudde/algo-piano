@@ -88,10 +88,12 @@ function generateKeyboard() {
     const blackKeyOffsets = [1, 3, 6, 8, 10]; // C# D# F# G# A#
     const computerKeys = ['A', 'W', 'S', 'E', 'D', 'F', 'T', 'G', 'Y', 'H', 'U', 'J', 'K'];
 
-    const whiteKeyWidth = 52;
-    const whiteKeyMargin = 2;
-    const blackKeyWidth = 34;
-    const blackKeyNudgeRight = 2;
+    const rootStyles = getComputedStyle(document.documentElement);
+    const whiteKeyWidth = parseFloat(rootStyles.getPropertyValue(--white-key-width)) || 52;
+    const whiteKeyGap = parseFloat(rootStyles.getPropertyValue(--white-key-gap)) || 2;
+    const whiteKeyMargin = whiteKeyGap;
+    const blackKeyWidth = parseFloat(rootStyles.getPropertyValue(--black-key-width)) || 34;
+    const blackKeyFineTune = 0;
 
     // Generate white keys first
     for (let octave = 0; octave < numOctaves; octave++) {
@@ -130,9 +132,9 @@ function generateKeyboard() {
                 // Each white key takes up (width + 2*margin) space
                 const whiteKeysBefore = whiteKeyPattern.filter(n => n < i).length;
                 const totalWhiteKeysSpace = (whiteKeyWidth + whiteKeyMargin * 2);
-                const leftPos = (whiteKeysBefore + octave * 7) * totalWhiteKeysSpace +
-                                (totalWhiteKeysSpace - blackKeyWidth / 2) +
-                                blackKeyNudgeRight;
+                const leftPos = (whiteKeysBefore + octave * 7) * totalWhiteKeysSpace -
+                                blackKeyWidth / 2 +
+                                blackKeyFineTune;
                 key.style.left = `${leftPos}px`;
 
                 const label = document.createElement('div');
