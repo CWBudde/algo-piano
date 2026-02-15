@@ -232,6 +232,48 @@ func TestGenerateRoomStereoWidth(t *testing.T) {
 	}
 }
 
+func TestPlateEigenfreqs(t *testing.T) {
+	// For a square isotropic plate (R=1, S=1), f_{mn}/f_{11} = (m² + n²) / 2.
+	// So the lowest modes should be: f11=1x, f12=f21=2.5x, f22=4x, f13=f31=5x, ...
+	freqs := plateEigenfreqs(100.0, 10000.0, 50, 1.0, 1.0)
+	if len(freqs) == 0 {
+		t.Fatal("expected non-empty eigenfrequencies")
+	}
+	// f11 should be ~100 Hz (the fundamental).
+	if math.Abs(freqs[0]-100.0) > 0.01 {
+		t.Fatalf("f11 = %.2f, want 100.0", freqs[0])
+	}
+	// f12 = f21 = 100 * (1+4)/(1+1) = 250 Hz.
+	if len(freqs) < 3 {
+		t.Fatal("expected at least 3 modes")
+	}
+	if math.Abs(freqs[1]-250.0) > 0.01 || math.Abs(freqs[2]-250.0) > 0.01 {
+		t.Fatalf("f12/f21 = %.2f, %.2f, want 250.0", freqs[1], freqs[2])
+	}
+	// Frequencies must be sorted.
+	for i := 1; i < len(freqs); i++ {
+		if freqs[i] < freqs[i-1] {
+			t.Fatalf("frequencies not sorted at index %d: %.2f < %.2f", i, freqs[i], freqs[i-1])
+		}
+	}
+}
+
+func TestPlateEigenfreqsOrthotropic(t *testing.T) {
+	// With high stiffness ratio, modes along the stiff direction (m) should
+	// be pushed to higher frequencies, creating more modes at low frequencies
+	// from the compliant direction (n).
+	isoFreqs := plateEigenfreqs(50.0, 5000.0, 100, 1.5, 1.0)
+	orthoFreqs := plateEigenfreqs(50.0, 5000.0, 100, 1.5, 12.0)
+
+	if len(isoFreqs) == 0 || len(orthoFreqs) == 0 {
+		t.Fatal("expected non-empty frequencies")
+	}
+	// Orthotropic should have a different distribution — fundamentals differ.
+	if isoFreqs[0] == orthoFreqs[0] {
+		t.Fatal("isotropic and orthotropic should produce different fundamentals")
+	}
+}
+
 func TestValidateDensity(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Density = 0

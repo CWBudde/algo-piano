@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 )
 
 // Config controls synthetic IR generation.
@@ -186,6 +187,43 @@ func GenerateStereo(cfg Config) ([]float32, []float32, error) {
 	return outL, outR, nil
 }
 
+// plateEigenfreqs computes eigenfrequencies for a simply-supported orthotropic
+// rectangular plate and returns up to maxModes frequencies in [f11, maxF].
+// R = Lx/Ly (plate ratio), S = Dx/Dy (stiffness ratio).
+func plateEigenfreqs(f11, maxF float64, maxModes int, R, S float64) []float64 {
+	sqrtS := math.Sqrt(S)
+	R2 := R * R
+	R4 := R2 * R2
+	denom := math.Sqrt(S + 2*sqrtS*R2 + R4)
+
+	// Upper bound on mode indices: f_{m,1} ~ f11 * S^0.5 * m^2 / denom,
+	// so m_max ~ sqrt(maxF/f11 * denom / sqrt(S)) + 1.
+	mMax := int(math.Sqrt(maxF/f11*denom/sqrtS)) + 2
+	nMax := int(math.Sqrt(maxF/f11*denom)) + 2
+
+	freqs := make([]float64, 0, mMax*nMax)
+	for m := 1; m <= mMax; m++ {
+		m2 := float64(m * m)
+		m4 := m2 * m2
+		for n := 1; n <= nMax; n++ {
+			n2 := float64(n * n)
+			n4 := n2 * n2
+			num := math.Sqrt(S*m4 + 2*sqrtS*m2*n2*R2 + n4*R4)
+			f := f11 * num / denom
+			if f > maxF {
+				break // n only increases f, so inner loop can break
+			}
+			freqs = append(freqs, f)
+		}
+	}
+
+	sort.Float64s(freqs)
+	if len(freqs) > maxModes {
+		freqs = freqs[:maxModes]
+	}
+	return freqs
+}
+
 func addModeRec(out []float64, amp float64, freq float64, phase float64, decay float64, sampleRate int) {
 	if len(out) == 0 {
 		return
@@ -270,24 +308,31 @@ func lerp(a, b, t float64) float64 {
 // low-frequency plate-like modes (broader, longer decay) and high-frequency
 // rib-localized modes (denser, shorter decay). CrossoverHz sets the transition.
 //
-// Future tiers (deferred):
-//   - Middle: Analytical Kirchhoff plate eigenmodes for realistic mode spacing
-//     without runtime PDE solving. Uses closed-form f_{mn} = C*(m²/Lx² + n²/Ly²)
-//     with frequency-dependent damping — much more realistic than log-spaced modes.
+// Mode placement uses analytical Kirchhoff plate eigenmodes for a simply-supported
+// orthotropic rectangular plate (modeling the soundboard). The eigenfrequencies are:
+//
+//	f_{mn}/f_{11} = sqrt(S·m⁴ + 2·√S·m²n²R² + n⁴R⁴) / sqrt(S + 2·√S·R² + R⁴)
+//
+// where S = StiffnessRatio (Dx/Dy), R = PlateRatio (Lx/Ly), and m,n ≥ 1 are mode
+// indices. This gives physically realistic mode clustering: denser at high frequencies
+// (2D plate density of states ∝ f), with orthotropic splitting from wood grain direction.
+//
+// Future tier (deferred):
 //   - Full: algo-pde Helmholtz eigensolve for arbitrary plate geometry with ribs,
 //     computing actual eigenmodes of the soundboard for physically-grounded IR.
 type BodyConfig struct {
-	SampleRate  int
-	DurationS   float64 // Typically 0.02-0.3s
-	Modes       int     // Typically 8-96
-	Seed        int64
-	Brightness  float64
-	Density     float64
-	DirectLevel float64
-	LowDecayS   float64 // Decay time for modes below CrossoverHz
-	HighDecayS  float64 // Decay time for modes above CrossoverHz
-	CrossoverHz float64 // Frequency where decay transitions from low to high
-	FadeOutS    float64 // Cosine fade-out at the end; 0 = no fade
+	SampleRate     int
+	DurationS      float64 // Typically 0.02-0.3s
+	Modes          int     // Max modes to include (typically 8-96)
+	Seed           int64
+	Brightness     float64
+	PlateRatio     float64 // Lx/Ly aspect ratio of soundboard (~1.0-3.0)
+	StiffnessRatio float64 // Dx/Dy orthotropic stiffness ratio (~5-20 for spruce)
+	DirectLevel    float64
+	LowDecayS      float64 // Decay time for modes below CrossoverHz
+	HighDecayS     float64 // Decay time for modes above CrossoverHz
+	CrossoverHz    float64 // Frequency where decay transitions from low to high
+	FadeOutS       float64 // Cosine fade-out at the end; 0 = no fade
 
 	NormalizePeak float64
 }
@@ -295,18 +340,19 @@ type BodyConfig struct {
 // DefaultBodyConfig returns sensible defaults for body IR.
 func DefaultBodyConfig() BodyConfig {
 	return BodyConfig{
-		SampleRate:    96000,
-		DurationS:     0.05,
-		Modes:         32,
-		Seed:          1,
-		Brightness:    1.0,
-		Density:       2.0,
-		DirectLevel:   0.6,
-		LowDecayS:     0.15,
-		HighDecayS:    0.03,
-		CrossoverHz:   800.0,
-		FadeOutS:      0.005,
-		NormalizePeak: 0.9,
+		SampleRate:     96000,
+		DurationS:      0.05,
+		Modes:          32,
+		Seed:           1,
+		Brightness:     1.0,
+		PlateRatio:     1.6,  // typical grand piano soundboard aspect ratio
+		StiffnessRatio: 12.0, // spruce Dx/Dy (~10-15)
+		DirectLevel:    0.6,
+		LowDecayS:      0.15,
+		HighDecayS:     0.03,
+		CrossoverHz:    800.0,
+		FadeOutS:       0.005,
+		NormalizePeak:  0.9,
 	}
 }
 
@@ -323,8 +369,11 @@ func (c *BodyConfig) Validate() error {
 	if c.Brightness <= 0 {
 		return fmt.Errorf("brightness must be > 0")
 	}
-	if c.Density <= 0 {
-		return fmt.Errorf("density must be > 0")
+	if c.PlateRatio <= 0 {
+		return fmt.Errorf("plate ratio must be > 0")
+	}
+	if c.StiffnessRatio <= 0 {
+		return fmt.Errorf("stiffness ratio must be > 0")
 	}
 	if c.DirectLevel < 0 {
 		return fmt.Errorf("direct level must be >= 0")
@@ -363,25 +412,19 @@ func GenerateBody(cfg BodyConfig) ([]float32, error) {
 		maxF = 500.0
 	}
 	minF := 35.0
-	if minF >= maxF {
-		minF = maxF * 0.5
-	}
 
-	// Deterministic modal body modes (mono) with 2-way frequency-dependent decay.
-	// Below CrossoverHz: plate-like modes with longer LowDecayS.
-	// Above CrossoverHz: rib-localized modes with shorter HighDecayS.
-	// Smooth crossover via sigmoid blend centered at CrossoverHz.
+	// Compute Kirchhoff plate eigenfrequencies.
+	// f_{mn}/f_{11} = sqrt(S·m⁴ + 2·√S·m²n²R² + n⁴R⁴) / sqrt(S + 2·√S·R² + R⁴)
+	freqs := plateEigenfreqs(minF, maxF, cfg.Modes, cfg.PlateRatio, cfg.StiffnessRatio)
+
+	// Body modes with 2-way frequency-dependent decay.
 	logCrossover := math.Log(cfg.CrossoverHz)
-	for m := 0; m < cfg.Modes; m++ {
-		fNorm := math.Pow((float64(m)+0.5)/float64(cfg.Modes), cfg.Density)
-		f := minF * math.Pow(maxF/minF, fNorm)
-
-		brightnessExp := 0.7 + 0.9*cfg.Brightness
+	brightnessExp := 0.7 + 0.9*cfg.Brightness
+	for _, f := range freqs {
 		amp := 0.9 / math.Pow(1.0+f/120.0, brightnessExp)
 		amp *= 0.7 + 0.6*rng.Float64() // amplitude jitter
 
 		// Sigmoid blend: 0 = pure LowDecayS, 1 = pure HighDecayS.
-		// ~2 octaves transition width (steepness = 3).
 		blend := 1.0 / (1.0 + math.Exp(-3.0*(math.Log(f)-logCrossover)))
 		tau := cfg.LowDecayS*(1.0-blend) + cfg.HighDecayS*blend
 		decay := math.Exp(-1.0 / (tau * float64(cfg.SampleRate)))
