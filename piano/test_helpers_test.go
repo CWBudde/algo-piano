@@ -175,39 +175,38 @@ func stereoRMS(interleaved []float32) float64 {
 	return math.Sqrt(sum / float64(len(interleaved)))
 }
 
-func setupSympatheticScenario(params *Params) (*Piano, *Voice) {
+func setupSympatheticScenario(params *Params) (*Piano, *RingingStringGroup) {
 	p := NewPiano(48000, 16, params)
 	p.SetSustainPedal(true)
 
-	held := NewVoice(48000, 67, 1, params)
-	held.hammer.inContact = false
-	p.voices = append(p.voices, held)
+	p.ringing.SetKeyDown(67, true)
+	held := p.ringing.bank.Group(67)
 
 	p.NoteOn(60, 115)
 	return p, held
 }
 
-func filteredDriveRMS(v *Voice, inputHz float64, n int) float64 {
-	if v == nil || n <= 0 {
+func filteredDriveRMS(g *RingingStringGroup, inputHz float64, n int) float64 {
+	if g == nil || n <= 0 {
 		return 0
 	}
 	const sampleRate = 48000.0
 	var sum float64
 	for i := 0; i < n; i++ {
 		x := float32(math.Sin(2.0 * math.Pi * inputHz * float64(i) / sampleRate))
-		y := v.filterResonanceDrive(x)
+		y := g.filterResonanceDrive(x)
 		f := float64(y)
 		sum += f * f
 	}
 	return math.Sqrt(sum / float64(n))
 }
 
-func voiceInternalEnergy(v *Voice) float64 {
-	if v == nil {
+func voiceInternalEnergy(g *RingingStringGroup) float64 {
+	if g == nil {
 		return 0
 	}
 	var sum float64
-	for _, s := range v.strings {
+	for _, s := range g.strings {
 		for _, x := range s.delayLine {
 			f := float64(x)
 			sum += f * f

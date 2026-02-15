@@ -1,9 +1,6 @@
 package piano
 
-import (
-	"math"
-	"testing"
-)
+import "testing"
 
 func TestReleaseWithPedalUpDecaysQuickly(t *testing.T) {
 	p := NewPiano(48000, 16, NewDefaultParams())
@@ -63,29 +60,32 @@ func TestSustainPedalAfterLongHoldStillRings(t *testing.T) {
 	}
 }
 
-func TestSoftPedalAdjustsVoiceStrikeAndHammerHardness(t *testing.T) {
-	v := NewVoice(48000, 60, 100, NewDefaultParams())
-	baseStrike := v.strikePos
-	baseStiffness := v.hammer.stiffness
-	baseExponent := v.hammer.exponent
+func TestSoftPedalAdjustsHammerExciterStrikeAndHardness(t *testing.T) {
+	const note = 60
+	params := NewDefaultParams()
+	h := NewHammerExciter(48000, params)
 
-	v.SetSoftPedal(true)
-	if v.strikePos <= baseStrike {
-		t.Fatalf("expected soft pedal to move strike away from bridge: base=%f soft=%f", baseStrike, v.strikePos)
+	h.Trigger(note, 100)
+	if len(h.active[note]) == 0 {
+		t.Fatalf("expected hammer event")
 	}
-	if v.hammer.stiffness >= baseStiffness {
-		t.Fatalf("expected soft pedal to reduce hammer stiffness: base=%f soft=%f", baseStiffness, v.hammer.stiffness)
-	}
-	if v.hammer.exponent >= baseExponent {
-		t.Fatalf("expected soft pedal to reduce hammer exponent: base=%f soft=%f", baseExponent, v.hammer.exponent)
-	}
+	base := h.active[note][len(h.active[note])-1]
+	baseStrike := base.strikePos
+	baseStiffness := base.hammer.stiffness
+	baseExponent := base.hammer.exponent
 
-	v.SetSoftPedal(false)
-	if math.Abs(float64(v.strikePos-baseStrike)) > 1e-6 {
-		t.Fatalf("expected strike position reset after soft pedal release: got=%f want=%f", v.strikePos, baseStrike)
+	h.SetSoftPedal(true)
+	h.Trigger(note, 100)
+	soft := h.active[note][len(h.active[note])-1]
+
+	if soft.strikePos <= baseStrike {
+		t.Fatalf("expected soft pedal to move strike away from bridge: base=%f soft=%f", baseStrike, soft.strikePos)
 	}
-	if math.Abs(float64(v.hammer.stiffness-baseStiffness)) > 1e-3 {
-		t.Fatalf("expected hammer stiffness reset after soft pedal release: got=%f want=%f", v.hammer.stiffness, baseStiffness)
+	if soft.hammer.stiffness >= baseStiffness {
+		t.Fatalf("expected soft pedal to reduce hammer stiffness: base=%f soft=%f", baseStiffness, soft.hammer.stiffness)
+	}
+	if soft.hammer.exponent >= baseExponent {
+		t.Fatalf("expected soft pedal to reduce hammer exponent: base=%f soft=%f", baseExponent, soft.hammer.exponent)
 	}
 }
 

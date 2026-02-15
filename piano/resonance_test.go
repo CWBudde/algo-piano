@@ -25,10 +25,10 @@ func TestSympatheticResonanceEnergizesSilentHeldString(t *testing.T) {
 }
 
 func TestPerNoteResonanceFilterIsFrequencySelective(t *testing.T) {
-	v := NewVoice(48000, 67, 90, NewDefaultParams())
+	g := newRingingStringGroup(48000, 67, NewDefaultParams())
 
-	near := filteredDriveRMS(v, 392.0, 4096)
-	far := filteredDriveRMS(v, 139.0, 4096)
+	near := filteredDriveRMS(g, 392.0, 4096)
+	far := filteredDriveRMS(g, 139.0, 4096)
 	if near <= far*1.5 {
 		t.Fatalf("expected per-note filter to favor note partial region: near=%f far=%f", near, far)
 	}
