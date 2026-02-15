@@ -10,8 +10,9 @@ import (
 
 func TestInitCandidateDefaultKnobs(t *testing.T) {
 	defs, cand := initCandidate(piano.NewDefaultParams(), 48000, 60, 118, 3.5, false, false)
-	if len(defs) != 8 {
-		t.Fatalf("defs len = %d, want 8", len(defs))
+	// 6 body + 7 room + 3 mix = 16 knobs
+	if len(defs) != 16 {
+		t.Fatalf("defs len = %d, want 16", len(defs))
 	}
 	if len(cand.Vals) != len(defs) {
 		t.Fatalf("vals len = %d, want %d", len(cand.Vals), len(defs))
@@ -22,17 +23,22 @@ func TestApplyCandidateSetsIRAndMix(t *testing.T) {
 	base := piano.NewDefaultParams()
 	base.PerNote[60] = &piano.NoteParams{Loss: 0.994, Inharmonicity: 0.2, StrikePosition: 0.12}
 	defs := []knobDef{
-		{Name: "modes", Min: 32, Max: 256, IsInt: true},
-		{Name: "brightness", Min: 0.5, Max: 2.5},
-		{Name: "stereo_width", Min: 0, Max: 1},
-		{Name: "direct", Min: 0.1, Max: 1.2},
-		{Name: "early", Min: 0, Max: 48, IsInt: true},
-		{Name: "late", Min: 0, Max: 0.12},
-		{Name: "low_decay", Min: 0.6, Max: 5.0},
-		{Name: "high_decay", Min: 0.1, Max: 1.5},
-		{Name: "ir_wet_mix", Min: 0.2, Max: 1.6},
-		{Name: "ir_dry_mix", Min: 0.0, Max: 0.8},
-		{Name: "ir_gain", Min: 0.4, Max: 2.2},
+		{Name: "body_modes", Min: 8, Max: 96, IsInt: true},
+		{Name: "body_brightness", Min: 0.5, Max: 2.5},
+		{Name: "body_density", Min: 0.5, Max: 4.0},
+		{Name: "body_direct", Min: 0.1, Max: 1.2},
+		{Name: "body_decay", Min: 0.01, Max: 0.5},
+		{Name: "body_duration", Min: 0.02, Max: 0.3},
+		{Name: "room_early", Min: 0, Max: 64, IsInt: true},
+		{Name: "room_late", Min: 0.0, Max: 0.15},
+		{Name: "room_stereo_width", Min: 0.0, Max: 1.0},
+		{Name: "room_brightness", Min: 0.3, Max: 2.0},
+		{Name: "room_low_decay", Min: 0.3, Max: 3.0},
+		{Name: "room_high_decay", Min: 0.05, Max: 0.8},
+		{Name: "room_duration", Min: 0.3, Max: 2.0},
+		{Name: "body_gain", Min: 0.3, Max: 2.0},
+		{Name: "body_dry", Min: 0.2, Max: 1.5},
+		{Name: "room_wet", Min: 0.0, Max: 1.0},
 		{Name: "render.velocity", Min: 40, Max: 127, IsInt: true},
 		{Name: "render.release_after", Min: 0.2, Max: 3.5},
 		{Name: "output_gain", Min: 0.4, Max: 1.8},
@@ -41,25 +47,32 @@ func TestApplyCandidateSetsIRAndMix(t *testing.T) {
 	}
 	cand := candidate{
 		Vals: []float64{
-			120, 1.5, 0.3, 0.9, 12, 0.05, 3.2, 0.6, 1.1, 0.2, 1.8, 126, 2.8, 1.3, 1.7, 0.991,
+			// body: modes, brightness, density, direct, decay, duration
+			48, 1.5, 2.0, 0.9, 0.1, 0.05,
+			// room: early, late, stereo_width, brightness, low_decay, high_decay, duration
+			12, 0.06, 0.6, 0.8, 1.2, 0.2, 1.0,
+			// mix: body_gain, body_dry, room_wet
+			1.8, 0.8, 0.3,
+			// joint: velocity, release_after, output_gain, hammer_stiffness, loss
+			126, 2.8, 1.3, 1.7, 0.991,
 		},
 	}
 
 	cfg, params, velocity, releaseAfter := applyCandidate(base, 48000, 60, 118, 3.5, defs, cand)
-	if cfg.Modes != 120 {
-		t.Fatalf("cfg.Modes = %d, want 120", cfg.Modes)
+	if cfg.body.Modes != 48 {
+		t.Fatalf("cfg.body.Modes = %d, want 48", cfg.body.Modes)
 	}
-	if cfg.EarlyCount != 12 {
-		t.Fatalf("cfg.EarlyCount = %d, want 12", cfg.EarlyCount)
+	if cfg.room.EarlyCount != 12 {
+		t.Fatalf("cfg.room.EarlyCount = %d, want 12", cfg.room.EarlyCount)
 	}
-	if params.IRWetMix != float32(1.1) {
-		t.Fatalf("IRWetMix = %v, want 1.1", params.IRWetMix)
+	if params.BodyIRGain != float32(1.8) {
+		t.Fatalf("BodyIRGain = %v, want 1.8", params.BodyIRGain)
 	}
-	if params.IRDryMix != float32(0.2) {
-		t.Fatalf("IRDryMix = %v, want 0.2", params.IRDryMix)
+	if params.BodyDryMix != float32(0.8) {
+		t.Fatalf("BodyDryMix = %v, want 0.8", params.BodyDryMix)
 	}
-	if params.IRGain != float32(1.8) {
-		t.Fatalf("IRGain = %v, want 1.8", params.IRGain)
+	if params.RoomWetMix != float32(0.3) {
+		t.Fatalf("RoomWetMix = %v, want 0.3", params.RoomWetMix)
 	}
 	if velocity != 126 {
 		t.Fatalf("velocity = %d, want 126", velocity)

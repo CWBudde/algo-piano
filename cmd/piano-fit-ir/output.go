@@ -29,17 +29,30 @@ func writeOutputs(
 	best candidate,
 	bestM analysis.Metrics,
 	bestParams *piano.Params,
-	bestIRL []float32,
-	bestIRR []float32,
+	bestBodyIR []float32,
+	bestRoomIRL []float32,
+	bestRoomIRR []float32,
 	checkpoints int,
 	top []topCandidate,
 ) error {
-	if err := writeStereoWAV(outputIR, bestIRL, bestIRR, sampleRate); err != nil {
+	// Derive body and room IR paths from the base output path.
+	ext := filepath.Ext(outputIR)
+	base := strings.TrimSuffix(outputIR, ext)
+	bodyIRPath := base + "-body" + ext
+	roomIRPath := base + "-room" + ext
+
+	if err := writeMonoWAV(bodyIRPath, bestBodyIR, sampleRate); err != nil {
+		return err
+	}
+	if err := writeStereoWAV(roomIRPath, bestRoomIRL, bestRoomIRR, sampleRate); err != nil {
 		return err
 	}
 
 	p := cloneParams(bestParams)
-	p.IRWavPath = presetIRPath(outputPreset, outputIR)
+	p.BodyIRWavPath = presetIRPath(outputPreset, bodyIRPath)
+	p.RoomIRWavPath = presetIRPath(outputPreset, roomIRPath)
+	// Clear legacy IR path since we use dual-IR now.
+	p.IRWavPath = ""
 	if err := writePresetJSON(outputPreset, p); err != nil {
 		return err
 	}
@@ -84,10 +97,12 @@ func writePresetJSON(path string, p *piano.Params) error {
 	}
 	type out struct {
 		OutputGain                 float32              `json:"output_gain,omitempty"`
-		IRWavPath                  string               `json:"ir_wav_path,omitempty"`
-		IRWetMix                   float32              `json:"ir_wet_mix,omitempty"`
-		IRDryMix                   float32              `json:"ir_dry_mix,omitempty"`
-		IRGain                     float32              `json:"ir_gain,omitempty"`
+		BodyIRWavPath              string               `json:"body_ir_wav_path,omitempty"`
+		BodyIRGain                 float32              `json:"body_ir_gain,omitempty"`
+		BodyDryMix                 float32              `json:"body_dry_mix,omitempty"`
+		RoomIRWavPath              string               `json:"room_ir_wav_path,omitempty"`
+		RoomWetMix                 float32              `json:"room_wet_mix,omitempty"`
+		RoomGain                   float32              `json:"room_gain,omitempty"`
 		ResonanceEnabled           bool                 `json:"resonance_enabled,omitempty"`
 		ResonanceGain              float32              `json:"resonance_gain,omitempty"`
 		ResonancePerNoteFilter     bool                 `json:"resonance_per_note_filter,omitempty"`
@@ -105,10 +120,12 @@ func writePresetJSON(path string, p *piano.Params) error {
 
 	o := out{
 		OutputGain:                 p.OutputGain,
-		IRWavPath:                  p.IRWavPath,
-		IRWetMix:                   p.IRWetMix,
-		IRDryMix:                   p.IRDryMix,
-		IRGain:                     p.IRGain,
+		BodyIRWavPath:              p.BodyIRWavPath,
+		BodyIRGain:                 p.BodyIRGain,
+		BodyDryMix:                 p.BodyDryMix,
+		RoomIRWavPath:              p.RoomIRWavPath,
+		RoomWetMix:                 p.RoomWetMix,
+		RoomGain:                   p.RoomGain,
 		ResonanceEnabled:           p.ResonanceEnabled,
 		ResonanceGain:              p.ResonanceGain,
 		ResonancePerNoteFilter:     p.ResonancePerNoteFilter,

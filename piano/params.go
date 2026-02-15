@@ -4,11 +4,22 @@ package piano
 type Params struct {
 	PerNote map[int]*NoteParams
 
-	OutputGain             float32
-	IRWavPath              string
-	IRWetMix               float32
-	IRDryMix               float32
-	IRGain                 float32
+	OutputGain float32
+
+	// Legacy single-IR fields (backwards compat: used when Body/Room paths are empty).
+	IRWavPath string
+	IRWetMix  float32
+	IRDryMix  float32
+	IRGain    float32
+
+	// Dual-IR fields: body (mono, short) + room (stereo, longer).
+	BodyIRWavPath string
+	BodyIRGain    float32 // Gain applied to body-convolved signal
+	BodyDryMix    float32 // How much body-colored signal in output
+	RoomIRWavPath string
+	RoomWetMix    float32 // How much room reverb in output
+	RoomGain      float32 // Gain applied to room-convolved signal
+
 	ResonanceEnabled       bool
 	ResonanceGain          float32
 	ResonancePerNoteFilter bool
@@ -43,6 +54,10 @@ func NewDefaultParams() *Params {
 		IRWetMix:                   1.0,
 		IRDryMix:                   0.0,
 		IRGain:                     1.0,
+		BodyIRGain:                 1.0,
+		BodyDryMix:                 1.0,
+		RoomWetMix:                 0.0,
+		RoomGain:                   1.0,
 		ResonanceEnabled:           false,
 		ResonanceGain:              0.00018,
 		ResonancePerNoteFilter:     true,

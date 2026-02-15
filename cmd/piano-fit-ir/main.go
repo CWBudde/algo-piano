@@ -254,8 +254,9 @@ func main() {
 		result.best,
 		result.bestMetrics,
 		result.bestParams,
-		result.bestIRL,
-		result.bestIRR,
+		result.bestBodyIR,
+		result.bestRoomIRL,
+		result.bestRoomIRR,
 		result.checkpoints,
 		result.top,
 	); err != nil {
@@ -275,11 +276,13 @@ func initCandidate(
 	note int,
 	baseVelocity int,
 	baseReleaseAfter float64,
-	optimizeIRMix bool,
+	_ bool, // optimizeIRMix (mix knobs always included in dual-IR mode)
 	optimizeJoint bool,
 ) ([]knobDef, candidate) {
-	cfg := irsynth.DefaultConfig()
-	cfg.SampleRate = sampleRate
+	bodyCfg := irsynth.DefaultBodyConfig()
+	bodyCfg.SampleRate = sampleRate
+	roomCfg := irsynth.DefaultRoomConfig()
+	roomCfg.SampleRate = sampleRate
 
 	defs := make([]knobDef, 0, 24)
 	vals := make([]float64, 0, 24)
@@ -293,21 +296,27 @@ func initCandidate(
 		vals = append(vals, val)
 	}
 
-	addKnob(knobDef{Name: "modes", Min: 32, Max: 256, IsInt: true}, float64(cfg.Modes))
-	addKnob(knobDef{Name: "brightness", Min: 0.5, Max: 2.5}, cfg.Brightness)
-	addKnob(knobDef{Name: "density", Min: 0.5, Max: 4.0}, cfg.Density)
-	addKnob(knobDef{Name: "stereo_width", Min: 0.0, Max: 1.0}, cfg.StereoWidth)
-	addKnob(knobDef{Name: "direct", Min: 0.1, Max: 1.2}, cfg.DirectLevel)
-	addKnob(knobDef{Name: "early", Min: 0, Max: 48, IsInt: true}, float64(cfg.EarlyCount))
-	addKnob(knobDef{Name: "late", Min: 0.0, Max: 0.12}, cfg.LateLevel)
-	addKnob(knobDef{Name: "low_decay", Min: 0.6, Max: 5.0}, cfg.LowDecayS)
-	addKnob(knobDef{Name: "high_decay", Min: 0.1, Max: 1.5}, cfg.HighDecayS)
+	// Body IR knobs (mono, short).
+	addKnob(knobDef{Name: "body_modes", Min: 8, Max: 96, IsInt: true}, float64(bodyCfg.Modes))
+	addKnob(knobDef{Name: "body_brightness", Min: 0.5, Max: 2.5}, bodyCfg.Brightness)
+	addKnob(knobDef{Name: "body_density", Min: 0.5, Max: 4.0}, bodyCfg.Density)
+	addKnob(knobDef{Name: "body_direct", Min: 0.1, Max: 1.2}, bodyCfg.DirectLevel)
+	addKnob(knobDef{Name: "body_decay", Min: 0.01, Max: 0.5}, bodyCfg.DecayS)
+	addKnob(knobDef{Name: "body_duration", Min: 0.02, Max: 0.3}, bodyCfg.DurationS)
 
-	if optimizeIRMix || optimizeJoint {
-		addKnob(knobDef{Name: "ir_wet_mix", Min: 0.2, Max: 1.6}, float64(base.IRWetMix))
-		addKnob(knobDef{Name: "ir_dry_mix", Min: 0.0, Max: 0.8}, float64(base.IRDryMix))
-		addKnob(knobDef{Name: "ir_gain", Min: 0.4, Max: 2.2}, float64(base.IRGain))
-	}
+	// Room IR knobs (stereo, longer).
+	addKnob(knobDef{Name: "room_early", Min: 0, Max: 64, IsInt: true}, float64(roomCfg.EarlyCount))
+	addKnob(knobDef{Name: "room_late", Min: 0.0, Max: 0.15}, roomCfg.LateLevel)
+	addKnob(knobDef{Name: "room_stereo_width", Min: 0.0, Max: 1.0}, roomCfg.StereoWidth)
+	addKnob(knobDef{Name: "room_brightness", Min: 0.3, Max: 2.0}, roomCfg.Brightness)
+	addKnob(knobDef{Name: "room_low_decay", Min: 0.3, Max: 3.0}, roomCfg.LowDecayS)
+	addKnob(knobDef{Name: "room_high_decay", Min: 0.05, Max: 0.8}, roomCfg.HighDecayS)
+	addKnob(knobDef{Name: "room_duration", Min: 0.3, Max: 2.0}, roomCfg.DurationS)
+
+	// Mix knobs.
+	addKnob(knobDef{Name: "body_gain", Min: 0.3, Max: 2.0}, float64(base.BodyIRGain))
+	addKnob(knobDef{Name: "body_dry", Min: 0.2, Max: 1.5}, float64(base.BodyDryMix))
+	addKnob(knobDef{Name: "room_wet", Min: 0.0, Max: 1.0}, float64(base.RoomWetMix))
 
 	if optimizeJoint {
 		np := base.PerNote[note]
@@ -338,6 +347,11 @@ func initCandidate(
 	return defs, candidate{Vals: vals}
 }
 
+type irConfigs struct {
+	body irsynth.BodyConfig
+	room irsynth.RoomConfig
+}
+
 func applyCandidate(
 	base *piano.Params,
 	sampleRate int,
@@ -346,9 +360,11 @@ func applyCandidate(
 	baseReleaseAfter float64,
 	defs []knobDef,
 	c candidate,
-) (irsynth.Config, *piano.Params, int, float64) {
-	cfg := irsynth.DefaultConfig()
-	cfg.SampleRate = sampleRate
+) (irConfigs, *piano.Params, int, float64) {
+	bodyCfg := irsynth.DefaultBodyConfig()
+	bodyCfg.SampleRate = sampleRate
+	roomCfg := irsynth.DefaultRoomConfig()
+	roomCfg.SampleRate = sampleRate
 	params := cloneParams(base)
 	if params.PerNote == nil {
 		params.PerNote = make(map[int]*piano.NoteParams)
@@ -364,30 +380,42 @@ func applyCandidate(
 	for i, def := range defs {
 		v := c.Vals[i]
 		switch def.Name {
-		case "modes":
-			cfg.Modes = int(math.Round(v))
-		case "brightness":
-			cfg.Brightness = v
-		case "density":
-			cfg.Density = v
-		case "stereo_width":
-			cfg.StereoWidth = v
-		case "direct":
-			cfg.DirectLevel = v
-		case "early":
-			cfg.EarlyCount = int(math.Round(v))
-		case "late":
-			cfg.LateLevel = v
-		case "low_decay":
-			cfg.LowDecayS = v
-		case "high_decay":
-			cfg.HighDecayS = v
-		case "ir_wet_mix":
-			params.IRWetMix = float32(v)
-		case "ir_dry_mix":
-			params.IRDryMix = float32(v)
-		case "ir_gain":
-			params.IRGain = float32(v)
+		// Body IR knobs.
+		case "body_modes":
+			bodyCfg.Modes = int(math.Round(v))
+		case "body_brightness":
+			bodyCfg.Brightness = v
+		case "body_density":
+			bodyCfg.Density = v
+		case "body_direct":
+			bodyCfg.DirectLevel = v
+		case "body_decay":
+			bodyCfg.DecayS = v
+		case "body_duration":
+			bodyCfg.DurationS = v
+		// Room IR knobs.
+		case "room_early":
+			roomCfg.EarlyCount = int(math.Round(v))
+		case "room_late":
+			roomCfg.LateLevel = v
+		case "room_stereo_width":
+			roomCfg.StereoWidth = v
+		case "room_brightness":
+			roomCfg.Brightness = v
+		case "room_low_decay":
+			roomCfg.LowDecayS = v
+		case "room_high_decay":
+			roomCfg.HighDecayS = v
+		case "room_duration":
+			roomCfg.DurationS = v
+		// Mix knobs.
+		case "body_gain":
+			params.BodyIRGain = float32(v)
+		case "body_dry":
+			params.BodyDryMix = float32(v)
+		case "room_wet":
+			params.RoomWetMix = float32(v)
+		// Piano knobs (joint optimization).
 		case "output_gain":
 			params.OutputGain = float32(v)
 		case "hammer_stiffness_scale":
@@ -417,11 +445,11 @@ func applyCandidate(
 		}
 	}
 
-	if cfg.Modes < 1 {
-		cfg.Modes = 1
+	if bodyCfg.Modes < 1 {
+		bodyCfg.Modes = 1
 	}
-	if cfg.EarlyCount < 0 {
-		cfg.EarlyCount = 0
+	if roomCfg.EarlyCount < 0 {
+		roomCfg.EarlyCount = 0
 	}
 	if velocity < 1 {
 		velocity = 1
@@ -432,7 +460,7 @@ func applyCandidate(
 	if releaseAfter < 0.05 {
 		releaseAfter = 0.05
 	}
-	return cfg, params, velocity, releaseAfter
+	return irConfigs{body: bodyCfg, room: roomCfg}, params, velocity, releaseAfter
 }
 
 func updateTopCandidates(top []topCandidate, topK int, eval int, metrics analysis.Metrics, defs []knobDef, cand candidate) []topCandidate {

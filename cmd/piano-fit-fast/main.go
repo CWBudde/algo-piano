@@ -242,30 +242,55 @@ func initCandidate(base *piano.Params, note int) ([]knobDef, candidate) {
 		np = &piano.NoteParams{Loss: 0.9990, Inharmonicity: 0.12, StrikePosition: 0.18}
 	}
 
+	dualIR := base.BodyIRWavPath != "" || base.RoomIRWavPath != ""
+
 	defs := []knobDef{
 		{Name: "output_gain", Min: 0.4, Max: 1.8},
-		{Name: "ir_wet_mix", Min: 0.2, Max: 1.6},
-		{Name: "ir_dry_mix", Min: 0.0, Max: 0.8},
-		{Name: "ir_gain", Min: 0.4, Max: 2.2},
-		{Name: "hammer_stiffness_scale", Min: 0.6, Max: 1.8},
-		{Name: "hammer_exponent_scale", Min: 0.8, Max: 1.2},
-		{Name: "hammer_damping_scale", Min: 0.6, Max: 1.8},
-		{Name: "hammer_initial_velocity_scale", Min: 0.7, Max: 1.4},
-		{Name: "hammer_contact_time_scale", Min: 0.7, Max: 1.6},
-		{Name: "unison_detune_scale", Min: 0.0, Max: 2.0},
-		{Name: "unison_crossfeed", Min: 0.0, Max: 0.005},
-		{Name: fmt.Sprintf("per_note.%d.loss", note), Min: 0.985, Max: 0.99995},
-		{Name: fmt.Sprintf("per_note.%d.inharmonicity", note), Min: 0.0, Max: 0.6},
-		{Name: fmt.Sprintf("per_note.%d.strike_position", note), Min: 0.08, Max: 0.45},
-		{Name: "render.release_after", Min: 0.2, Max: 3.5},
-		{Name: "render.velocity", Min: 40, Max: 127, IsInt: true},
 	}
+	var mixVals []float64
+	if dualIR {
+		defs = append(defs,
+			knobDef{Name: "body_dry", Min: 0.2, Max: 1.5},
+			knobDef{Name: "body_gain", Min: 0.3, Max: 2.0},
+			knobDef{Name: "room_wet", Min: 0.0, Max: 1.0},
+			knobDef{Name: "room_gain", Min: 0.3, Max: 2.0},
+		)
+		mixVals = []float64{
+			float64(base.BodyDryMix),
+			float64(base.BodyIRGain),
+			float64(base.RoomWetMix),
+			float64(base.RoomGain),
+		}
+	} else {
+		defs = append(defs,
+			knobDef{Name: "ir_wet_mix", Min: 0.2, Max: 1.6},
+			knobDef{Name: "ir_dry_mix", Min: 0.0, Max: 0.8},
+			knobDef{Name: "ir_gain", Min: 0.4, Max: 2.2},
+		)
+		mixVals = []float64{
+			float64(base.IRWetMix),
+			float64(base.IRDryMix),
+			float64(base.IRGain),
+		}
+	}
+	defs = append(defs,
+		knobDef{Name: "hammer_stiffness_scale", Min: 0.6, Max: 1.8},
+		knobDef{Name: "hammer_exponent_scale", Min: 0.8, Max: 1.2},
+		knobDef{Name: "hammer_damping_scale", Min: 0.6, Max: 1.8},
+		knobDef{Name: "hammer_initial_velocity_scale", Min: 0.7, Max: 1.4},
+		knobDef{Name: "hammer_contact_time_scale", Min: 0.7, Max: 1.6},
+		knobDef{Name: "unison_detune_scale", Min: 0.0, Max: 2.0},
+		knobDef{Name: "unison_crossfeed", Min: 0.0, Max: 0.005},
+		knobDef{Name: fmt.Sprintf("per_note.%d.loss", note), Min: 0.985, Max: 0.99995},
+		knobDef{Name: fmt.Sprintf("per_note.%d.inharmonicity", note), Min: 0.0, Max: 0.6},
+		knobDef{Name: fmt.Sprintf("per_note.%d.strike_position", note), Min: 0.08, Max: 0.45},
+		knobDef{Name: "render.release_after", Min: 0.2, Max: 3.5},
+		knobDef{Name: "render.velocity", Min: 40, Max: 127, IsInt: true},
+	)
 
-	vals := []float64{
-		float64(base.OutputGain),
-		float64(base.IRWetMix),
-		float64(base.IRDryMix),
-		float64(base.IRGain),
+	vals := []float64{float64(base.OutputGain)}
+	vals = append(vals, mixVals...)
+	vals = append(vals,
 		float64(base.HammerStiffnessScale),
 		float64(base.HammerExponentScale),
 		float64(base.HammerDampingScale),
@@ -278,7 +303,7 @@ func initCandidate(base *piano.Params, note int) ([]knobDef, candidate) {
 		float64(np.StrikePosition),
 		2.0,
 		100,
-	}
+	)
 	for i := range vals {
 		vals[i] = clamp(vals[i], defs[i].Min, defs[i].Max)
 	}
@@ -310,6 +335,14 @@ func applyCandidate(base *piano.Params, note int, defs []knobDef, c candidate) (
 			p.IRDryMix = float32(v)
 		case "ir_gain":
 			p.IRGain = float32(v)
+		case "body_dry":
+			p.BodyDryMix = float32(v)
+		case "body_gain":
+			p.BodyIRGain = float32(v)
+		case "room_wet":
+			p.RoomWetMix = float32(v)
+		case "room_gain":
+			p.RoomGain = float32(v)
 		case "hammer_stiffness_scale":
 			p.HammerStiffnessScale = float32(v)
 		case "hammer_exponent_scale":

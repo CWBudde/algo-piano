@@ -14,11 +14,20 @@ import (
 
 // File is the JSON schema for piano presets.
 type File struct {
-	OutputGain                 *float32               `json:"output_gain"`
-	IRWavPath                  string                 `json:"ir_wav_path"`
-	IRWetMix                   *float32               `json:"ir_wet_mix"`
-	IRDryMix                   *float32               `json:"ir_dry_mix"`
-	IRGain                     *float32               `json:"ir_gain"`
+	OutputGain *float32 `json:"output_gain"`
+	// Legacy single-IR fields.
+	IRWavPath string   `json:"ir_wav_path"`
+	IRWetMix  *float32 `json:"ir_wet_mix"`
+	IRDryMix  *float32 `json:"ir_dry_mix"`
+	IRGain    *float32 `json:"ir_gain"`
+	// Dual-IR fields.
+	BodyIRWavPath string   `json:"body_ir_wav_path,omitempty"`
+	BodyIRGain    *float32 `json:"body_ir_gain,omitempty"`
+	BodyDryMix    *float32 `json:"body_dry_mix,omitempty"`
+	RoomIRWavPath string   `json:"room_ir_wav_path,omitempty"`
+	RoomWetMix    *float32 `json:"room_wet_mix,omitempty"`
+	RoomGain      *float32 `json:"room_gain,omitempty"`
+
 	ResonanceEnabled           *bool                  `json:"resonance_enabled"`
 	ResonanceGain              *float32               `json:"resonance_gain"`
 	ResonancePerNoteFilter     *bool                  `json:"resonance_per_note_filter"`
@@ -59,9 +68,15 @@ func LoadJSON(path string) (*piano.Params, error) {
 		return nil, err
 	}
 
+	base := filepath.Dir(path)
 	if p.IRWavPath != "" && !filepath.IsAbs(p.IRWavPath) {
-		base := filepath.Dir(path)
 		p.IRWavPath = filepath.Clean(filepath.Join(base, p.IRWavPath))
+	}
+	if p.BodyIRWavPath != "" && !filepath.IsAbs(p.BodyIRWavPath) {
+		p.BodyIRWavPath = filepath.Clean(filepath.Join(base, p.BodyIRWavPath))
+	}
+	if p.RoomIRWavPath != "" && !filepath.IsAbs(p.RoomIRWavPath) {
+		p.RoomIRWavPath = filepath.Clean(filepath.Join(base, p.RoomIRWavPath))
 	}
 	return p, nil
 }
@@ -101,6 +116,37 @@ func ApplyFile(dst *piano.Params, f *File) error {
 			return fmt.Errorf("ir_gain must be > 0")
 		}
 		dst.IRGain = *f.IRGain
+	}
+	// Dual-IR fields.
+	if f.BodyIRWavPath != "" {
+		dst.BodyIRWavPath = strings.TrimSpace(f.BodyIRWavPath)
+	}
+	if f.BodyIRGain != nil {
+		if *f.BodyIRGain <= 0 {
+			return fmt.Errorf("body_ir_gain must be > 0")
+		}
+		dst.BodyIRGain = *f.BodyIRGain
+	}
+	if f.BodyDryMix != nil {
+		if *f.BodyDryMix < 0 {
+			return fmt.Errorf("body_dry_mix must be >= 0")
+		}
+		dst.BodyDryMix = *f.BodyDryMix
+	}
+	if f.RoomIRWavPath != "" {
+		dst.RoomIRWavPath = strings.TrimSpace(f.RoomIRWavPath)
+	}
+	if f.RoomWetMix != nil {
+		if *f.RoomWetMix < 0 {
+			return fmt.Errorf("room_wet_mix must be >= 0")
+		}
+		dst.RoomWetMix = *f.RoomWetMix
+	}
+	if f.RoomGain != nil {
+		if *f.RoomGain <= 0 {
+			return fmt.Errorf("room_gain must be > 0")
+		}
+		dst.RoomGain = *f.RoomGain
 	}
 	if f.ResonanceEnabled != nil {
 		dst.ResonanceEnabled = *f.ResonanceEnabled

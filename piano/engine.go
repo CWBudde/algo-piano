@@ -2,22 +2,24 @@ package piano
 
 // Piano is the global engine managing voice allocation and polyphony.
 type Piano struct {
-	sampleRate   int
-	voices       []*Voice
-	params       *Params
-	convolver    *SoundboardConvolver
-	resonance    *ResonanceEngine
-	sustainPedal bool
-	softPedal    bool
+	sampleRate    int
+	voices        []*Voice
+	params        *Params
+	bodyConvolver *BodyConvolver
+	roomConvolver *SoundboardConvolver
+	resonance     *ResonanceEngine
+	sustainPedal  bool
+	softPedal     bool
 }
 
 // NewPiano creates a new piano engine.
 func NewPiano(sampleRate int, maxPolyphony int, params *Params) *Piano {
 	p := &Piano{
-		sampleRate: sampleRate,
-		voices:     make([]*Voice, 0, maxPolyphony),
-		params:     params,
-		convolver:  NewSoundboardConvolver(sampleRate),
+		sampleRate:    sampleRate,
+		voices:        make([]*Voice, 0, maxPolyphony),
+		params:        params,
+		bodyConvolver: NewBodyConvolver(sampleRate),
+		roomConvolver: NewSoundboardConvolver(sampleRate),
 	}
 	if params == nil || params.ResonanceEnabled {
 		gain := float32(0.00018)
@@ -30,8 +32,19 @@ func NewPiano(sampleRate int, maxPolyphony int, params *Params) *Piano {
 		}
 		p.resonance = NewResonanceEngine(sampleRate, gain, perNoteFilter)
 	}
-	if params != nil && params.IRWavPath != "" {
-		_ = p.convolver.SetIRFromWAV(params.IRWavPath)
+	// Load body IR from file if specified.
+	if params != nil && params.BodyIRWavPath != "" {
+		_ = p.bodyConvolver.SetIRFromWAV(params.BodyIRWavPath, sampleRate)
+	}
+	// Load room IR: prefer RoomIRWavPath, fall back to legacy IRWavPath.
+	if params != nil {
+		roomPath := params.RoomIRWavPath
+		if roomPath == "" {
+			roomPath = params.IRWavPath
+		}
+		if roomPath != "" {
+			_ = p.roomConvolver.SetIRFromWAV(roomPath)
+		}
 	}
 	return p
 }
@@ -69,9 +82,20 @@ func (p *Piano) SetSoftPedal(down bool) {
 	}
 }
 
-// SetIR sets the soundboard impulse response from pre-computed buffers.
+// SetIR sets the room impulse response from pre-computed stereo buffers.
+// Deprecated: Use SetRoomIR instead.
 func (p *Piano) SetIR(left, right []float32) {
-	p.convolver.SetIR(left, right)
+	p.roomConvolver.SetIR(left, right)
+}
+
+// SetBodyIR sets the mono body impulse response from pre-computed buffer.
+func (p *Piano) SetBodyIR(ir []float32) {
+	p.bodyConvolver.SetIR(ir)
+}
+
+// SetRoomIR sets the stereo room impulse response from pre-computed buffers.
+func (p *Piano) SetRoomIR(left, right []float32) {
+	p.roomConvolver.SetIR(left, right)
 }
 
 // Process renders a block of audio samples (stereo interleaved).
@@ -92,30 +116,49 @@ func (p *Piano) Process(numFrames int) []float32 {
 		p.resonance.InjectFromBridge(monoMix, p.voices)
 	}
 
-	stereoWet := p.convolver.Process(monoMix)
-	stereoOutput := make([]float32, len(stereoWet))
-	wetMix := float32(1.0)
-	dryMix := float32(0.0)
-	irGain := float32(1.0)
+	// Signal flow: voices → body convolver (mono→mono) → room convolver (mono→stereo)
+	bodyMono := p.bodyConvolver.Process(monoMix)
+	stereoRoom := p.roomConvolver.Process(bodyMono)
+
+	stereoOutput := make([]float32, numFrames*2)
+
+	// Read mix params with backwards-compatible defaults.
 	outGain := float32(1.0)
+	bodyDry := float32(1.0)
+	bodyGain := float32(1.0)
+	roomWet := float32(0.0)
+	roomGain := float32(1.0)
 	if p.params != nil {
-		if p.params.IRWetMix >= 0 {
-			wetMix = p.params.IRWetMix
-		}
-		if p.params.IRDryMix >= 0 {
-			dryMix = p.params.IRDryMix
-		}
-		if p.params.IRGain > 0 {
-			irGain = p.params.IRGain
-		}
 		if p.params.OutputGain > 0 {
 			outGain = p.params.OutputGain
 		}
+		// New dual-IR params.
+		if p.params.BodyDryMix >= 0 {
+			bodyDry = p.params.BodyDryMix
+		}
+		if p.params.BodyIRGain > 0 {
+			bodyGain = p.params.BodyIRGain
+		}
+		if p.params.RoomWetMix >= 0 {
+			roomWet = p.params.RoomWetMix
+		}
+		if p.params.RoomGain > 0 {
+			roomGain = p.params.RoomGain
+		}
+		// Legacy compat: if old IRWetMix/IRDryMix/IRGain are set and new ones aren't,
+		// map old params to new signal flow.
+		if p.params.RoomIRWavPath == "" && p.params.BodyIRWavPath == "" && p.params.IRWavPath != "" {
+			bodyDry = p.params.IRDryMix
+			roomWet = p.params.IRWetMix
+			roomGain = p.params.IRGain
+			bodyGain = 1.0
+		}
 	}
+
 	for i := 0; i < numFrames; i++ {
-		dry := monoMix[i] * dryMix
-		l := dry + stereoWet[i*2]*wetMix*irGain
-		r := dry + stereoWet[i*2+1]*wetMix*irGain
+		body := bodyMono[i] * bodyGain
+		l := bodyDry*body + roomWet*stereoRoom[i*2]*roomGain
+		r := bodyDry*body + roomWet*stereoRoom[i*2+1]*roomGain
 		stereoOutput[i*2] = l * outGain
 		stereoOutput[i*2+1] = r * outGain
 	}

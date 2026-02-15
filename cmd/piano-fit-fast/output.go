@@ -105,6 +105,12 @@ func writePresetJSON(path string, p *piano.Params) error {
 		IRWetMix                   float32              `json:"ir_wet_mix,omitempty"`
 		IRDryMix                   float32              `json:"ir_dry_mix,omitempty"`
 		IRGain                     float32              `json:"ir_gain,omitempty"`
+		BodyIRWavPath              string               `json:"body_ir_wav_path,omitempty"`
+		BodyIRGain                 float32              `json:"body_ir_gain,omitempty"`
+		BodyDryMix                 float32              `json:"body_dry_mix,omitempty"`
+		RoomIRWavPath              string               `json:"room_ir_wav_path,omitempty"`
+		RoomWetMix                 float32              `json:"room_wet_mix,omitempty"`
+		RoomGain                   float32              `json:"room_gain,omitempty"`
 		ResonanceEnabled           bool                 `json:"resonance_enabled,omitempty"`
 		ResonanceGain              float32              `json:"resonance_gain,omitempty"`
 		ResonancePerNoteFilter     bool                 `json:"resonance_per_note_filter,omitempty"`
@@ -126,6 +132,12 @@ func writePresetJSON(path string, p *piano.Params) error {
 		IRWetMix:                   p.IRWetMix,
 		IRDryMix:                   p.IRDryMix,
 		IRGain:                     p.IRGain,
+		BodyIRWavPath:              presetIRPath(path, p.BodyIRWavPath),
+		BodyIRGain:                 p.BodyIRGain,
+		BodyDryMix:                 p.BodyDryMix,
+		RoomIRWavPath:              presetIRPath(path, p.RoomIRWavPath),
+		RoomWetMix:                 p.RoomWetMix,
+		RoomGain:                   p.RoomGain,
 		ResonanceEnabled:           p.ResonanceEnabled,
 		ResonanceGain:              p.ResonanceGain,
 		ResonancePerNoteFilter:     p.ResonancePerNoteFilter,
