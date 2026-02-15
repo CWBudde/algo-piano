@@ -405,13 +405,21 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchPath stri
 
 	if needsIRSynthesis(cfg.groups) {
 		// IR synthesis mode: generate body/room IR, render with dual IR buffers.
-		bodyIR, err := irsynth.GenerateBody(irCfgs.body)
-		if err != nil {
-			return optimizationEval{}, fmt.Errorf("body IR: %w", err)
+		var bodyIR []float32
+		var roomL, roomR []float32
+		if cfg.groups["body-ir"] {
+			ir, err := irsynth.GenerateBody(irCfgs.body)
+			if err != nil {
+				return optimizationEval{}, fmt.Errorf("body IR: %w", err)
+			}
+			bodyIR = ir
 		}
-		roomL, roomR, err := irsynth.GenerateRoom(irCfgs.room)
-		if err != nil {
-			return optimizationEval{}, fmt.Errorf("room IR: %w", err)
+		if cfg.groups["room-ir"] {
+			l, r, err := irsynth.GenerateRoom(irCfgs.room)
+			if err != nil {
+				return optimizationEval{}, fmt.Errorf("room IR: %w", err)
+			}
+			roomL, roomR = l, r
 		}
 		// Clear IR paths so NewPiano won't load from disk; we set buffers directly.
 		params.IRWavPath = ""
@@ -487,8 +495,12 @@ func renderCandidateWithDualIR(
 		return nil, nil, errors.New("nil params")
 	}
 	p := piano.NewPiano(sampleRate, 16, params)
-	p.SetBodyIR(bodyIR)
-	p.SetRoomIR(roomIRL, roomIRR)
+	if len(bodyIR) > 0 {
+		p.SetBodyIR(bodyIR)
+	}
+	if len(roomIRL) > 0 && len(roomIRR) > 0 {
+		p.SetRoomIR(roomIRL, roomIRR)
+	}
 	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, minDuration, maxDuration, blockSize, releaseAfter)
 }
 

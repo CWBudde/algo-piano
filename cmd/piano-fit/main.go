@@ -46,6 +46,7 @@ func main() {
 	resumeReport := flag.String("resume-report", "", "Optional report JSON path to resume from (default: current report path)")
 	workers := flag.String("workers", "1", "Parallel optimization workers running independent Mayfly rounds (number or 'auto')")
 
+	noResonance := flag.Bool("no-resonance", false, "Disable sympathetic resonance during optimization (faster evals)")
 	cpuProfile := flag.String("cpuprofile", "", "Write CPU profile to file")
 	mayflyVariant := flag.String("mayfly-variant", "desma", "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
 	mayflyPop := flag.Int("mayfly-pop", 10, "Male and female population size per Mayfly run")
@@ -128,6 +129,9 @@ func main() {
 	}
 	if baseParams.IRWavPath == "" {
 		baseParams.IRWavPath = piano.DefaultIRWavPath
+	}
+	if *noResonance {
+		baseParams.ResonanceEnabled = false
 	}
 
 	refRaw, refSR, err := readWAVMono(*referencePath)

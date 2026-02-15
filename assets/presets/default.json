@@ -18,6 +18,12 @@
   "coupling_octave_gain": 0.00018,
   "coupling_fifth_gain": 0.00008,
   "coupling_max_force": 0.00045,
+  "coupling_mode": "static",
+  "coupling_amount": 1.0,
+  "coupling_harmonic_falloff": 1.35,
+  "coupling_detune_sigma_cents": 28.0,
+  "coupling_distance_exponent": 1.15,
+  "coupling_max_neighbors": 10,
   "soft_pedal_strike_offset": 0.08,
   "soft_pedal_hardness": 0.78,
   "per_note": {

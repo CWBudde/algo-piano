@@ -1,6 +1,9 @@
 package piano
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 // RingingStringGroup is a persistent string group for one note.
 type RingingStringGroup struct {
@@ -20,6 +23,12 @@ type couplingEdge struct {
 	to   int
 	gain float32
 }
+
+const (
+	couplingPhysicalBaseGain    = float32(0.0005)
+	couplingPhysicalMinScore    = float32(0.0002)
+	couplingPhysicalMaxPartials = 8
+)
 
 func newRingingStringGroup(sampleRate int, note int, params *Params) *RingingStringGroup {
 	lossGain := float32(0.9998)
@@ -213,29 +222,53 @@ func (g *RingingStringGroup) endBlock(blockEnergy float64, frames int) bool {
 
 // StringBank owns persistent ringing state for all piano notes.
 type StringBank struct {
-	unisonCrossfeed  float32
-	couplingEnabled  bool
-	couplingMaxForce float32
-	groups           [128]*RingingStringGroup
-	targets          []resonanceTarget
-	coupling         [128][]couplingEdge
-	active           [128]bool
-	activeNotes      []int
-	blockEnergy      [128]float64
-	sampleOut        [128]float32
+	unisonCrossfeed          float32
+	couplingEnabled          bool
+	couplingMode             CouplingMode
+	couplingAmount           float32
+	couplingMaxForce         float32
+	couplingMaxNeighbors     int
+	couplingHarmonicFalloff  float32
+	couplingDetuneSigmaCents float32
+	couplingDistanceExponent float32
+	groups                   [128]*RingingStringGroup
+	targets                  []resonanceTarget
+	coupling                 [128][]couplingEdge
+	distanceMap              [128][128]float32
+	active                   [128]bool
+	activeNotes              []int
+	blockEnergy              [128]float64
+	sampleOut                [128]float32
+	outputBuf                []float32
 }
 
 func NewStringBank(sampleRate int, params *Params) *StringBank {
 	unisonCrossfeed := float32(0.0008)
 	couplingEnabled := true
+	couplingMode := CouplingModeStatic
+	couplingAmount := float32(1.0)
 	couplingOctaveGain := float32(0.00018)
 	couplingFifthGain := float32(0.00008)
 	couplingMaxForce := float32(0.00045)
+	couplingHarmonicFalloff := float32(1.35)
+	couplingDetuneSigmaCents := float32(28.0)
+	couplingDistanceExponent := float32(1.15)
+	couplingMaxNeighbors := 10
+
 	if params != nil && params.UnisonCrossfeed >= 0 {
 		unisonCrossfeed = params.UnisonCrossfeed
 	}
 	if params != nil {
 		couplingEnabled = params.CouplingEnabled
+		if params.CouplingMode != "" {
+			switch params.CouplingMode {
+			case CouplingModeOff, CouplingModeStatic, CouplingModePhysical:
+				couplingMode = params.CouplingMode
+			}
+		}
+		if params.CouplingAmount >= 0 {
+			couplingAmount = clampFloat32(params.CouplingAmount, 0, 1)
+		}
 		if params.CouplingOctaveGain >= 0 {
 			couplingOctaveGain = params.CouplingOctaveGain
 		}
@@ -245,25 +278,81 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 		if params.CouplingMaxForce > 0 {
 			couplingMaxForce = params.CouplingMaxForce
 		}
+		if params.CouplingHarmonicFalloff > 0 {
+			couplingHarmonicFalloff = params.CouplingHarmonicFalloff
+		}
+		if params.CouplingDetuneSigmaCents > 0 {
+			couplingDetuneSigmaCents = params.CouplingDetuneSigmaCents
+		}
+		if params.CouplingDistanceExponent >= 0 {
+			couplingDistanceExponent = params.CouplingDistanceExponent
+		}
+		if params.CouplingMaxNeighbors > 0 {
+			couplingMaxNeighbors = params.CouplingMaxNeighbors
+		}
+	}
+	if !couplingEnabled || couplingAmount <= 0 {
+		couplingMode = CouplingModeOff
 	}
 
 	sb := &StringBank{
-		unisonCrossfeed:  unisonCrossfeed,
-		couplingEnabled:  couplingEnabled,
-		couplingMaxForce: couplingMaxForce,
-		targets:          make([]resonanceTarget, 0, 128),
-		activeNotes:      make([]int, 0, 32),
+		unisonCrossfeed:          unisonCrossfeed,
+		couplingEnabled:          couplingMode != CouplingModeOff,
+		couplingMode:             couplingMode,
+		couplingAmount:           couplingAmount,
+		couplingMaxForce:         couplingMaxForce,
+		couplingMaxNeighbors:     couplingMaxNeighbors,
+		couplingHarmonicFalloff:  couplingHarmonicFalloff,
+		couplingDetuneSigmaCents: couplingDetuneSigmaCents,
+		couplingDistanceExponent: couplingDistanceExponent,
+		targets:                  make([]resonanceTarget, 0, 128),
+		activeNotes:              make([]int, 0, 128),
 	}
 	for note := 0; note < 128; note++ {
 		g := newRingingStringGroup(sampleRate, note, params)
 		sb.groups[note] = g
 		sb.targets = append(sb.targets, g)
 	}
-	sb.initCouplingGraph(couplingOctaveGain, couplingFifthGain)
+	sb.initDistanceMap()
+	switch sb.couplingMode {
+	case CouplingModeStatic:
+		sb.initStaticCouplingGraph(couplingOctaveGain*sb.couplingAmount, couplingFifthGain*sb.couplingAmount)
+	case CouplingModePhysical:
+		sb.initPhysicalCouplingGraph(sampleRate)
+	default:
+		sb.couplingEnabled = false
+	}
 	return sb
 }
 
-func (sb *StringBank) initCouplingGraph(octaveGain float32, fifthGain float32) {
+func (sb *StringBank) ensureOutputBuffer(numFrames int) []float32 {
+	if numFrames <= 0 {
+		return sb.outputBuf[:0]
+	}
+	if cap(sb.outputBuf) < numFrames {
+		sb.outputBuf = make([]float32, numFrames)
+	}
+	sb.outputBuf = sb.outputBuf[:numFrames]
+	return sb.outputBuf
+}
+
+func (sb *StringBank) initDistanceMap() {
+	for src := 0; src < 128; src++ {
+		for dst := 0; dst < 128; dst++ {
+			if src == dst {
+				sb.distanceMap[src][dst] = 0
+				continue
+			}
+			delta := float32(src - dst)
+			if delta < 0 {
+				delta = -delta
+			}
+			sb.distanceMap[src][dst] = delta / 12.0
+		}
+	}
+}
+
+func (sb *StringBank) initStaticCouplingGraph(octaveGain float32, fifthGain float32) {
 	for i := range sb.coupling {
 		sb.coupling[i] = sb.coupling[i][:0]
 	}
@@ -287,6 +376,123 @@ func (sb *StringBank) initCouplingGraph(octaveGain float32, fifthGain float32) {
 		}
 		sb.coupling[note] = edges
 	}
+}
+
+type couplingCandidate struct {
+	to    int
+	score float32
+}
+
+func (sb *StringBank) initPhysicalCouplingGraph(sampleRate int) {
+	for i := range sb.coupling {
+		sb.coupling[i] = sb.coupling[i][:0]
+	}
+	if sampleRate <= 0 {
+		sb.couplingEnabled = false
+		return
+	}
+
+	nyquist := 0.5 * float32(sampleRate)
+	maxNeighbors := sb.couplingMaxNeighbors
+	if maxNeighbors > 127 {
+		maxNeighbors = 127
+	}
+	for src := 0; src < 128; src++ {
+		candidates := make([]couplingCandidate, 0, 24)
+		for dst := 0; dst < 128; dst++ {
+			if dst == src {
+				continue
+			}
+			score := sb.physicalCouplingWeight(src, dst, nyquist)
+			if score < couplingPhysicalMinScore {
+				continue
+			}
+			candidates = append(candidates, couplingCandidate{to: dst, score: score})
+		}
+		if len(candidates) == 0 {
+			continue
+		}
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].score > candidates[j].score
+		})
+		if len(candidates) > maxNeighbors {
+			candidates = candidates[:maxNeighbors]
+		}
+		sumScore := float32(0)
+		for _, c := range candidates {
+			sumScore += c.score
+		}
+		if sumScore <= 0 {
+			continue
+		}
+		edges := make([]couplingEdge, 0, len(candidates))
+		outGain := couplingPhysicalBaseGain * sb.couplingAmount
+		for _, c := range candidates {
+			edges = append(edges, couplingEdge{
+				to:   c.to,
+				gain: outGain * (c.score / sumScore),
+			})
+		}
+		sb.coupling[src] = edges
+	}
+}
+
+func (sb *StringBank) physicalCouplingWeight(src int, dst int, nyquist float32) float32 {
+	if src < 0 || src > 127 || dst < 0 || dst > 127 || src == dst {
+		return 0
+	}
+	srcGroup := sb.groups[src]
+	dstGroup := sb.groups[dst]
+	if srcGroup == nil || dstGroup == nil || srcGroup.f0 <= 0 || dstGroup.f0 <= 0 {
+		return 0
+	}
+
+	sum := float32(0)
+	for m := 1; m <= couplingPhysicalMaxPartials; m++ {
+		srcHarm := srcGroup.f0 * float32(m)
+		if srcHarm >= nyquist*0.95 {
+			break
+		}
+		srcStrength := float32(1.0 / math.Pow(float64(m), float64(sb.couplingHarmonicFalloff)))
+		for n := 1; n <= couplingPhysicalMaxPartials; n++ {
+			dstHarm := dstGroup.f0 * float32(n)
+			if dstHarm >= nyquist*0.95 {
+				break
+			}
+			dstStrength := float32(1.0 / math.Pow(float64(n), float64(0.65*sb.couplingHarmonicFalloff)))
+			diffHz := srcHarm - dstHarm
+			if diffHz < 0 {
+				diffHz = -diffHz
+			}
+			refHz := srcHarm
+			if dstHarm > refHz {
+				refHz = dstHarm
+			}
+			bandwidthHz := 1.8 + 0.003*refHz
+			ratio := diffHz / bandwidthHz
+			align := float32(1.0 / (1.0 + float64(ratio*ratio)))
+
+			cents := 1200.0 * math.Log2(float64(srcHarm/dstHarm))
+			if cents < 0 {
+				cents = -cents
+			}
+			detuneSigma := sb.couplingDetuneSigmaCents
+			detuneRatio := float32(cents) / detuneSigma
+			detunePenalty := float32(math.Exp(-0.5 * float64(detuneRatio*detuneRatio)))
+
+			sum += srcStrength * dstStrength * align * detunePenalty
+		}
+	}
+
+	if sum <= 0 {
+		return 0
+	}
+	dist := sb.distanceMap[src][dst]
+	if sb.couplingDistanceExponent <= 0 {
+		return sum
+	}
+	distPenalty := float32(1.0 / math.Pow(float64(1.0+dist), float64(sb.couplingDistanceExponent)))
+	return sum * distPenalty
 }
 
 func (sb *StringBank) Group(note int) *RingingStringGroup {
@@ -353,7 +559,7 @@ func (sb *StringBank) InjectCouplingForce(note int, force float32) {
 }
 
 func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
-	out := make([]float32, numFrames)
+	out := sb.ensureOutputBuffer(numFrames)
 	if numFrames <= 0 {
 		return out
 	}
@@ -362,6 +568,7 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 			if hammer != nil {
 				hammer.ProcessSample(sb)
 			}
+			out[i] = 0
 		}
 		return out
 	}
@@ -414,6 +621,10 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 
 func (sb *StringBank) applySparseCoupling() {
 	const eps = 1e-9
+	polyScale := float32(1.0)
+	if n := len(sb.activeNotes); n > 1 {
+		polyScale = float32(1.0 / math.Sqrt(float64(n)))
+	}
 	for _, src := range sb.activeNotes {
 		srcSample := sb.sampleOut[src]
 		if srcSample > -eps && srcSample < eps {
@@ -421,9 +632,19 @@ func (sb *StringBank) applySparseCoupling() {
 		}
 		edges := sb.coupling[src]
 		for _, e := range edges {
-			sb.InjectCouplingForce(e.to, srcSample*e.gain)
+			sb.InjectCouplingForce(e.to, srcSample*e.gain*polyScale)
 		}
 	}
+}
+
+func clampFloat32(v float32, lo float32, hi float32) float32 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 type RingingState struct {

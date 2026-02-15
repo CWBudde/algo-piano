@@ -307,7 +307,7 @@ This phase is split into execution subphases to make progress and ownership expl
 - [x] Allocate full piano string set at init (1-3 strings per note), independent of active notes.
 - [x] Maintain per-string damper state independent from note allocation.
 - [x] Keep per-string calibration hooks (detune, loss, inharmonicity, gain, strike mapping).
-- [ ] Ensure no per-sample/per-block heap allocations are introduced by the bank processing path.
+- [x] Ensure no per-sample/per-block heap allocations are introduced by the bank processing path.
 
 ### Phase 9.3 — Baseline Sparse Coupling (completed MVP)
 
@@ -321,20 +321,20 @@ This phase is split into execution subphases to make progress and ownership expl
 
 ### Phase 9.4 — Physically-Informed Coupling (general-parameter model)
 
-- [ ] Replace fixed-neighbor gains with a physically-informed weight model based on general parameters.
-- [ ] Define coupling coefficient for source string `i` to target string `j` using:
-  - [ ] overtone strength profile of source string
-  - [ ] frequency alignment between target fundamental and source partials
-  - [ ] approximate inter-string distance penalty
-  - [ ] detune penalty (larger detune => weaker coupling)
-- [ ] Build and persist an approximate string-distance map across the instrument.
-- [ ] Precompute sparse top-K coupling edges from the continuous model (threshold + neighbor cap).
-- [ ] Add normalized energy scaling so coupling remains stable across registers and polyphony.
-- [ ] Add user-facing control extent:
-  - [ ] `coupling_mode`: `off | static | physical`
-  - [ ] `coupling_amount`: scalar `0..1` blend/strength control
-  - [ ] advanced knobs: harmonic falloff, detune sigma, distance exponent, max neighbors
-- [ ] Keep hard safety clamps (`max_force`) and validate numerical stability under stress.
+- [x] Add physically-informed weight model path (`coupling_mode=physical`) based on general parameters.
+- [x] Define coupling coefficient for source string `i` to target string `j` using:
+  - [x] overtone strength profile of source string
+  - [x] frequency alignment between source/target harmonic frequencies
+  - [x] approximate inter-string distance penalty
+  - [x] detune penalty (larger detune => weaker coupling)
+- [x] Build and persist an approximate string-distance map across the instrument.
+- [x] Precompute sparse top-K coupling edges from the continuous model (threshold + neighbor cap).
+- [x] Add normalized coupling scaling (per-source edge normalization + polyphony normalization).
+- [x] Add user-facing control extent:
+  - [x] `coupling_mode`: `off | static | physical`
+  - [x] `coupling_amount`: scalar `0..1` blend/strength control
+  - [x] advanced knobs: harmonic falloff, detune sigma, distance exponent, max neighbors
+- [x] Keep hard safety clamps (`max_force`) in coupling injection path.
 
 ### Phase 9.5 — Instrument Semantics + Radiation + Web Migration
 

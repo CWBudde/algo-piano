@@ -1,5 +1,13 @@
 package piano
 
+type CouplingMode string
+
+const (
+	CouplingModeOff      CouplingMode = "off"
+	CouplingModeStatic   CouplingMode = "static"
+	CouplingModePhysical CouplingMode = "physical"
+)
+
 // Params holds all preset parameters.
 type Params struct {
 	PerNote map[int]*NoteParams
@@ -38,6 +46,14 @@ type Params struct {
 	CouplingOctaveGain float32
 	CouplingFifthGain  float32
 	CouplingMaxForce   float32
+	CouplingMode       CouplingMode
+	CouplingAmount     float32
+
+	// Physically-informed coupling controls.
+	CouplingHarmonicFalloff  float32
+	CouplingDetuneSigmaCents float32
+	CouplingDistanceExponent float32
+	CouplingMaxNeighbors     int
 
 	SoftPedalStrikeOffset float32
 	SoftPedalHardness     float32
@@ -78,6 +94,12 @@ func NewDefaultParams() *Params {
 		CouplingOctaveGain:         0.00018,
 		CouplingFifthGain:          0.00008,
 		CouplingMaxForce:           0.00045,
+		CouplingMode:               CouplingModeStatic,
+		CouplingAmount:             1.0,
+		CouplingHarmonicFalloff:    1.35,
+		CouplingDetuneSigmaCents:   28.0,
+		CouplingDistanceExponent:   1.15,
+		CouplingMaxNeighbors:       10,
 		SoftPedalStrikeOffset:      0.08,
 		SoftPedalHardness:          0.78,
 	}
