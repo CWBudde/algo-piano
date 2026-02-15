@@ -17,14 +17,19 @@ The `piano-fit` tool optimizes different parameter groups selected via `--optimi
 
 The idea: alternate between piano-only and IR stages so each builds on the previous best result.
 
+### Key flags
+
+- `--no-resonance`: Disables the resonance engine during optimization. Use for stages 1-3 to avoid the CPU cost of sympathetic resonance (27x speedup). Only enable resonance for final polish stages.
+- `--cpuprofile <file>`: Write CPU profile for performance analysis.
+
 ## Workflow
 
 ```
-Stage 1: --optimize=piano,mix         (piano knobs, default IR)
+Stage 1: --optimize=piano,mix         (piano knobs, default IR, no resonance)
     ↓ output preset
-Stage 2: --optimize=body-ir,mix       (body IR, fixed piano from Stage 1)
+Stage 2: --optimize=body-ir,mix       (body IR, fixed piano from Stage 1, no resonance)
     ↓ output preset + body IR WAV
-Stage 3: --optimize=piano,mix         (piano knobs, fixed body IR from Stage 2)
+Stage 3: --optimize=piano,mix         (piano knobs, fixed body IR from Stage 2, no resonance)
     ↓ output preset (preserves body IR)
 Stage 4: --optimize=piano,body-ir,room-ir,mix  (joint optimization)
     ↓ output preset + body IR WAV + room IR WAV
@@ -44,13 +49,14 @@ go run --tags asm ./cmd/piano-fit \
     --preset assets/presets/default.json \
     --output-preset out/stages/stage1.json \
     --optimize piano,mix \
+    --no-resonance \
     --note 60 \
     --time-budget 600 \
     --max-evals 5000 \
     --workers auto
 ```
 
-**What this does:** Finds best hammer parameters, per-note tuning (loss, inharmonicity, strike position), output gain, and IR mix levels using the default IR.
+**What this does:** Finds best hammer parameters, per-note tuning (loss, inharmonicity, strike position), output gain, and IR mix levels using the default IR. Resonance is disabled for speed.
 
 ### Stage 2: Body IR Fit
 
@@ -63,6 +69,7 @@ go run --tags asm ./cmd/piano-fit \
     --output-preset out/stages/stage2.json \
     --output-ir out/stages/stage2-ir.wav \
     --optimize body-ir,mix \
+    --no-resonance \
     --note 60 \
     --time-budget 600 \
     --max-evals 2000 \
@@ -82,6 +89,7 @@ go run --tags asm ./cmd/piano-fit \
     --preset out/stages/stage2.json \
     --output-preset out/stages/stage3.json \
     --optimize piano,mix \
+    --no-resonance \
     --note 60 \
     --time-budget 600 \
     --max-evals 5000 \
@@ -204,6 +212,7 @@ go run --tags asm ./cmd/piano-fit \
     --preset assets/presets/default.json \
     --output-preset out/smoke/s1.json \
     --optimize piano,mix \
+    --no-resonance \
     --note 60 --time-budget 30 --max-evals 100 --workers auto
 
 # Stage 2: body IR
@@ -213,6 +222,7 @@ go run --tags asm ./cmd/piano-fit \
     --output-preset out/smoke/s2.json \
     --output-ir out/smoke/s2-ir.wav \
     --optimize body-ir,mix \
+    --no-resonance \
     --note 60 --time-budget 30 --max-evals 100 --workers auto --resume=false
 
 # Stage 3: refine piano with body IR
@@ -221,5 +231,6 @@ go run --tags asm ./cmd/piano-fit \
     --preset out/smoke/s2.json \
     --output-preset out/smoke/s3.json \
     --optimize piano,mix \
+    --no-resonance \
     --note 60 --time-budget 30 --max-evals 100 --workers auto --resume=false
 ```

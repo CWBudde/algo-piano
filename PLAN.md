@@ -406,12 +406,14 @@ This phase is split into execution subphases to make progress and ownership expl
 ### Tasks
 
 #### 11.1 — Fix output level calibration
+
 - [ ] Investigate why candidate is 40 dB quieter than reference
 - [ ] Check signal chain gain stages: hammer exciter amplitude → string waveguide → body convolver → room convolver → output gain
 - [ ] Widen output_gain knob range if needed, or find the scaling bug
 - [ ] Verify spectral-compare shows <5 dB level gap after fix
 
 #### 11.2 — Add hammer attack noise component
+
 - [ ] Add a short broadband noise burst at note onset in the hammer exciter
 - [ ] Parameters: attack_noise_level (amplitude), attack_noise_duration_ms (~1-5ms), attack_noise_color (spectral tilt)
 - [ ] The noise models felt-on-string impact and gives the initial "click"
@@ -419,21 +421,25 @@ This phase is split into execution subphases to make progress and ownership expl
 - [ ] Verify attack window (0-20ms) spectral energy improves
 
 #### 11.3 — Improve high-frequency sustain
+
 - [ ] Investigate frequency-dependent string loss (current loss is per-sample, uniform across harmonics)
 - [ ] Option A: Add a loss_frequency_scale parameter — higher harmonics get less additional damping
 - [ ] Option B: Add a separate high-frequency loss term (2-pole lowpass on the waveguide delay line, already common in Karplus-Strong models)
 - [ ] Verify hi-mid and high band energy in sustain/decay phases improves
 
 #### 11.4 — Spectral distance improvements
+
 - [ ] Consider making spectralRMSEDB use multiple time windows (STFT-based) instead of just the first 4096 samples
 - [ ] Weight early/sustain/decay phases differently in the score
 - [ ] Add per-band spectral distance to the analysis.Metrics for diagnostics
 
 #### 11.5 — Body IR Kirchhoff model refinements (deferred)
+
 - [ ] Full tier: algo-pde Helmholtz eigensolve for arbitrary plate geometry with ribs
 - [ ] Investigate whether the body IR is contributing to or compensating for the level gap
 
 #### 11.6 — Re-run optimization pipeline after model fixes
+
 - [ ] Stage 1: piano,mix with new hammer noise + level fix
 - [ ] Stage 2: body-ir,mix with Kirchhoff plate modes
 - [ ] Stage 3: piano,mix re-tune
@@ -459,6 +465,7 @@ go run --tags asm ./cmd/spectral-compare \
 Output: peak levels, lag alignment, then a table per time window (attack 0-20ms, early 20-100ms, sustain 100-500ms, decay 0.5-2s, late 2-4s) with per-band spectral RMSE (sub-bass through air), reference and candidate power levels, and diff. Bands with RMSE > 15 dB are flagged with `<<<`.
 
 ### Current state (as of 2026-02-15)
+
 - Unified `piano-fit` tool with `--optimize` group selection, `--no-resonance`, `--cpuprofile`
 - Body IR uses Kirchhoff plate eigenmodes with 2-way frequency-dependent decay
 - Optimized body IR defaults from Stage 2 fitting (PlateRatio=2.36, StiffnessRatio=8.33, ModeWarp=1.20, CrossoverHz=1145)
@@ -466,6 +473,65 @@ Output: peak levels, lag alignment, then a table per time window (attack 0-20ms,
 - Best scores: Stage 1=0.391, Stage 2=0.382, Stage 3=0.389
 
 **Done when:** spectral RMSE < 10 dB, overall score < 0.25, attack transient matches reference character.
+
+---
+
+## Phase 12 — Modal bank core + DWG matching pipeline
+
+**Goal:** add a modal-bank string core for low-CPU operation while preserving timbral compatibility with the DWG reference path.
+
+### 12.1 — Architecture + runtime switch
+
+- [x] Define a shared `StringModel` contract for per-note ringing:
+  - [x] `SetKeyDown`, `SetSustain`, excitation injection, block render, reset
+  - [x] coupling injection compatibility (same external API as DWG path)
+- [x] Implement engine-level core selection:
+  - [x] `dwg | modal` mode in params/presets
+  - [x] runtime-safe selection at init (and optional live switch if stable)
+- [x] Keep existing web/API behavior unchanged regardless of selected core.
+
+### 12.2 — Implement modal bank core
+
+- [x] Add `StringModalBank` (per-note resonator/mode set):
+  - [x] mode frequency layout (fundamental + partials with inharmonicity option)
+  - [x] per-mode damping/loss mapping across keyboard
+  - [x] excitation projection from hammer to mode amplitudes
+  - [x] sustain/damper semantics equivalent to DWG path
+- [x] Add anti-alias/stability controls for high partials near Nyquist.
+- [x] Ensure no per-block heap allocations in modal render path.
+
+### 12.3 — DWG-to-modal matching/calibration
+
+- [x] Define DWG reference renders as modal fit targets:
+  - [x] attack window
+  - [x] early sustain
+  - [x] decay envelope
+- [x] Build a fitter to match modal parameters to a high-quality DWG preset:
+  - [x] per-note or register-wise mode gain/damping fitting
+  - [ ] optional shared global priors to reduce parameter count
+- [x] Add an export flow:
+  - [x] generate modal parameter tables from DWG reference preset
+  - [x] version and store fitted modal profiles in assets/presets
+
+Tooling:
+
+- [x] Added `cmd/piano-modal-fit` to calibrate modal knobs against DWG renders and export a calibrated modal preset + report.
+
+### 12.4 — Validation + performance acceptance
+
+- [ ] Add A/B tests and metrics:
+  - [ ] DWG vs modal distance on selected notes/chords
+  - [ ] sustain pedal and coupling behavior parity checks
+  - [ ] long-render stability (NaN/Inf free)
+- [ ] Add benchmarks:
+  - [ ] DWG vs modal CPU at fixed block size/sample rate
+  - [ ] polyphony scaling comparison
+  - [ ] memory footprint comparison
+- [ ] Define shipping rule:
+  - [ ] “low CPU” profile defaults to modal core
+  - [ ] “high accuracy” profile defaults to DWG core
+
+**Done when:** modal core is selectable, calibrated against DWG via an automated matching step, and documented profiles exist for low-CPU vs high-accuracy operation.
 
 ---
 
@@ -490,9 +556,6 @@ Output: peak levels, lag alignment, then a table per time window (attack 0-20ms,
 - [ ] Add key-off / pedal noise (small synthesized bursts or tiny samples)
 - [ ] Add output limiter/safety clipper
 - [ ] Improve dispersion/loss mapping across the keyboard
-- [ ] (optional) Alternative string core: modal resonator bank (from research.md)
-  - [ ] Implement `StringModalBank` behind the same `StringModel` interface
-  - [ ] Compare CPU and realism vs DWG approach
 
 ---
 

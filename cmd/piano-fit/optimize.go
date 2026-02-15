@@ -305,7 +305,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 					}
 
 					if cfg.reportEvery > 0 && evalNum%int64(cfg.reportEvery) == 0 {
-						fmt.Printf("Progress round=%d eval=%d elapsed=%.1fs best=%.4f\n", round, evalNum, time.Since(start).Seconds(), bestScore)
+						fmt.Printf("Progress eval=%d/%d elapsed=%.1fs best=%.4f\n", evalNum, cfg.maxEvals, time.Since(start).Seconds(), bestScore)
 					}
 					return evalRes.metrics.Score
 				}

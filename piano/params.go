@@ -8,6 +8,13 @@ const (
 	CouplingModePhysical CouplingMode = "physical"
 )
 
+type StringModel string
+
+const (
+	StringModelDWG   StringModel = "dwg"
+	StringModelModal StringModel = "modal"
+)
+
 // Params holds all preset parameters.
 type Params struct {
 	PerNote map[int]*NoteParams
@@ -40,6 +47,12 @@ type Params struct {
 
 	UnisonDetuneScale float32
 	UnisonCrossfeed   float32
+	StringModel       StringModel
+	ModalPartials     int
+	ModalGainExponent float32
+	ModalExcitation   float32
+	ModalUndampedLoss float32
+	ModalDampedLoss   float32
 
 	// Sparse string-bank coupling controls.
 	CouplingEnabled    bool
@@ -71,7 +84,7 @@ type NoteParams struct {
 func NewDefaultParams() *Params {
 	return &Params{
 		PerNote:                    make(map[int]*NoteParams),
-		OutputGain:                 1.0,
+		OutputGain:                 0.01,
 		IRWavPath:                  "",
 		IRWetMix:                   1.0,
 		IRDryMix:                   0.0,
@@ -90,6 +103,12 @@ func NewDefaultParams() *Params {
 		HammerContactTimeScale:     1.0,
 		UnisonDetuneScale:          1.0,
 		UnisonCrossfeed:            0.0008,
+		StringModel:                StringModelDWG,
+		ModalPartials:              8,
+		ModalGainExponent:          1.1,
+		ModalExcitation:            1.0,
+		ModalUndampedLoss:          1.0,
+		ModalDampedLoss:            1.0,
 		CouplingEnabled:            true,
 		CouplingOctaveGain:         0.00018,
 		CouplingFifthGain:          0.00008,

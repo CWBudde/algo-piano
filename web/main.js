@@ -20,6 +20,7 @@ let sustainLevel = 50;
 let sustainReleaseMs = 1800;
 let noteVelocity = 96;
 let couplingMode = 'static';
+let stringModel = 'dwg';
 const velocityCurve = {
     mode: 'power',
     exponent: 1.7,
@@ -235,6 +236,29 @@ function setCouplingMode(mode) {
     }
 }
 
+function normalizeStringModel(model) {
+    const normalized = String(model || '').trim().toLowerCase();
+    if (normalized === 'dwg' || normalized === 'modal') {
+        return normalized;
+    }
+    return 'dwg';
+}
+
+function setStringModel(model) {
+    stringModel = normalizeStringModel(model);
+    const select = document.getElementById('string-model');
+    if (select && select.value !== stringModel) {
+        select.value = stringModel;
+    }
+    if (!audioReady || typeof wasmSetStringModel === 'undefined') {
+        return;
+    }
+    const ok = wasmSetStringModel(stringModel);
+    if (ok === false) {
+        console.warn('Failed to set string model:', stringModel);
+    }
+}
+
 function syncKeyVisual(note) {
     const key = document.querySelector(`[data-note="${note}"]`);
     if (!key) return;
@@ -304,6 +328,7 @@ function attachKeyboardListeners() {
     const sustainLevelSlider = document.getElementById('sustain-level');
     const sustainLevelValue = document.getElementById('sustain-level-value');
     const couplingModeSelect = document.getElementById('coupling-mode');
+    const stringModelSelect = document.getElementById('string-model');
 
     function updateSliderFill(value) {
         const pct = `${value}%`;
@@ -347,6 +372,7 @@ function attachKeyboardListeners() {
     updateSustainReleaseFromLevel(sustainLevel);
     syncPedalUI();
     setCouplingMode(couplingModeSelect ? couplingModeSelect.value : couplingMode);
+    setStringModel(stringModelSelect ? stringModelSelect.value : stringModel);
 
     keys.forEach(key => {
         const note = parseInt(key.dataset.note, 10);
@@ -473,6 +499,12 @@ function attachKeyboardListeners() {
         couplingModeSelect.value = normalizeCouplingMode(couplingModeSelect.value);
         couplingModeSelect.addEventListener('change', (event) => {
             setCouplingMode(event.target.value);
+        });
+    }
+    if (stringModelSelect) {
+        stringModelSelect.value = normalizeStringModel(stringModelSelect.value);
+        stringModelSelect.addEventListener('change', (event) => {
+            setStringModel(event.target.value);
         });
     }
 
@@ -651,6 +683,7 @@ async function initAudio() {
 
         audioReady = true;
         setCouplingMode(couplingMode);
+        setStringModel(stringModel);
         if (sustainPedalDown && typeof wasmSetSustain !== 'undefined') {
             wasmSetSustain(sustainPedalDown);
         }

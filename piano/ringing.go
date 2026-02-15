@@ -5,6 +5,19 @@ import (
 	"sort"
 )
 
+type ringingGroup interface {
+	resonanceTarget
+	setKeyDown(down bool)
+	setSustain(down bool)
+	injectHammerForce(force float32, strikePos float32)
+	injectCouplingForce(force float32)
+	processSample(unisonCrossfeed float32) float32
+	endBlock(blockEnergy float64, frames int) bool
+	isActive() bool
+	stringCount() int
+	fundamental() float32
+}
+
 // RingingStringGroup is a persistent string group for one note.
 type RingingStringGroup struct {
 	note       int
@@ -129,6 +142,10 @@ func (g *RingingStringGroup) isUndamped() bool {
 	return g.keyDown || g.sustainDown
 }
 
+func (g *RingingStringGroup) isActive() bool {
+	return g.active
+}
+
 func (g *RingingStringGroup) filterResonanceDrive(x float32) float32 {
 	if len(g.resFilters) == 0 {
 		return x
@@ -220,9 +237,18 @@ func (g *RingingStringGroup) endBlock(blockEnergy float64, frames int) bool {
 	return g.active
 }
 
+func (g *RingingStringGroup) stringCount() int {
+	return len(g.strings)
+}
+
+func (g *RingingStringGroup) fundamental() float32 {
+	return g.f0
+}
+
 // StringBank owns persistent ringing state for all piano notes.
 type StringBank struct {
 	sampleRate               int
+	stringModel              StringModel
 	unisonCrossfeed          float32
 	couplingEnabled          bool
 	couplingMode             CouplingMode
@@ -235,6 +261,7 @@ type StringBank struct {
 	couplingDetuneSigmaCents float32
 	couplingDistanceExponent float32
 	groups                   [128]*RingingStringGroup
+	modalGroups              [128]*ModalStringGroup
 	targets                  []resonanceTarget
 	coupling                 [128][]couplingEdge
 	distanceMap              [128][128]float32
@@ -249,6 +276,7 @@ type StringBank struct {
 
 func NewStringBank(sampleRate int, params *Params) *StringBank {
 	unisonCrossfeed := float32(0.0008)
+	stringModel := StringModelDWG
 	couplingEnabled := true
 	couplingMode := CouplingModeStatic
 	couplingAmount := float32(1.0)
@@ -264,6 +292,12 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 		unisonCrossfeed = params.UnisonCrossfeed
 	}
 	if params != nil {
+		if params.StringModel != "" {
+			switch params.StringModel {
+			case StringModelDWG, StringModelModal:
+				stringModel = params.StringModel
+			}
+		}
 		couplingEnabled = params.CouplingEnabled
 		if params.CouplingMode != "" {
 			switch params.CouplingMode {
@@ -302,6 +336,7 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 
 	sb := &StringBank{
 		sampleRate:               sampleRate,
+		stringModel:              stringModel,
 		unisonCrossfeed:          unisonCrossfeed,
 		couplingEnabled:          couplingMode != CouplingModeOff,
 		couplingMode:             couplingMode,
@@ -317,6 +352,12 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 		activeNotes:              make([]int, 0, 128),
 	}
 	for note := 0; note < 128; note++ {
+		if stringModel == StringModelModal {
+			g := newModalStringGroup(sampleRate, note, params)
+			sb.modalGroups[note] = g
+			sb.targets = append(sb.targets, g)
+			continue
+		}
 		g := newRingingStringGroup(sampleRate, note, params)
 		sb.groups[note] = g
 		sb.targets = append(sb.targets, g)
@@ -459,21 +500,21 @@ func (sb *StringBank) physicalCouplingWeight(src int, dst int, nyquist float32) 
 	if src < 0 || src > 127 || dst < 0 || dst > 127 || src == dst {
 		return 0
 	}
-	srcGroup := sb.groups[src]
-	dstGroup := sb.groups[dst]
-	if srcGroup == nil || dstGroup == nil || srcGroup.f0 <= 0 || dstGroup.f0 <= 0 {
+	srcF0 := sb.noteFundamental(src)
+	dstF0 := sb.noteFundamental(dst)
+	if srcF0 <= 0 || dstF0 <= 0 {
 		return 0
 	}
 
 	sum := float32(0)
 	for m := 1; m <= couplingPhysicalMaxPartials; m++ {
-		srcHarm := srcGroup.f0 * float32(m)
+		srcHarm := srcF0 * float32(m)
 		if srcHarm >= nyquist*0.95 {
 			break
 		}
 		srcStrength := float32(1.0 / math.Pow(float64(m), float64(sb.couplingHarmonicFalloff)))
 		for n := 1; n <= couplingPhysicalMaxPartials; n++ {
-			dstHarm := dstGroup.f0 * float32(n)
+			dstHarm := dstF0 * float32(n)
 			if dstHarm >= nyquist*0.95 {
 				break
 			}
@@ -514,19 +555,11 @@ func (sb *StringBank) physicalCouplingWeight(src int, dst int, nyquist float32) 
 }
 
 func (sb *StringBank) sourceStringCouplingScale(note int) float32 {
-	g := sb.Group(note)
-	if g == nil {
-		return 1.0
-	}
-	return stringCountCouplingScale(len(g.strings))
+	return stringCountCouplingScale(sb.noteStringCount(note))
 }
 
 func (sb *StringBank) targetStringCouplingScale(note int) float32 {
-	g := sb.Group(note)
-	if g == nil {
-		return 1.0
-	}
-	return stringCountCouplingScale(len(g.strings))
+	return stringCountCouplingScale(sb.noteStringCount(note))
 }
 
 func stringCountCouplingScale(stringCount int) float32 {
@@ -544,6 +577,67 @@ func (sb *StringBank) Group(note int) *RingingStringGroup {
 	return sb.groups[note]
 }
 
+func (sb *StringBank) ModalGroup(note int) *ModalStringGroup {
+	if note < 0 || note > 127 {
+		return nil
+	}
+	return sb.modalGroups[note]
+}
+
+func (sb *StringBank) StringModel() StringModel {
+	if sb == nil {
+		return StringModelDWG
+	}
+	return sb.stringModel
+}
+
+func (sb *StringBank) activeGroup(note int) ringingGroup {
+	if note < 0 || note > 127 {
+		return nil
+	}
+	if sb.stringModel == StringModelModal {
+		if g := sb.modalGroups[note]; g != nil {
+			return g
+		}
+	}
+	if g := sb.groups[note]; g != nil {
+		return g
+	}
+	if g := sb.modalGroups[note]; g != nil {
+		return g
+	}
+	return nil
+}
+
+func (sb *StringBank) noteStringCount(note int) int {
+	g := sb.activeGroup(note)
+	if g != nil {
+		return g.stringCount()
+	}
+	if note < 0 || note > 127 {
+		return 1
+	}
+	detunes, _ := defaultUnisonForNote(note)
+	if len(detunes) == 0 {
+		return 1
+	}
+	return len(detunes)
+}
+
+func (sb *StringBank) noteFundamental(note int) float32 {
+	g := sb.activeGroup(note)
+	if g != nil {
+		f0 := g.fundamental()
+		if f0 > 0 {
+			return f0
+		}
+	}
+	if note < 0 || note > 127 {
+		return 0
+	}
+	return midiNoteToFreq(note)
+}
+
 func (sb *StringBank) markActive(note int) {
 	if note < 0 || note > 127 || sb.active[note] {
 		return
@@ -553,7 +647,7 @@ func (sb *StringBank) markActive(note int) {
 }
 
 func (sb *StringBank) SetKeyDown(note int, down bool) {
-	g := sb.Group(note)
+	g := sb.activeGroup(note)
 	if g == nil {
 		return
 	}
@@ -564,7 +658,8 @@ func (sb *StringBank) SetKeyDown(note int, down bool) {
 }
 
 func (sb *StringBank) SetSustain(down bool) {
-	for _, g := range sb.groups {
+	for note := 0; note < 128; note++ {
+		g := sb.activeGroup(note)
 		if g == nil {
 			continue
 		}
@@ -573,7 +668,7 @@ func (sb *StringBank) SetSustain(down bool) {
 }
 
 func (sb *StringBank) InjectHammerForce(note int, force float32, strikePos float32) {
-	g := sb.Group(note)
+	g := sb.activeGroup(note)
 	if g == nil {
 		return
 	}
@@ -592,7 +687,7 @@ func (sb *StringBank) InjectCouplingForce(note int, force float32) {
 			force = -sb.couplingMaxForce
 		}
 	}
-	g := sb.Group(note)
+	g := sb.activeGroup(note)
 	if g == nil {
 		return
 	}
@@ -628,8 +723,8 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 		var mix float32
 		for _, note := range sb.activeNotes {
 			sb.sampleOut[note] = 0
-			g := sb.groups[note]
-			if g == nil || !g.active {
+			g := sb.activeGroup(note)
+			if g == nil || !g.isActive() {
 				continue
 			}
 			s := g.processSample(sb.unisonCrossfeed)
@@ -652,7 +747,7 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 
 	next := sb.activeNotes[:0]
 	for _, note := range sb.activeNotes {
-		g := sb.groups[note]
+		g := sb.activeGroup(note)
 		if g == nil {
 			sb.active[note] = false
 			continue
@@ -785,4 +880,11 @@ func (r *RingingState) SetCouplingMode(mode CouplingMode) bool {
 		return false
 	}
 	return r.bank.SetCouplingMode(mode)
+}
+
+func (r *RingingState) StringModel() StringModel {
+	if r == nil || r.bank == nil {
+		return StringModelDWG
+	}
+	return r.bank.StringModel()
 }

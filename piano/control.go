@@ -114,7 +114,7 @@ func (h *HammerExciter) ProcessSample(bank *StringBank) {
 			if ev.hammer.InContact() {
 				contactForce := ev.hammer.Step(0)
 				if contactForce != 0 {
-					bank.InjectHammerForce(note, contactForce*0.002, ev.strikePos)
+					bank.InjectHammerForce(note, contactForce*0.2, ev.strikePos)
 				}
 			}
 			if ev.hammer.InContact() {

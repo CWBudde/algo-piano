@@ -98,6 +98,49 @@ func (p *Piano) SetCouplingMode(mode CouplingMode) bool {
 	return ok
 }
 
+// SetStringModel switches string core (`dwg` or `modal`) and reinitializes ringing state.
+func (p *Piano) SetStringModel(model StringModel) bool {
+	if p == nil {
+		return false
+	}
+	switch model {
+	case StringModelDWG, StringModelModal:
+	default:
+		return false
+	}
+
+	if p.params == nil {
+		p.params = NewDefaultParams()
+	}
+	if p.params.StringModel == model && p.ringing != nil && p.ringing.StringModel() == model {
+		return true
+	}
+
+	var held [128]bool
+	var velocity [128]int
+	if p.keys != nil {
+		held = p.keys.keyDown
+		velocity = p.keys.lastVelocity
+	}
+	sustain := p.sustainPedal
+	soft := p.softPedal
+
+	p.params.StringModel = model
+	p.keys = newKeyStateTracker()
+	p.hammerExciter = NewHammerExciter(p.sampleRate, p.params)
+	p.hammerExciter.SetSoftPedal(soft)
+	p.ringing = NewRingingState(p.sampleRate, p.params)
+	p.ringing.SetSustain(sustain)
+	for note := 0; note < 128; note++ {
+		if !held[note] {
+			continue
+		}
+		p.keys.NoteOn(note, velocity[note])
+		p.ringing.SetKeyDown(note, true)
+	}
+	return true
+}
+
 // SetIR sets the room impulse response from pre-computed stereo buffers.
 // Deprecated: Use SetRoomIR instead.
 func (p *Piano) SetIR(left, right []float32) {
