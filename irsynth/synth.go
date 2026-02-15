@@ -246,3 +246,255 @@ func lerp(a, b, t float64) float64 {
 	}
 	return a + (b-a)*t
 }
+
+// BodyConfig controls short mono body IR generation (soundboard coloration).
+type BodyConfig struct {
+	SampleRate  int
+	DurationS   float64 // Typically 0.02-0.3s
+	Modes       int     // Typically 8-96
+	Seed        int64
+	Brightness  float64
+	Density     float64
+	DirectLevel float64
+	DecayS      float64 // Single decay time for body modes
+
+	NormalizePeak float64
+}
+
+// DefaultBodyConfig returns sensible defaults for body IR.
+func DefaultBodyConfig() BodyConfig {
+	return BodyConfig{
+		SampleRate:    96000,
+		DurationS:     0.05,
+		Modes:         32,
+		Seed:          1,
+		Brightness:    1.0,
+		Density:       2.0,
+		DirectLevel:   0.6,
+		DecayS:        0.1,
+		NormalizePeak: 0.9,
+	}
+}
+
+func (c *BodyConfig) Validate() error {
+	if c.SampleRate < 8000 {
+		return fmt.Errorf("sample rate too low: %d", c.SampleRate)
+	}
+	if c.DurationS <= 0 {
+		return fmt.Errorf("duration must be > 0")
+	}
+	if c.Modes < 1 {
+		return fmt.Errorf("modes must be >= 1")
+	}
+	if c.Brightness <= 0 {
+		return fmt.Errorf("brightness must be > 0")
+	}
+	if c.Density <= 0 {
+		return fmt.Errorf("density must be > 0")
+	}
+	if c.DirectLevel < 0 {
+		return fmt.Errorf("direct level must be >= 0")
+	}
+	if c.DecayS <= 0 {
+		return fmt.Errorf("decay must be > 0")
+	}
+	if c.NormalizePeak <= 0 {
+		return fmt.Errorf("normalize peak must be > 0")
+	}
+	return nil
+}
+
+// GenerateBody synthesizes a short mono body IR (soundboard coloration).
+func GenerateBody(cfg BodyConfig) ([]float32, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	n := int(math.Round(cfg.DurationS * float64(cfg.SampleRate)))
+	if n < 1 {
+		n = 1
+	}
+	buf := make([]float64, n)
+
+	rng := rand.New(rand.NewSource(cfg.Seed))
+
+	// Direct impulse.
+	buf[0] += cfg.DirectLevel
+
+	maxF := 0.47 * float64(cfg.SampleRate)
+	if maxF < 500.0 {
+		maxF = 500.0
+	}
+	minF := 35.0
+	if minF >= maxF {
+		minF = maxF * 0.5
+	}
+
+	// Deterministic modal body modes (mono).
+	for m := 0; m < cfg.Modes; m++ {
+		fNorm := math.Pow((float64(m)+0.5)/float64(cfg.Modes), cfg.Density)
+		f := minF * math.Pow(maxF/minF, fNorm)
+
+		brightnessExp := 0.7 + 0.9*cfg.Brightness
+		amp := 0.9 / math.Pow(1.0+f/120.0, brightnessExp)
+		amp *= 0.7 + 0.6*rng.Float64() // amplitude jitter
+
+		decay := math.Exp(-1.0 / (cfg.DecayS * float64(cfg.SampleRate)))
+		phi := rng.Float64() * 2.0 * math.Pi
+		addModeRec(buf, amp, f, phi, decay, cfg.SampleRate)
+	}
+
+	highpassDC(buf, 0.995)
+
+	peak := maxAbs(buf)
+	if peak < 1e-12 {
+		peak = 1e-12
+	}
+	s := cfg.NormalizePeak / peak
+	out := make([]float32, n)
+	for i := 0; i < n; i++ {
+		out[i] = float32(buf[i] * s)
+	}
+	return out, nil
+}
+
+// RoomConfig controls stereo room/reverb IR generation.
+type RoomConfig struct {
+	SampleRate  int
+	DurationS   float64 // Typically 0.3-2.0s
+	Seed        int64
+	EarlyCount  int
+	LateLevel   float64
+	StereoWidth float64
+	Brightness  float64
+	LowDecayS   float64
+	HighDecayS  float64
+
+	NormalizePeak float64
+}
+
+// DefaultRoomConfig returns sensible defaults for room IR.
+func DefaultRoomConfig() RoomConfig {
+	return RoomConfig{
+		SampleRate:    96000,
+		DurationS:     1.0,
+		Seed:          1,
+		EarlyCount:    24,
+		LateLevel:     0.06,
+		StereoWidth:   0.6,
+		Brightness:    0.8,
+		LowDecayS:     1.2,
+		HighDecayS:    0.2,
+		NormalizePeak: 0.9,
+	}
+}
+
+func (c *RoomConfig) Validate() error {
+	if c.SampleRate < 8000 {
+		return fmt.Errorf("sample rate too low: %d", c.SampleRate)
+	}
+	if c.DurationS <= 0 {
+		return fmt.Errorf("duration must be > 0")
+	}
+	if c.EarlyCount < 0 {
+		return fmt.Errorf("early count must be >= 0")
+	}
+	if c.LateLevel < 0 {
+		return fmt.Errorf("late level must be >= 0")
+	}
+	if c.StereoWidth < 0 {
+		return fmt.Errorf("stereo width must be >= 0")
+	}
+	if c.Brightness <= 0 {
+		return fmt.Errorf("brightness must be > 0")
+	}
+	if c.LowDecayS <= 0 || c.HighDecayS <= 0 {
+		return fmt.Errorf("decay seconds must be > 0")
+	}
+	if c.NormalizePeak <= 0 {
+		return fmt.Errorf("normalize peak must be > 0")
+	}
+	return nil
+}
+
+// GenerateRoom synthesizes a stereo room/reverb IR (early reflections + diffuse tail).
+func GenerateRoom(cfg RoomConfig) ([]float32, []float32, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, nil, err
+	}
+
+	n := int(math.Round(cfg.DurationS * float64(cfg.SampleRate)))
+	if n < 1 {
+		n = 1
+	}
+	left := make([]float64, n)
+	right := make([]float64, n)
+
+	rng := rand.New(rand.NewSource(cfg.Seed))
+
+	// Early reflections (stereo, 1-50ms range).
+	for i := 0; i < cfg.EarlyCount; i++ {
+		t := 0.001 + 0.049*rng.Float64()
+		idx := int(t * float64(cfg.SampleRate))
+		if idx <= 0 || idx >= n {
+			continue
+		}
+		amp := (0.10 + 0.35*rng.Float64()) * math.Exp(-t*20.0)
+		// Brightness rolloff: dampen high-frequency reflections via simple attenuation.
+		amp *= math.Pow(0.5+0.5*rng.Float64(), 1.0/cfg.Brightness)
+		pan := (rng.Float64()*2.0 - 1.0) * cfg.StereoWidth
+		left[idx] += amp * (1.0 - 0.5*pan)
+		right[idx] += amp * (1.0 + 0.5*pan)
+	}
+
+	// Diffuse late tail (stereo, frequency-dependent decay).
+	if cfg.LateLevel > 0 {
+		maxF := 0.47 * float64(cfg.SampleRate)
+		// Two-band noise: low-pass and band-pass filtered.
+		lpL, lpR := 0.0, 0.0
+		hpL, hpR := 0.0, 0.0
+		for i := 0; i < n; i++ {
+			t := float64(i) / float64(cfg.SampleRate)
+			lowEnv := math.Exp(-t / (0.75 * cfg.LowDecayS))
+			highEnv := math.Exp(-t / (0.75 * cfg.HighDecayS))
+			_ = maxF
+
+			nL := rng.NormFloat64()
+			nR := rng.NormFloat64()
+
+			// Low-pass filtered noise.
+			lpL = 0.985*lpL + 0.015*nL
+			lpR = 0.985*lpR + 0.015*nR
+
+			// High-pass filtered noise (for air/brightness).
+			hpL = 0.15*nL - 0.15*hpL
+			hpR = 0.15*nR - 0.15*hpR
+
+			brightnessScale := 0.3 * (cfg.Brightness - 0.3)
+			if brightnessScale < 0 {
+				brightnessScale = 0
+			}
+			left[i] += cfg.LateLevel * (lowEnv*lpL + brightnessScale*highEnv*hpL)
+			right[i] += cfg.LateLevel * (lowEnv*lpR + brightnessScale*highEnv*hpR)
+		}
+	}
+
+	highpassDC(left, 0.995)
+	highpassDC(right, 0.995)
+
+	peak := maxAbs(left)
+	if rp := maxAbs(right); rp > peak {
+		peak = rp
+	}
+	if peak < 1e-12 {
+		peak = 1e-12
+	}
+	s := cfg.NormalizePeak / peak
+	outL := make([]float32, n)
+	outR := make([]float32, n)
+	for i := 0; i < n; i++ {
+		outL[i] = float32(left[i] * s)
+		outR[i] = float32(right[i] * s)
+	}
+	return outL, outR, nil
+}

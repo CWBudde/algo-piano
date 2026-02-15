@@ -104,25 +104,27 @@ func TestSoftPedalReducesAttackBrightness(t *testing.T) {
 }
 
 func TestIRDryWetMixCanBypassConvolverOutput(t *testing.T) {
-	wetOnly := NewDefaultParams()
-	wetOnly.IRWetMix = 1.0
-	wetOnly.IRDryMix = 0.0
-	pw := NewPiano(48000, 16, wetOnly)
-	pw.convolver.SetIR([]float32{0.0}, []float32{0.0})
+	// Room-only: body dry=0, room wet=1.0, but room IR is zero → silence.
+	roomOnly := NewDefaultParams()
+	roomOnly.BodyDryMix = 0.0
+	roomOnly.RoomWetMix = 1.0
+	pw := NewPiano(48000, 16, roomOnly)
+	pw.SetRoomIR([]float32{0.0}, []float32{0.0})
 	pw.NoteOn(60, 100)
 	wetOut := pw.Process(512)
 	if stereoRMS(wetOut) > 1e-6 {
-		t.Fatalf("expected near-silence for wet-only with zero IR, got %f", stereoRMS(wetOut))
+		t.Fatalf("expected near-silence for room-only with zero room IR, got %f", stereoRMS(wetOut))
 	}
 
-	dryOnly := NewDefaultParams()
-	dryOnly.IRWetMix = 0.0
-	dryOnly.IRDryMix = 1.0
-	pd := NewPiano(48000, 16, dryOnly)
-	pd.convolver.SetIR([]float32{0.0}, []float32{0.0})
+	// Body-only: body dry=1.0, room wet=0 → body signal passes through.
+	bodyOnly := NewDefaultParams()
+	bodyOnly.BodyDryMix = 1.0
+	bodyOnly.RoomWetMix = 0.0
+	pd := NewPiano(48000, 16, bodyOnly)
+	pd.SetRoomIR([]float32{0.0}, []float32{0.0})
 	pd.NoteOn(60, 100)
 	dryOut := pd.Process(512)
 	if stereoRMS(dryOut) <= 1e-4 {
-		t.Fatalf("expected audible dry signal with dry-only mix, got %f", stereoRMS(dryOut))
+		t.Fatalf("expected audible body signal with body-only mix, got %f", stereoRMS(dryOut))
 	}
 }

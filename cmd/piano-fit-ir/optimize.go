@@ -69,8 +69,9 @@ type evalSettings struct {
 type optimizationEval struct {
 	metrics      analysis.Metrics
 	params       *piano.Params
-	irLeft       []float32
-	irRight      []float32
+	bodyIR       []float32 // mono body IR
+	roomIRL      []float32 // stereo room IR left
+	roomIRR      []float32 // stereo room IR right
 	velocity     int
 	releaseAfter float64
 }
@@ -79,8 +80,9 @@ type optimizationResult struct {
 	best             candidate
 	bestMetrics      analysis.Metrics
 	bestParams       *piano.Params
-	bestIRL          []float32
-	bestIRR          []float32
+	bestBodyIR       []float32
+	bestRoomIRL      []float32
+	bestRoomIRR      []float32
 	bestVelocity     int
 	bestReleaseAfter float64
 	top              []topCandidate
@@ -156,8 +158,9 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 			best,
 			initialEval.metrics,
 			initialEval.params,
-			initialEval.irLeft,
-			initialEval.irRight,
+			initialEval.bodyIR,
+			initialEval.roomIRL,
+			initialEval.roomIRR,
 			0,
 			state.top,
 		); err != nil {
@@ -273,8 +276,9 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 									bestSnapshot,
 									bestEvalSnapshot.metrics,
 									bestEvalSnapshot.params,
-									bestEvalSnapshot.irLeft,
-									bestEvalSnapshot.irRight,
+									bestEvalSnapshot.bodyIR,
+									bestEvalSnapshot.roomIRL,
+									bestEvalSnapshot.roomIRR,
 									checkpointNum,
 									topSnapshot,
 								); err != nil {
@@ -367,8 +371,9 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		best:             finalBest,
 		bestMetrics:      finalEval.metrics,
 		bestParams:       finalEval.params,
-		bestIRL:          finalEval.irLeft,
-		bestIRR:          finalEval.irRight,
+		bestBodyIR:       finalEval.bodyIR,
+		bestRoomIRL:      finalEval.roomIRL,
+		bestRoomIRR:      finalEval.roomIRR,
 		bestVelocity:     finalEval.velocity,
 		bestReleaseAfter: finalEval.releaseAfter,
 		top:              finalTop,
@@ -379,7 +384,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 }
 
 func evaluateCandidate(cfg *optimizationConfig, cand candidate, _ string, settings evalSettings) (optimizationEval, error) {
-	irCfg, params, evalVelocity, evalReleaseAfter := applyCandidate(
+	irCfgs, params, evalVelocity, evalReleaseAfter := applyCandidate(
 		cfg.baseParams,
 		settings.sampleRate,
 		cfg.note,
@@ -388,15 +393,21 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, _ string, settin
 		cfg.defs,
 		cand,
 	)
-	left, right, err := irsynth.GenerateStereo(irCfg)
+	bodyIR, err := irsynth.GenerateBody(irCfgs.body)
 	if err != nil {
-		return optimizationEval{}, err
+		return optimizationEval{}, fmt.Errorf("body IR: %w", err)
 	}
-	// Clear IR path so NewPiano won't load from disk; we set buffers directly.
+	roomL, roomR, err := irsynth.GenerateRoom(irCfgs.room)
+	if err != nil {
+		return optimizationEval{}, fmt.Errorf("room IR: %w", err)
+	}
+	// Clear IR paths so NewPiano won't load from disk; we set buffers directly.
 	params.IRWavPath = ""
-	mono, _, err := renderCandidateWithIR(
+	params.BodyIRWavPath = ""
+	params.RoomIRWavPath = ""
+	mono, _, err := renderCandidateWithDualIR(
 		params,
-		left, right,
+		bodyIR, roomL, roomR,
 		cfg.note,
 		evalVelocity,
 		settings.sampleRate,
@@ -413,8 +424,9 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, _ string, settin
 	return optimizationEval{
 		metrics:      analysis.Compare(settings.reference, mono, settings.sampleRate),
 		params:       params,
-		irLeft:       left,
-		irRight:      right,
+		bodyIR:       bodyIR,
+		roomIRL:      roomL,
+		roomIRR:      roomR,
 		velocity:     evalVelocity,
 		releaseAfter: evalReleaseAfter,
 	}, nil
@@ -427,11 +439,14 @@ func cloneOptimizationEval(in optimizationEval) optimizationEval {
 		velocity:     in.velocity,
 		releaseAfter: in.releaseAfter,
 	}
-	if len(in.irLeft) > 0 {
-		out.irLeft = append([]float32(nil), in.irLeft...)
+	if len(in.bodyIR) > 0 {
+		out.bodyIR = append([]float32(nil), in.bodyIR...)
 	}
-	if len(in.irRight) > 0 {
-		out.irRight = append([]float32(nil), in.irRight...)
+	if len(in.roomIRL) > 0 {
+		out.roomIRL = append([]float32(nil), in.roomIRL...)
+	}
+	if len(in.roomIRR) > 0 {
+		out.roomIRR = append([]float32(nil), in.roomIRR...)
 	}
 	return out
 }
@@ -543,10 +558,11 @@ func runMayfly(cfg *mayfly.Config) (_ *mayfly.Result, err error) {
 	return mayfly.Optimize(cfg)
 }
 
-func renderCandidateWithIR(
+func renderCandidateWithDualIR(
 	params *piano.Params,
-	irLeft []float32,
-	irRight []float32,
+	bodyIR []float32,
+	roomIRL []float32,
+	roomIRR []float32,
 	note int,
 	velocity int,
 	sampleRate int,
@@ -561,7 +577,8 @@ func renderCandidateWithIR(
 		return nil, nil, errors.New("nil params")
 	}
 	p := piano.NewPiano(sampleRate, 16, params)
-	p.SetIR(irLeft, irRight)
+	p.SetBodyIR(bodyIR)
+	p.SetRoomIR(roomIRL, roomIRR)
 	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, minDuration, maxDuration, blockSize, releaseAfter)
 }
 

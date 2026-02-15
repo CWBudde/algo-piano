@@ -155,6 +155,83 @@ func TestModeAdditionSmallFrequencyShift(t *testing.T) {
 	}
 }
 
+func TestGenerateBodyBasic(t *testing.T) {
+	cfg := DefaultBodyConfig()
+	cfg.SampleRate = 48000
+	out, err := GenerateBody(cfg)
+	if err != nil {
+		t.Fatalf("GenerateBody: %v", err)
+	}
+	wantLen := int(cfg.DurationS * float64(cfg.SampleRate))
+	if len(out) != wantLen {
+		t.Fatalf("len = %d, want %d", len(out), wantLen)
+	}
+	energy := 0.0
+	for _, s := range out {
+		if math.IsNaN(float64(s)) || math.IsInf(float64(s), 0) {
+			t.Fatal("non-finite sample")
+		}
+		energy += float64(s * s)
+	}
+	if energy < 1e-8 {
+		t.Fatal("expected non-zero energy")
+	}
+}
+
+func TestGenerateBodyDeterministic(t *testing.T) {
+	cfg := DefaultBodyConfig()
+	cfg.SampleRate = 48000
+	cfg.Seed = 77
+	a, _ := GenerateBody(cfg)
+	b, _ := GenerateBody(cfg)
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("non-deterministic at %d", i)
+		}
+	}
+}
+
+func TestGenerateRoomBasic(t *testing.T) {
+	cfg := DefaultRoomConfig()
+	cfg.SampleRate = 48000
+	l, r, err := GenerateRoom(cfg)
+	if err != nil {
+		t.Fatalf("GenerateRoom: %v", err)
+	}
+	wantLen := int(cfg.DurationS * float64(cfg.SampleRate))
+	if len(l) != wantLen || len(r) != wantLen {
+		t.Fatalf("len L=%d R=%d, want %d", len(l), len(r), wantLen)
+	}
+	energyL, energyR := 0.0, 0.0
+	for i := range l {
+		if math.IsNaN(float64(l[i])) || math.IsNaN(float64(r[i])) {
+			t.Fatalf("NaN at %d", i)
+		}
+		energyL += float64(l[i] * l[i])
+		energyR += float64(r[i] * r[i])
+	}
+	if energyL < 1e-8 || energyR < 1e-8 {
+		t.Fatalf("expected non-zero stereo energy: L=%.6g R=%.6g", energyL, energyR)
+	}
+}
+
+func TestGenerateRoomStereoWidth(t *testing.T) {
+	// Early reflections with zero width should place L == R.
+	cfg := DefaultRoomConfig()
+	cfg.SampleRate = 48000
+	cfg.StereoWidth = 0.0
+	cfg.LateLevel = 0.0 // disable late tail (uses independent L/R noise)
+	l, r, err := GenerateRoom(cfg)
+	if err != nil {
+		t.Fatalf("GenerateRoom: %v", err)
+	}
+	for i := range l {
+		if l[i] != r[i] {
+			t.Fatalf("zero-width early-only room should be mono, differ at %d: L=%f R=%f", i, l[i], r[i])
+		}
+	}
+}
+
 func TestValidateDensity(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Density = 0
