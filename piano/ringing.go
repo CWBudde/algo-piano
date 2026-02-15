@@ -222,11 +222,14 @@ func (g *RingingStringGroup) endBlock(blockEnergy float64, frames int) bool {
 
 // StringBank owns persistent ringing state for all piano notes.
 type StringBank struct {
+	sampleRate               int
 	unisonCrossfeed          float32
 	couplingEnabled          bool
 	couplingMode             CouplingMode
 	couplingAmount           float32
 	couplingMaxForce         float32
+	staticOctaveGain         float32
+	staticFifthGain          float32
 	couplingMaxNeighbors     int
 	couplingHarmonicFalloff  float32
 	couplingDetuneSigmaCents float32
@@ -296,11 +299,14 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 	}
 
 	sb := &StringBank{
+		sampleRate:               sampleRate,
 		unisonCrossfeed:          unisonCrossfeed,
 		couplingEnabled:          couplingMode != CouplingModeOff,
 		couplingMode:             couplingMode,
 		couplingAmount:           couplingAmount,
 		couplingMaxForce:         couplingMaxForce,
+		staticOctaveGain:         couplingOctaveGain,
+		staticFifthGain:          couplingFifthGain,
 		couplingMaxNeighbors:     couplingMaxNeighbors,
 		couplingHarmonicFalloff:  couplingHarmonicFalloff,
 		couplingDetuneSigmaCents: couplingDetuneSigmaCents,
@@ -314,14 +320,7 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 		sb.targets = append(sb.targets, g)
 	}
 	sb.initDistanceMap()
-	switch sb.couplingMode {
-	case CouplingModeStatic:
-		sb.initStaticCouplingGraph(couplingOctaveGain*sb.couplingAmount, couplingFifthGain*sb.couplingAmount)
-	case CouplingModePhysical:
-		sb.initPhysicalCouplingGraph(sampleRate)
-	default:
-		sb.couplingEnabled = false
-	}
+	sb.rebuildCouplingGraph()
 	return sb
 }
 
@@ -357,21 +356,38 @@ func (sb *StringBank) initStaticCouplingGraph(octaveGain float32, fifthGain floa
 		sb.coupling[i] = sb.coupling[i][:0]
 	}
 	for note := 0; note < 128; note++ {
+		srcScale := sb.sourceStringCouplingScale(note)
 		edges := make([]couplingEdge, 0, 4)
 		if octaveGain > 0 {
 			if note+12 <= 127 {
-				edges = append(edges, couplingEdge{to: note + 12, gain: octaveGain})
+				to := note + 12
+				edges = append(edges, couplingEdge{
+					to:   to,
+					gain: octaveGain * srcScale * sb.targetStringCouplingScale(to),
+				})
 			}
 			if note-12 >= 0 {
-				edges = append(edges, couplingEdge{to: note - 12, gain: octaveGain})
+				to := note - 12
+				edges = append(edges, couplingEdge{
+					to:   to,
+					gain: octaveGain * srcScale * sb.targetStringCouplingScale(to),
+				})
 			}
 		}
 		if fifthGain > 0 {
 			if note+7 <= 127 {
-				edges = append(edges, couplingEdge{to: note + 7, gain: fifthGain})
+				to := note + 7
+				edges = append(edges, couplingEdge{
+					to:   to,
+					gain: fifthGain * srcScale * sb.targetStringCouplingScale(to),
+				})
 			}
 			if note-7 >= 0 {
-				edges = append(edges, couplingEdge{to: note - 7, gain: fifthGain})
+				to := note - 7
+				edges = append(edges, couplingEdge{
+					to:   to,
+					gain: fifthGain * srcScale * sb.targetStringCouplingScale(to),
+				})
 			}
 		}
 		sb.coupling[note] = edges
@@ -661,6 +677,41 @@ func (sb *StringBank) applySparseCoupling() {
 	}
 }
 
+func (sb *StringBank) rebuildCouplingGraph() {
+	for i := range sb.coupling {
+		sb.coupling[i] = sb.coupling[i][:0]
+	}
+
+	if sb.couplingMode == CouplingModeOff || sb.couplingAmount <= 0 {
+		sb.couplingEnabled = false
+		return
+	}
+
+	sb.couplingEnabled = true
+	switch sb.couplingMode {
+	case CouplingModeStatic:
+		sb.initStaticCouplingGraph(sb.staticOctaveGain*sb.couplingAmount, sb.staticFifthGain*sb.couplingAmount)
+	case CouplingModePhysical:
+		sb.initPhysicalCouplingGraph(sb.sampleRate)
+	default:
+		sb.couplingEnabled = false
+	}
+}
+
+func (sb *StringBank) SetCouplingMode(mode CouplingMode) bool {
+	if sb == nil {
+		return false
+	}
+	switch mode {
+	case CouplingModeOff, CouplingModeStatic, CouplingModePhysical:
+	default:
+		return false
+	}
+	sb.couplingMode = mode
+	sb.rebuildCouplingGraph()
+	return true
+}
+
 func clampFloat32(v float32, lo float32, hi float32) float32 {
 	if v < lo {
 		return lo
@@ -705,4 +756,11 @@ func (r *RingingState) ResonanceTargets() []resonanceTarget {
 		return nil
 	}
 	return r.bank.targets
+}
+
+func (r *RingingState) SetCouplingMode(mode CouplingMode) bool {
+	if r == nil || r.bank == nil {
+		return false
+	}
+	return r.bank.SetCouplingMode(mode)
 }

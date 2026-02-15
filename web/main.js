@@ -5,8 +5,11 @@ let outputNode = null;
 let wasmMemory = null;
 let wasmMemoryBuffer = null;
 let initAudioPromise = null;
-const pendingNotes = new Set();
+const pendingNotes = new Map();
 const heldNotes = new Set();
+const latchedNotes = new Set();
+const latchedReleaseArmed = new Set();
+const mousePressedNotes = new Set();
 const sustainedNotes = new Set();
 const sustainReleaseTimers = new Map();
 let wasmReady = false;
@@ -16,6 +19,7 @@ let damperEngaged = true;
 let sustainLevel = 50;
 let sustainReleaseMs = 1800;
 let noteVelocity = 96;
+let couplingMode = 'static';
 const RENDER_CHUNK_FRAMES = 128;
 const SCRIPT_BUFFER_SIZE = 256;
 
@@ -157,6 +161,78 @@ function generateKeyboard() {
     attachKeyboardListeners();
 }
 
+function normalizeCouplingMode(mode) {
+    const normalized = String(mode || '').trim().toLowerCase();
+    if (normalized === 'off' || normalized === 'static' || normalized === 'physical') {
+        return normalized;
+    }
+    return 'static';
+}
+
+function setCouplingMode(mode) {
+    couplingMode = normalizeCouplingMode(mode);
+    const select = document.getElementById('coupling-mode');
+    if (select && select.value !== couplingMode) {
+        select.value = couplingMode;
+    }
+    if (!audioReady || typeof wasmSetCouplingMode === 'undefined') {
+        return;
+    }
+    const ok = wasmSetCouplingMode(couplingMode);
+    if (ok === false) {
+        console.warn('Failed to set coupling mode:', couplingMode);
+    }
+}
+
+function syncKeyVisual(note) {
+    const key = document.querySelector(`[data-note="${note}"]`);
+    if (!key) return;
+
+    const isLatched = latchedNotes.has(note);
+    const isDown = heldNotes.has(note) || isLatched;
+    key.classList.toggle('active', isDown);
+    key.classList.toggle('latched', isLatched);
+}
+
+function clamp01(x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    return x;
+}
+
+function normalizedVelocityFromPointerY(clientY, keyElement) {
+    if (!keyElement) {
+        return clamp01(noteVelocity / 127);
+    }
+    const rect = keyElement.getBoundingClientRect();
+    if (!rect || rect.height <= 0) {
+        return clamp01(noteVelocity / 127);
+    }
+    const y = clientY - rect.top;
+    return clamp01(y / rect.height);
+}
+
+function midiVelocityFromNormalized(normalized) {
+    const v = Math.round(clamp01(normalized) * 127);
+    if (v < 0) return 0;
+    if (v > 127) return 127;
+    return v;
+}
+
+function sendKeyDownToWasm(note, midiVelocity) {
+    const v = Math.max(0, Math.min(127, midiVelocity | 0));
+    if (v <= 0) {
+        if (typeof wasmKeyDown !== 'undefined') {
+            wasmKeyDown(note);
+            return;
+        }
+        return;
+    }
+    if (typeof wasmNoteOn !== 'undefined') {
+        wasmNoteOn(note, v);
+    }
+}
+
 function attachKeyboardListeners() {
     const keys = document.querySelectorAll('.key');
     const sustainButton = document.getElementById('sustain-pedal');
@@ -164,6 +240,7 @@ function attachKeyboardListeners() {
     const damperButton = document.getElementById('damper-toggle');
     const sustainLevelSlider = document.getElementById('sustain-level');
     const sustainLevelValue = document.getElementById('sustain-level-value');
+    const couplingModeSelect = document.getElementById('coupling-mode');
 
     function updateSliderFill(value) {
         const pct = `${value}%`;
@@ -206,40 +283,106 @@ function attachKeyboardListeners() {
     updateSliderFill(sustainLevel);
     updateSustainReleaseFromLevel(sustainLevel);
     syncPedalUI();
+    setCouplingMode(couplingModeSelect ? couplingModeSelect.value : couplingMode);
 
     keys.forEach(key => {
+        const note = parseInt(key.dataset.note, 10);
+
+        key.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+
         // Mouse events
         key.addEventListener('mousedown', (e) => {
+            if (e.button !== 0 && e.button !== 2) {
+                return;
+            }
             e.preventDefault();
-            handleNoteOn(parseInt(key.dataset.note));
-            key.classList.add('active');
+
+            if (latchedNotes.has(note)) {
+                latchedReleaseArmed.add(note);
+                return;
+            }
+
+            if (e.button === 2) {
+                latchedNotes.add(note);
+                if (!heldNotes.has(note)) {
+                    const velocityNorm = normalizedVelocityFromPointerY(e.clientY, key);
+                    handleNoteOn(note, velocityNorm);
+                }
+                syncKeyVisual(note);
+                return;
+            }
+
+            mousePressedNotes.add(note);
+            const velocityNorm = normalizedVelocityFromPointerY(e.clientY, key);
+            handleNoteOn(note, velocityNorm);
+            syncKeyVisual(note);
         });
 
         key.addEventListener('mouseup', (e) => {
+            if (e.button !== 0 && e.button !== 2) {
+                return;
+            }
             e.preventDefault();
-            handleNoteOff(parseInt(key.dataset.note));
-            key.classList.remove('active');
+
+            if (latchedReleaseArmed.has(note)) {
+                latchedReleaseArmed.delete(note);
+                latchedNotes.delete(note);
+                mousePressedNotes.delete(note);
+                handleNoteOff(note);
+                syncKeyVisual(note);
+                return;
+            }
+
+            mousePressedNotes.delete(note);
+            if (latchedNotes.has(note)) {
+                syncKeyVisual(note);
+                return;
+            }
+
+            handleNoteOff(note);
+            syncKeyVisual(note);
         });
 
-        key.addEventListener('mouseleave', (e) => {
-            if (key.classList.contains('active')) {
-                handleNoteOff(parseInt(key.dataset.note));
-                key.classList.remove('active');
+        key.addEventListener('mouseleave', () => {
+            if (mousePressedNotes.has(note) && !latchedNotes.has(note)) {
+                mousePressedNotes.delete(note);
+                handleNoteOff(note);
+                syncKeyVisual(note);
             }
         });
 
         // Touch events
         key.addEventListener('touchstart', (e) => {
             e.preventDefault();
-            handleNoteOn(parseInt(key.dataset.note));
-            key.classList.add('active');
+            const touch = e.touches && e.touches.length > 0 ? e.touches[0] : null;
+            const velocityNorm = touch ? normalizedVelocityFromPointerY(touch.clientY, key) : (noteVelocity / 127);
+            handleNoteOn(note, velocityNorm);
+            syncKeyVisual(note);
         });
 
         key.addEventListener('touchend', (e) => {
             e.preventDefault();
-            handleNoteOff(parseInt(key.dataset.note));
-            key.classList.remove('active');
+            if (latchedNotes.has(note)) {
+                latchedNotes.delete(note);
+            }
+            handleNoteOff(note);
+            syncKeyVisual(note);
         });
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (latchedReleaseArmed.size === 0) {
+            return;
+        }
+        for (const note of Array.from(latchedReleaseArmed)) {
+            latchedReleaseArmed.delete(note);
+            latchedNotes.delete(note);
+            mousePressedNotes.delete(note);
+            handleNoteOff(note);
+            syncKeyVisual(note);
+        }
     });
 
     sustainButton.addEventListener('click', () => {
@@ -263,6 +406,13 @@ function attachKeyboardListeners() {
         }
     });
 
+    if (couplingModeSelect) {
+        couplingModeSelect.value = normalizeCouplingMode(couplingModeSelect.value);
+        couplingModeSelect.addEventListener('change', (event) => {
+            setCouplingMode(event.target.value);
+        });
+    }
+
     // Computer keyboard
     const keyMap = buildKeyMap();
     let pressedKeys = new Set();
@@ -279,10 +429,8 @@ function attachKeyboardListeners() {
         const note = keyMap.get(e.key.toUpperCase());
         if (note !== undefined && !pressedKeys.has(e.key)) {
             pressedKeys.add(e.key);
-            handleNoteOn(note);
-
-            const keyElement = document.querySelector(`[data-note="${note}"]`);
-            if (keyElement) keyElement.classList.add('active');
+            handleNoteOn(note, noteVelocity / 127);
+            syncKeyVisual(note);
         }
     });
 
@@ -294,10 +442,10 @@ function attachKeyboardListeners() {
         const note = keyMap.get(e.key.toUpperCase());
         if (note !== undefined) {
             pressedKeys.delete(e.key);
-            handleNoteOff(note);
-
-            const keyElement = document.querySelector(`[data-note="${note}"]`);
-            if (keyElement) keyElement.classList.remove('active');
+            if (!latchedNotes.has(note)) {
+                handleNoteOff(note);
+            }
+            syncKeyVisual(note);
         }
     });
 }
@@ -439,6 +587,7 @@ async function initAudio() {
         await audioContext.resume();
 
         audioReady = true;
+        setCouplingMode(couplingMode);
         if (sustainPedalDown && typeof wasmSetSustain !== 'undefined') {
             wasmSetSustain(sustainPedalDown);
         }
@@ -465,17 +614,21 @@ async function initAudio() {
     }
 }
 
-function handleNoteOn(note) {
+function handleNoteOn(note, velocityNormalized = noteVelocity / 127) {
+    if (heldNotes.has(note)) {
+        return;
+    }
     heldNotes.add(note);
+    const midiVelocity = midiVelocityFromNormalized(velocityNormalized);
     clearSustainReleaseTimer(note);
     sustainedNotes.delete(note);
 
     if (!audioReady) {
-        pendingNotes.add(note);
+        pendingNotes.set(note, midiVelocity);
         initAudio()
             .then(() => {
-                if (audioReady && pendingNotes.has(note) && typeof wasmNoteOn !== 'undefined') {
-                    wasmNoteOn(note, noteVelocity);
+                if (audioReady && heldNotes.has(note) && pendingNotes.has(note)) {
+                    sendKeyDownToWasm(note, pendingNotes.get(note));
                 }
             })
             .catch(() => {
@@ -484,12 +637,13 @@ function handleNoteOn(note) {
         return;
     }
 
-    if (typeof wasmNoteOn !== 'undefined') {
-        wasmNoteOn(note, noteVelocity);
-    }
+    sendKeyDownToWasm(note, midiVelocity);
 }
 
 function handleNoteOff(note) {
+    if (!heldNotes.has(note) && !pendingNotes.has(note)) {
+        return;
+    }
     pendingNotes.delete(note);
     heldNotes.delete(note);
     if (!audioReady) return;

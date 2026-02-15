@@ -209,6 +209,14 @@ body::before {
         0 2px 4px rgba(0, 0, 0, 0.4);
 }
 
+.key.white.latched {
+    box-shadow:
+        inset 0 -6px 9px rgba(0, 0, 0, 0.16),
+        inset 0 2px 4px rgba(255, 255, 255, 0.7),
+        0 0 0 1px rgba(222, 189, 126, 0.55),
+        0 0 10px rgba(222, 189, 126, 0.3);
+}
+
 .key.black {
     width: var(--black-key-width);
     height: 128px;
@@ -230,6 +238,13 @@ body::before {
     box-shadow:
         inset 0 1px 2px rgba(255, 255, 255, 0.08),
         0 3px 5px rgba(0, 0, 0, 0.58);
+}
+
+.key.black.latched {
+    box-shadow:
+        inset 0 1px 2px rgba(255, 255, 255, 0.08),
+        0 0 0 1px rgba(222, 189, 126, 0.6),
+        0 0 12px rgba(222, 189, 126, 0.34);
 }
 
 .key-label {
@@ -264,7 +279,7 @@ body::before {
 
 .control-deck {
     display: grid;
-    grid-template-columns: repeat(3, minmax(180px, 1fr));
+    grid-template-columns: repeat(4, minmax(160px, 1fr));
     gap: clamp(14px, 2vw, 24px);
 }
 
@@ -287,6 +302,10 @@ body::before {
 
 .control-card:nth-child(3) {
     animation-delay: 150ms;
+}
+
+.control-card:nth-child(4) {
+    animation-delay: 210ms;
 }
 
 .control-card h2 {
@@ -433,6 +452,25 @@ body::before {
     font-weight: 700;
     color: #f2dfba;
     text-shadow: 0 0 9px rgba(241, 214, 162, 0.28);
+}
+
+.coupling-select {
+    width: 100%;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+    padding: 10px 12px;
+    font: inherit;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #eadfca;
+    background: linear-gradient(180deg, #222834 0%, #10141b 100%);
+}
+
+.control-hint {
+    color: #c8bda7;
+    font-size: 0.84rem;
+    line-height: 1.4;
+    text-align: center;
 }
 
 .footer {
