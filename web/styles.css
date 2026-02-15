@@ -85,6 +85,9 @@ body::before {
 
 .instrument-shell {
     position: relative;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto;
     border-radius: 22px;
     background:
         linear-gradient(180deg, rgba(105, 112, 126, 0.42), rgba(33, 37, 46, 0.92) 18%, rgba(14, 16, 22, 0.96) 100%);
