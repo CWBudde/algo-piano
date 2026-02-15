@@ -246,7 +246,7 @@ func evaluateKnobs(base *piano.Params, knobs knobSet, notes []int, refs map[int]
 			return 0, nil, fmt.Errorf("render modal note %d: %w", note, err)
 		}
 
-		full := analysis.Compare(ref, cand, rs.sampleRate)
+		full := sanitizeMetrics(analysis.Compare(ref, cand, rs.sampleRate))
 		attack := compareWindow(ref, cand, rs.sampleRate, matchWindows[0])
 		early := compareWindow(ref, cand, rs.sampleRate, matchWindows[1])
 		decay := compareWindow(ref, cand, rs.sampleRate, matchWindows[2])
@@ -255,6 +255,9 @@ func evaluateKnobs(base *piano.Params, knobs knobSet, notes []int, refs map[int]
 			[]float64{matchWindows[0].weight, matchWindows[1].weight, matchWindows[2].weight},
 		)
 		combined := 0.65*windowed + 0.35*full.Score
+		if !isFiniteFloat(combined) {
+			combined = 1.0
+		}
 
 		total += combined
 		perNote = append(perNote, noteCalibration{
@@ -270,7 +273,11 @@ func evaluateKnobs(base *piano.Params, knobs knobSet, notes []int, refs map[int]
 	if len(notes) == 0 {
 		return 0, perNote, nil
 	}
-	return total / float64(len(notes)), perNote, nil
+	score := total / float64(len(notes))
+	if !isFiniteFloat(score) {
+		score = 1.0
+	}
+	return score, perNote, nil
 }
 
 func compareWindow(ref []float64, cand []float64, sampleRate int, w windowSpec) analysis.Metrics {
@@ -293,7 +300,7 @@ func compareWindow(ref []float64, cand []float64, sampleRate int, w windowSpec) 
 			Similarity:      0.0,
 		}
 	}
-	return analysis.Compare(ref[start:end], cand[start:end], sampleRate)
+	return sanitizeMetrics(analysis.Compare(ref[start:end], cand[start:end], sampleRate))
 }
 
 func weightedScore(metrics []analysis.Metrics, weights []float64) float64 {
@@ -305,13 +312,18 @@ func weightedScore(metrics []analysis.Metrics, weights []float64) float64 {
 		if w <= 0 {
 			continue
 		}
+		m := sanitizeMetrics(metrics[i])
 		totalW += w
-		total += metrics[i].Score * w
+		total += m.Score * w
 	}
 	if totalW <= 0 {
 		return 1.0
 	}
-	return total / totalW
+	out := total / totalW
+	if !isFiniteFloat(out) {
+		return 1.0
+	}
+	return out
 }
 
 func refineLocally(base *piano.Params, start knobSet, startScore float64, notes []int, refs map[int][]float64, rs renderSettings) (knobSet, float64, int) {
@@ -551,7 +563,13 @@ func renderNote(params *piano.Params, rs renderSettings) ([]float64, error) {
 
 	mono := make([]float64, len(stereo)/2)
 	for i := 0; i < len(mono); i++ {
-		mono[i] = 0.5 * float64(stereo[i*2]+stereo[i*2+1])
+		l := float64(stereo[i*2])
+		r := float64(stereo[i*2+1])
+		v := 0.5 * (l + r)
+		if !isFiniteFloat(v) {
+			v = 0
+		}
+		mono[i] = v
 	}
 	return mono, nil
 }
@@ -742,6 +760,40 @@ func clamp(v float64, lo float64, hi float64) float64 {
 		return hi
 	}
 	return v
+}
+
+func sanitizeMetrics(m analysis.Metrics) analysis.Metrics {
+	if !isFiniteFloat(m.TimeRMSE) {
+		m.TimeRMSE = 1.0
+	}
+	if !isFiniteFloat(m.EnvelopeRMSEDB) {
+		m.EnvelopeRMSEDB = 60.0
+	}
+	if !isFiniteFloat(m.SpectralRMSEDB) {
+		m.SpectralRMSEDB = 60.0
+	}
+	if !isFiniteFloat(m.RefDecayDBPerS) {
+		m.RefDecayDBPerS = 0
+	}
+	if !isFiniteFloat(m.CandDecayDBPerS) {
+		m.CandDecayDBPerS = 0
+	}
+	if !isFiniteFloat(m.DecayDiffDBPerS) {
+		m.DecayDiffDBPerS = 60.0
+	}
+	if !isFiniteFloat(m.Score) {
+		m.Score = 1.0
+	}
+	m.Score = clamp(m.Score, 0, 1)
+	if !isFiniteFloat(m.Similarity) {
+		m.Similarity = 0.0
+	}
+	m.Similarity = clamp(m.Similarity, 0, 1)
+	return m
+}
+
+func isFiniteFloat(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
 }
 
 func minInt(a int, b int) int {

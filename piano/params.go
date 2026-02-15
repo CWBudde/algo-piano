@@ -84,7 +84,7 @@ type NoteParams struct {
 func NewDefaultParams() *Params {
 	return &Params{
 		PerNote:                    make(map[int]*NoteParams),
-		OutputGain:                 0.01,
+		OutputGain:                 1.0,
 		IRWavPath:                  "",
 		IRWetMix:                   1.0,
 		IRDryMix:                   0.0,
