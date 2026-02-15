@@ -373,23 +373,7 @@ This phase is split into execution subphases to make progress and ownership expl
 
 ---
 
-## Phase 10 — Tests + benchmarks (keep realtime honest)
-
-- [ ] Unit tests
-  - [ ] Tuning accuracy across a range of notes
-  - [ ] Convolver correctness bound
-  - [ ] Stability tests: long render without NaNs/denorm storms
-- [ ] Benchmarks
-  - [ ] Use `go test -bench=.` benchmarks
-  - [ ] Voice cost per block at 48k/128 frames
-  - [ ] Convolution cost by IR length/partition size
-  - [ ] Polyphony sweep (e.g. 16/32/64/128 voices)
-
-**Done when:** you have a baseline performance budget and regression alarms.
-
----
-
-## Phase 11 — Web demo (WASM + AudioWorklet) ✓
+## Phase 10 — Web demo (WASM + AudioWorklet) ✓
 
 - [x] Choose build approach (Go-only)
   - [x] Standard Go WASM (using syscall/js for bridge between Go and JS)
@@ -408,7 +392,100 @@ This phase is split into execution subphases to make progress and ownership expl
 
 ---
 
-## Phase 12 — Polish (only after the core is solid)
+## Phase 11 — Spectral fidelity & timbral accuracy
+
+**Goal:** Close the spectral gap between synthesized output and reference recordings. STFT analysis (cmd/spectral-compare) reveals systematic deficiencies that need model improvements.
+
+### Diagnosis (from STFT comparison of Stage 3 vs reference C4)
+
+- **40 dB level gap:** Candidate peak is -47.5 dB, reference peak is -6.5 dB. The output_gain range (0.4-1.8) and IR mix parameters are not compensating enough. The signal chain has an inherent scaling issue.
+- **Attack transient is weak:** The broadband hammer impact energy is missing. Real pianos have a short (~2-5ms) noise burst from felt-on-string contact that creates the initial "click/thud." Our hammer exciter produces a smooth force pulse but lacks this impulsive broadband component.
+- **High harmonics decay too fast:** In the sustain/decay phase, high-frequency energy (>3kHz) drops 20-60 dB faster than the reference. The per-sample loss model damps all harmonics equally, but real strings have frequency-dependent damping (higher partials should decay faster, but not THIS fast — the current loss is too aggressive across the board).
+- **Spectral RMSE dominates the score:** At 20 dB, it contributes 52% of the total distance score (0.201 out of 0.389). Fixing this is the highest-leverage improvement.
+
+### Tasks
+
+#### 11.1 — Fix output level calibration
+- [ ] Investigate why candidate is 40 dB quieter than reference
+- [ ] Check signal chain gain stages: hammer exciter amplitude → string waveguide → body convolver → room convolver → output gain
+- [ ] Widen output_gain knob range if needed, or find the scaling bug
+- [ ] Verify spectral-compare shows <5 dB level gap after fix
+
+#### 11.2 — Add hammer attack noise component
+- [ ] Add a short broadband noise burst at note onset in the hammer exciter
+- [ ] Parameters: attack_noise_level (amplitude), attack_noise_duration_ms (~1-5ms), attack_noise_color (spectral tilt)
+- [ ] The noise models felt-on-string impact and gives the initial "click"
+- [ ] Make parameters optimizable as piano-fit knobs
+- [ ] Verify attack window (0-20ms) spectral energy improves
+
+#### 11.3 — Improve high-frequency sustain
+- [ ] Investigate frequency-dependent string loss (current loss is per-sample, uniform across harmonics)
+- [ ] Option A: Add a loss_frequency_scale parameter — higher harmonics get less additional damping
+- [ ] Option B: Add a separate high-frequency loss term (2-pole lowpass on the waveguide delay line, already common in Karplus-Strong models)
+- [ ] Verify hi-mid and high band energy in sustain/decay phases improves
+
+#### 11.4 — Spectral distance improvements
+- [ ] Consider making spectralRMSEDB use multiple time windows (STFT-based) instead of just the first 4096 samples
+- [ ] Weight early/sustain/decay phases differently in the score
+- [ ] Add per-band spectral distance to the analysis.Metrics for diagnostics
+
+#### 11.5 — Body IR Kirchhoff model refinements (deferred)
+- [ ] Full tier: algo-pde Helmholtz eigensolve for arbitrary plate geometry with ribs
+- [ ] Investigate whether the body IR is contributing to or compensating for the level gap
+
+#### 11.6 — Re-run optimization pipeline after model fixes
+- [ ] Stage 1: piano,mix with new hammer noise + level fix
+- [ ] Stage 2: body-ir,mix with Kirchhoff plate modes
+- [ ] Stage 3: piano,mix re-tune
+- [ ] Stage 4: joint optimization
+- [ ] Target: score < 0.25 (currently 0.39), spectral RMSE < 10 dB (currently 20 dB)
+
+### Tools created
+
+#### `cmd/spectral-compare`
+
+STFT-based spectral comparison between a reference WAV and a rendered preset. Reports per-band RMSE across time windows.
+
+```bash
+go run --tags asm ./cmd/spectral-compare \
+    --reference reference/c4.wav \
+    --preset out/stages/stage3.json \
+    --note 60 \
+    --velocity 121 \
+    --release-after 3.39 \
+    --sample-rate 48000
+```
+
+Output: peak levels, lag alignment, then a table per time window (attack 0-20ms, early 20-100ms, sustain 100-500ms, decay 0.5-2s, late 2-4s) with per-band spectral RMSE (sub-bass through air), reference and candidate power levels, and diff. Bands with RMSE > 15 dB are flagged with `<<<`.
+
+### Current state (as of 2026-02-15)
+- Unified `piano-fit` tool with `--optimize` group selection, `--no-resonance`, `--cpuprofile`
+- Body IR uses Kirchhoff plate eigenmodes with 2-way frequency-dependent decay
+- Optimized body IR defaults from Stage 2 fitting (PlateRatio=2.36, StiffnessRatio=8.33, ModeWarp=1.20, CrossoverHz=1145)
+- Stage 2 passthrough fix: 27x speedup (room convolver skipped when room-ir group not active)
+- Best scores: Stage 1=0.391, Stage 2=0.382, Stage 3=0.389
+
+**Done when:** spectral RMSE < 10 dB, overall score < 0.25, attack transient matches reference character.
+
+---
+
+## Phase 13 — Tests + benchmarks (keep realtime honest)
+
+- [ ] Unit tests
+  - [ ] Tuning accuracy across a range of notes
+  - [ ] Convolver correctness bound
+  - [ ] Stability tests: long render without NaNs/denorm storms
+- [ ] Benchmarks
+  - [ ] Use `go test -bench=.` benchmarks
+  - [ ] Voice cost per block at 48k/128 frames
+  - [ ] Convolution cost by IR length/partition size
+  - [ ] Polyphony sweep (e.g. 16/32/64/128 voices)
+
+**Done when:** you have a baseline performance budget and regression alarms.
+
+---
+
+## Phase 14 — Polish (only after the core is solid)
 
 - [ ] Add key-off / pedal noise (small synthesized bursts or tiny samples)
 - [ ] Add output limiter/safety clipper
@@ -424,13 +501,3 @@ This phase is split into execution subphases to make progress and ownership expl
 - [ ] Decide: primary string core for v1
   - [ ] DWG (matches `goal.md`)
   - [ ] Modal bank (supported by `research.md` for stability/alias control)
-- [ ] Decide: sample rate strategy
-  - [x] Variable runtime sample-rates with IR resampling from high-res source WAV
-  - [ ] (optional) multi-rate for high notes
-- [ ] Decide: IR licensing + source
-  - [x] Store IR assets as high-resolution WAV (96 kHz preferred), resample at load time
-  - [ ] Use your own measured IRs
-  - [ ] Use a permissive IR set (verify license)
-- [ ] Decide: realtime audio I/O for native builds
-  - [ ] Start with offline WAV render only (`cmd/piano-render`)
-  - [ ] (optional) Add realtime playback via a Go audio library (prefer pure Go)
