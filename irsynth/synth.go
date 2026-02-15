@@ -265,6 +265,17 @@ func lerp(a, b, t float64) float64 {
 }
 
 // BodyConfig controls short mono body IR generation (soundboard coloration).
+//
+// The body IR models soundboard coloration with two decay regimes:
+// low-frequency plate-like modes (broader, longer decay) and high-frequency
+// rib-localized modes (denser, shorter decay). CrossoverHz sets the transition.
+//
+// Future tiers (deferred):
+//   - Middle: Analytical Kirchhoff plate eigenmodes for realistic mode spacing
+//     without runtime PDE solving. Uses closed-form f_{mn} = C*(m²/Lx² + n²/Ly²)
+//     with frequency-dependent damping — much more realistic than log-spaced modes.
+//   - Full: algo-pde Helmholtz eigensolve for arbitrary plate geometry with ribs,
+//     computing actual eigenmodes of the soundboard for physically-grounded IR.
 type BodyConfig struct {
 	SampleRate  int
 	DurationS   float64 // Typically 0.02-0.3s
@@ -273,7 +284,9 @@ type BodyConfig struct {
 	Brightness  float64
 	Density     float64
 	DirectLevel float64
-	DecayS      float64 // Single decay time for body modes
+	LowDecayS   float64 // Decay time for modes below CrossoverHz
+	HighDecayS  float64 // Decay time for modes above CrossoverHz
+	CrossoverHz float64 // Frequency where decay transitions from low to high
 	FadeOutS    float64 // Cosine fade-out at the end; 0 = no fade
 
 	NormalizePeak float64
@@ -289,7 +302,9 @@ func DefaultBodyConfig() BodyConfig {
 		Brightness:    1.0,
 		Density:       2.0,
 		DirectLevel:   0.6,
-		DecayS:        0.1,
+		LowDecayS:     0.15,
+		HighDecayS:    0.03,
+		CrossoverHz:   800.0,
 		FadeOutS:      0.005,
 		NormalizePeak: 0.9,
 	}
@@ -314,8 +329,11 @@ func (c *BodyConfig) Validate() error {
 	if c.DirectLevel < 0 {
 		return fmt.Errorf("direct level must be >= 0")
 	}
-	if c.DecayS <= 0 {
-		return fmt.Errorf("decay must be > 0")
+	if c.LowDecayS <= 0 || c.HighDecayS <= 0 {
+		return fmt.Errorf("decay seconds must be > 0")
+	}
+	if c.CrossoverHz <= 0 {
+		return fmt.Errorf("crossover Hz must be > 0")
 	}
 	if c.NormalizePeak <= 0 {
 		return fmt.Errorf("normalize peak must be > 0")
@@ -349,7 +367,11 @@ func GenerateBody(cfg BodyConfig) ([]float32, error) {
 		minF = maxF * 0.5
 	}
 
-	// Deterministic modal body modes (mono).
+	// Deterministic modal body modes (mono) with 2-way frequency-dependent decay.
+	// Below CrossoverHz: plate-like modes with longer LowDecayS.
+	// Above CrossoverHz: rib-localized modes with shorter HighDecayS.
+	// Smooth crossover via sigmoid blend centered at CrossoverHz.
+	logCrossover := math.Log(cfg.CrossoverHz)
 	for m := 0; m < cfg.Modes; m++ {
 		fNorm := math.Pow((float64(m)+0.5)/float64(cfg.Modes), cfg.Density)
 		f := minF * math.Pow(maxF/minF, fNorm)
@@ -358,7 +380,12 @@ func GenerateBody(cfg BodyConfig) ([]float32, error) {
 		amp := 0.9 / math.Pow(1.0+f/120.0, brightnessExp)
 		amp *= 0.7 + 0.6*rng.Float64() // amplitude jitter
 
-		decay := math.Exp(-1.0 / (cfg.DecayS * float64(cfg.SampleRate)))
+		// Sigmoid blend: 0 = pure LowDecayS, 1 = pure HighDecayS.
+		// ~2 octaves transition width (steepness = 3).
+		blend := 1.0 / (1.0 + math.Exp(-3.0*(math.Log(f)-logCrossover)))
+		tau := cfg.LowDecayS*(1.0-blend) + cfg.HighDecayS*blend
+		decay := math.Exp(-1.0 / (tau * float64(cfg.SampleRate)))
+
 		phi := rng.Float64() * 2.0 * math.Pi
 		addModeRec(buf, amp, f, phi, decay, cfg.SampleRate)
 	}

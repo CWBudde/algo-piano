@@ -183,9 +183,9 @@ func TestInitCandidateBodyIRMix(t *testing.T) {
 	groups := map[string]bool{"body-ir": true, "mix": true}
 	defs, cand := initCandidate(base, 48000, 60, 118, 3.5, groups)
 
-	// body-ir: 7 knobs (incl fadeout), dual-IR mix (because body-ir triggers needsIRSynthesis): 4 knobs = 11 total
-	if len(defs) != 11 {
-		t.Fatalf("defs len = %d, want 11", len(defs))
+	// body-ir: 9 knobs (incl 2-way decay + crossover + fadeout), dual-IR mix: 4 knobs = 13 total
+	if len(defs) != 13 {
+		t.Fatalf("defs len = %d, want 13", len(defs))
 	}
 	if len(cand.Vals) != len(defs) {
 		t.Fatalf("vals len = %d, want %d", len(cand.Vals), len(defs))
@@ -207,9 +207,9 @@ func TestInitCandidateFullJoint(t *testing.T) {
 	groups := map[string]bool{"piano": true, "body-ir": true, "room-ir": true, "mix": true}
 	defs, cand := initCandidate(base, 48000, 60, 118, 3.5, groups)
 
-	// piano: 13, body-ir: 7 (incl fadeout), room-ir: 8 (incl fadeout), dual-IR mix: 4 = 32 total
-	if len(defs) != 32 {
-		t.Fatalf("defs len = %d, want 32", len(defs))
+	// piano: 13, body-ir: 9 (incl 2-way decay + crossover + fadeout), room-ir: 8 (incl fadeout), dual-IR mix: 4 = 34 total
+	if len(defs) != 34 {
+		t.Fatalf("defs len = %d, want 34", len(defs))
 	}
 	if len(cand.Vals) != len(defs) {
 		t.Fatalf("vals len = %d, want %d", len(cand.Vals), len(defs))
