@@ -3,7 +3,6 @@
 package main
 
 import (
-	"os"
 	"syscall/js"
 	"unsafe"
 
@@ -81,9 +80,19 @@ func wasmLoadIR(this js.Value, args []js.Value) interface{} {
 		return nil
 	}
 
-	// Get ArrayBuffer from JavaScript
-	arrayBuffer := args[0]
-	length := arrayBuffer.Get("byteLength").Int()
+	src := args[0]
+	uint8Array := js.Global().Get("Uint8Array")
+	arrayBuffer := js.Global().Get("ArrayBuffer")
+
+	if src.InstanceOf(arrayBuffer) {
+		src = uint8Array.New(src)
+	}
+	if !src.InstanceOf(uint8Array) {
+		println("IR data is not an ArrayBuffer/Uint8Array")
+		return nil
+	}
+
+	length := src.Get("byteLength").Int()
 
 	if length == 0 {
 		println("IR data is empty")
@@ -92,18 +101,13 @@ func wasmLoadIR(this js.Value, args []js.Value) interface{} {
 
 	// Copy data from JS to Go
 	irData := make([]byte, length)
-	js.CopyBytesToGo(irData, arrayBuffer)
-
-	// Write to temporary file
-	tmpFile := "/tmp/ir.wav"
-	err := os.WriteFile(tmpFile, irData, 0o644)
-	if err != nil {
-		println("Failed to write IR file:", err.Error())
-		return nil
+	copied := js.CopyBytesToGo(irData, src)
+	if copied != length {
+		println("IR copy mismatch:", copied, "of", length)
 	}
 
-	println("IR loaded successfully:", length, "bytes")
-	// TODO: Need Piano method to reload IR at runtime
+	// TODO: Parse WAV from bytes and apply via SetRoomIR/SetBodyIR at runtime.
+	println("IR loaded:", copied, "bytes (runtime IR apply not implemented yet)")
 	return nil
 }
 
@@ -125,10 +129,13 @@ func wasmProcessBlock(this js.Value, args []js.Value) interface{} {
 
 	// Return pointer to buffer in WASM linear memory
 	ptr := &outputBuffer[0]
-	return js.ValueOf(uintptr(unsafe.Pointer(ptr)))
+	return float64(uintptr(unsafe.Pointer(ptr)))
 }
 
 func wasmGetMemoryBuffer(this js.Value, args []js.Value) interface{} {
-	// Return WASM memory buffer for access from JS
-	return js.Global().Get("Go").Get("_inst").Get("exports").Get("mem").Get("buffer")
+	mem := js.Global().Get("__algoPianoWasmMemory")
+	if !mem.Truthy() {
+		return js.Null()
+	}
+	return mem.Get("buffer")
 }
