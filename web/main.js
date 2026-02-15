@@ -8,6 +8,7 @@ let initAudioPromise = null;
 const pendingNotes = new Set();
 let wasmReady = false;
 let audioReady = false;
+let sustainPedalDown = false;
 const RENDER_CHUNK_FRAMES = 128;
 const SCRIPT_BUFFER_SIZE = 256;
 
@@ -186,13 +187,12 @@ function attachKeyboardListeners() {
 
     // Sustain pedal
     const sustainButton = document.getElementById('sustain-pedal');
-    let sustainDown = false;
 
     sustainButton.addEventListener('click', () => {
-        sustainDown = !sustainDown;
-        sustainButton.classList.toggle('active', sustainDown);
-        sustainButton.textContent = `Sustain Pedal (Space): ${sustainDown ? 'ON' : 'OFF'}`;
-        handleSustain(sustainDown);
+        sustainPedalDown = !sustainPedalDown;
+        sustainButton.classList.toggle('active', sustainPedalDown);
+        sustainButton.textContent = `Sustain Pedal (Space): ${sustainPedalDown ? 'ON' : 'OFF'}`;
+        handleSustain(sustainPedalDown);
     });
 
     // Computer keyboard
@@ -318,6 +318,9 @@ async function initAudio() {
         await audioContext.resume();
 
         audioReady = true;
+        if (sustainPedalDown && typeof wasmSetSustain !== 'undefined') {
+            wasmSetSustain(sustainPedalDown);
+        }
         updateStatus(`Ready! Sample rate: ${audioContext.sampleRate} Hz`);
 
         // Try to load IR
@@ -371,6 +374,7 @@ function handleNoteOff(note) {
 }
 
 function handleSustain(down) {
+    sustainPedalDown = down;
     if (!audioReady) return;
 
     if (typeof wasmSetSustain !== 'undefined') {

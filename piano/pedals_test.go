@@ -48,6 +48,21 @@ func TestSustainPedalKeepsNoteRinging(t *testing.T) {
 	}
 }
 
+func TestSustainPedalAfterLongHoldStillRings(t *testing.T) {
+	p := NewPiano(48000, 16, NewDefaultParams())
+	p.SetSustainPedal(true)
+	p.NoteOn(60, 100)
+
+	// Hold the note long enough that age-based release math would kill it instantly.
+	_ = p.Process(48000)
+	p.NoteOff(60)
+
+	tail := p.Process(512)
+	if stereoRMS(tail) <= 1e-4 {
+		t.Fatalf("expected sustained tail after long hold, got %f", stereoRMS(tail))
+	}
+}
+
 func TestSoftPedalAdjustsVoiceStrikeAndHammerHardness(t *testing.T) {
 	v := NewVoice(48000, 60, 100, NewDefaultParams())
 	baseStrike := v.strikePos
