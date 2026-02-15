@@ -9,6 +9,9 @@ const pendingNotes = new Set();
 let wasmReady = false;
 let audioReady = false;
 let sustainPedalDown = false;
+let damperEngaged = true;
+let sustainLevel = 50;
+let noteVelocity = 84;
 const RENDER_CHUNK_FRAMES = 128;
 const SCRIPT_BUFFER_SIZE = 256;
 
@@ -84,10 +87,9 @@ function generateKeyboard() {
     const blackKeyOffsets = [1, 3, 6, 8, 10]; // C# D# F# G# A#
     const computerKeys = ['A', 'W', 'S', 'E', 'D', 'F', 'T', 'G', 'Y', 'H', 'U', 'J', 'K'];
 
-    const whiteKeyWidth = 50;
-    const whiteKeyMargin = 1;
-    const blackKeyWidth = 32;
-    let whiteKeyIndex = 0;
+    const whiteKeyWidth = 52;
+    const whiteKeyMargin = 2;
+    const blackKeyWidth = 34;
 
     // Generate white keys first
     for (let octave = 0; octave < numOctaves; octave++) {
@@ -108,7 +110,6 @@ function generateKeyboard() {
             key.appendChild(label);
 
             keysContainer.appendChild(key);
-            whiteKeyIndex++;
         }
     }
 
@@ -149,6 +150,44 @@ function generateKeyboard() {
 
 function attachKeyboardListeners() {
     const keys = document.querySelectorAll('.key');
+    const sustainButton = document.getElementById('sustain-pedal');
+    const sustainState = document.getElementById('sustain-state');
+    const damperButton = document.getElementById('damper-toggle');
+    const sustainLevelSlider = document.getElementById('sustain-level');
+    const sustainLevelValue = document.getElementById('sustain-level-value');
+
+    function updateSliderFill(value) {
+        const pct = `${value}%`;
+        sustainLevelSlider.style.background = `linear-gradient(90deg, rgba(222, 189, 126, 0.9) 0%, rgba(222, 189, 126, 0.42) ${pct}, rgba(31, 34, 41, 0.85) ${pct}, rgba(31, 34, 41, 0.85) 100%)`;
+    }
+
+    function updateVelocityFromLevel(value) {
+        // Map 0..100 to MIDI velocity 36..127.
+        noteVelocity = Math.max(36, Math.min(127, Math.round(36 + (value / 100) * 91)));
+    }
+
+    function syncPedalUI() {
+        sustainButton.classList.toggle('active', sustainPedalDown);
+        sustainButton.setAttribute('aria-pressed', String(sustainPedalDown));
+        sustainState.textContent = sustainPedalDown ? 'ON' : 'OFF';
+
+        damperButton.classList.toggle('active', damperEngaged);
+        damperButton.setAttribute('aria-pressed', String(damperEngaged));
+        damperButton.textContent = damperEngaged ? 'ON' : 'OFF';
+    }
+
+    function setSustainState(down) {
+        sustainPedalDown = down;
+        damperEngaged = !down;
+        syncPedalUI();
+        handleSustain(down);
+    }
+
+    sustainLevel = parseInt(sustainLevelSlider.value, 10) || 50;
+    sustainLevelValue.textContent = `${sustainLevel}%`;
+    updateSliderFill(sustainLevel);
+    updateVelocityFromLevel(sustainLevel);
+    syncPedalUI();
 
     keys.forEach(key => {
         // Mouse events
@@ -185,14 +224,20 @@ function attachKeyboardListeners() {
         });
     });
 
-    // Sustain pedal
-    const sustainButton = document.getElementById('sustain-pedal');
-
     sustainButton.addEventListener('click', () => {
-        sustainPedalDown = !sustainPedalDown;
-        sustainButton.classList.toggle('active', sustainPedalDown);
-        sustainButton.textContent = `Sustain Pedal (Space): ${sustainPedalDown ? 'ON' : 'OFF'}`;
-        handleSustain(sustainPedalDown);
+        setSustainState(!sustainPedalDown);
+    });
+
+    damperButton.addEventListener('click', () => {
+        damperEngaged = !damperEngaged;
+        setSustainState(!damperEngaged);
+    });
+
+    sustainLevelSlider.addEventListener('input', (event) => {
+        sustainLevel = parseInt(event.target.value, 10) || 50;
+        sustainLevelValue.textContent = `${sustainLevel}%`;
+        updateSliderFill(sustainLevel);
+        updateVelocityFromLevel(sustainLevel);
     });
 
     // Computer keyboard
@@ -204,7 +249,7 @@ function attachKeyboardListeners() {
 
         if (e.code === 'Space') {
             e.preventDefault();
-            sustainButton.click();
+            setSustainState(!sustainPedalDown);
             return;
         }
 
@@ -350,7 +395,7 @@ function handleNoteOn(note) {
         initAudio()
             .then(() => {
                 if (audioReady && pendingNotes.has(note) && typeof wasmNoteOn !== 'undefined') {
-                    wasmNoteOn(note, 80);
+                    wasmNoteOn(note, noteVelocity);
                 }
             })
             .catch(() => {
@@ -360,7 +405,7 @@ function handleNoteOn(note) {
     }
 
     if (typeof wasmNoteOn !== 'undefined') {
-        wasmNoteOn(note, 80);
+        wasmNoteOn(note, noteVelocity);
     }
 }
 
