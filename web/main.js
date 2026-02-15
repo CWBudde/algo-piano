@@ -89,11 +89,11 @@ function generateKeyboard() {
     const computerKeys = ['A', 'W', 'S', 'E', 'D', 'F', 'T', 'G', 'Y', 'H', 'U', 'J', 'K'];
 
     const rootStyles = getComputedStyle(document.documentElement);
-    const whiteKeyWidth = parseFloat(rootStyles.getPropertyValue(--white-key-width)) || 52;
-    const whiteKeyGap = parseFloat(rootStyles.getPropertyValue(--white-key-gap)) || 2;
+    const whiteKeyWidth = parseFloat(rootStyles.getPropertyValue('--white-key-width')) || 52;
+    const whiteKeyGap = parseFloat(rootStyles.getPropertyValue('--white-key-gap')) || 2;
     const whiteKeyMargin = whiteKeyGap;
-    const blackKeyWidth = parseFloat(rootStyles.getPropertyValue(--black-key-width)) || 34;
-    const blackKeyFineTune = 0;
+    const blackKeyWidth = parseFloat(rootStyles.getPropertyValue('--black-key-width')) || 34;
+    const blackKeyFineTune = -2;
 
     // Generate white keys first
     for (let octave = 0; octave < numOctaves; octave++) {
