@@ -20,11 +20,62 @@ let sustainLevel = 50;
 let sustainReleaseMs = 1800;
 let noteVelocity = 96;
 let couplingMode = 'static';
+const velocityCurve = {
+    mode: 'power',
+    exponent: 1.7,
+    floor: 0.0
+};
 const RENDER_CHUNK_FRAMES = 128;
 const SCRIPT_BUFFER_SIZE = 256;
 
+function normalizeVelocityCurveMode(mode) {
+    const normalized = String(mode || '').trim().toLowerCase();
+    if (normalized === 'linear' || normalized === 'power') {
+        return normalized;
+    }
+    return 'power';
+}
+
+function setVelocityCurve(config = {}) {
+    if (config.mode !== undefined) {
+        velocityCurve.mode = normalizeVelocityCurveMode(config.mode);
+    }
+    if (config.exponent !== undefined) {
+        const exp = Number(config.exponent);
+        if (Number.isFinite(exp) && exp > 0) {
+            velocityCurve.exponent = exp;
+        }
+    }
+    if (config.floor !== undefined) {
+        const floor = Number(config.floor);
+        if (Number.isFinite(floor)) {
+            velocityCurve.floor = Math.min(0.99, clamp01(floor));
+        }
+    }
+}
+
+function applyVelocityCurveFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('vel_curve');
+    const exponent = params.get('vel_exp');
+    const floor = params.get('vel_floor');
+
+    const next = {};
+    if (mode !== null) next.mode = mode;
+    if (exponent !== null) next.exponent = Number(exponent);
+    if (floor !== null) next.floor = Number(floor);
+
+    if (Object.keys(next).length > 0) {
+        setVelocityCurve(next);
+    }
+}
+
 async function init() {
     try {
+        applyVelocityCurveFromURL();
+        window.setPianoVelocityCurve = setVelocityCurve;
+        window.getPianoVelocityCurve = () => ({ ...velocityCurve });
+
         // Load WASM
         const go = new Go();
         const result = await WebAssembly.instantiateStreaming(
@@ -213,7 +264,19 @@ function normalizedVelocityFromPointerY(clientY, keyElement) {
 }
 
 function midiVelocityFromNormalized(normalized) {
-    const v = Math.round(clamp01(normalized) * 127);
+    const floor = clamp01(velocityCurve.floor);
+    const raw = clamp01(normalized);
+    if (raw <= floor) {
+        return 0;
+    }
+
+    const scaled = clamp01((raw - floor) / (1 - floor));
+    let shaped = scaled;
+    if (velocityCurve.mode === 'power') {
+        shaped = Math.pow(scaled, velocityCurve.exponent);
+    }
+
+    const v = Math.round(clamp01(shaped) * 127);
     if (v < 0) return 0;
     if (v > 127) return 127;
     return v;

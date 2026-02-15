@@ -241,6 +241,8 @@ type StringBank struct {
 	active                   [128]bool
 	activeNotes              []int
 	blockEnergy              [128]float64
+	couplingSum              [128]float64
+	couplingAbs              [128]float64
 	sampleOut                [128]float32
 	outputBuf                []float32
 }
@@ -615,6 +617,8 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 
 	for _, note := range sb.activeNotes {
 		sb.blockEnergy[note] = 0
+		sb.couplingSum[note] = 0
+		sb.couplingAbs[note] = 0
 	}
 
 	for i := 0; i < numFrames; i++ {
@@ -633,11 +637,17 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 			mix += s
 			sf := float64(s)
 			sb.blockEnergy[note] += sf * sf
-		}
-		if sb.couplingEnabled {
-			sb.applySparseCoupling()
+			sb.couplingSum[note] += sf
+			if s < 0 {
+				sb.couplingAbs[note] -= sf
+			} else {
+				sb.couplingAbs[note] += sf
+			}
 		}
 		out[i] = mix
+	}
+	if sb.couplingEnabled {
+		sb.applySparseCouplingBlockwise(numFrames)
 	}
 
 	next := sb.activeNotes[:0]
@@ -659,20 +669,32 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 	return out
 }
 
-func (sb *StringBank) applySparseCoupling() {
+func (sb *StringBank) applySparseCouplingBlockwise(numFrames int) {
 	const eps = 1e-9
+	if numFrames <= 0 {
+		return
+	}
+	invFrames := float32(1.0 / float64(numFrames))
 	polyScale := float32(1.0)
 	if n := len(sb.activeNotes); n > 1 {
 		polyScale = float32(1.0 / math.Sqrt(float64(n)))
 	}
 	for _, src := range sb.activeNotes {
-		srcSample := sb.sampleOut[src]
-		if srcSample > -eps && srcSample < eps {
+		driveMag := float32(sb.couplingAbs[src]) * invFrames
+		if driveMag > -eps && driveMag < eps {
 			continue
+		}
+		driveSign := float32(sb.couplingSum[src]) * invFrames
+		if driveSign > -eps && driveSign < eps {
+			driveSign = sb.sampleOut[src]
+		}
+		srcDrive := driveMag
+		if driveSign < 0 {
+			srcDrive = -driveMag
 		}
 		edges := sb.coupling[src]
 		for _, e := range edges {
-			sb.InjectCouplingForce(e.to, srcSample*e.gain*polyScale)
+			sb.InjectCouplingForce(e.to, srcDrive*e.gain*polyScale)
 		}
 	}
 }
