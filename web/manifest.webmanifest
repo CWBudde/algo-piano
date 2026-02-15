@@ -1,0 +1,27 @@
+{
+  "name": "Algo-Piano",
+  "short_name": "Algo-Piano",
+  "description": "Algo-Piano WebAssembly demo",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f1218",
+  "theme_color": "#0f1218",
+  "icons": [
+    {
+      "src": "favicon-piano-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "favicon-piano-64.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    },
+    {
+      "src": "favicon-piano-256.png",
+      "sizes": "256x256",
+      "type": "image/png"
+    }
+  ]
+}
