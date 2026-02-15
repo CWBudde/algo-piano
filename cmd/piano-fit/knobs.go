@@ -103,7 +103,8 @@ func initCandidate(
 	if groups["body-ir"] {
 		addKnob(knobDef{Name: "body_modes", Min: 8, Max: 96, IsInt: true}, float64(bodyCfg.Modes))
 		addKnob(knobDef{Name: "body_brightness", Min: 0.5, Max: 2.5}, bodyCfg.Brightness)
-		addKnob(knobDef{Name: "body_density", Min: 0.5, Max: 4.0}, bodyCfg.Density)
+		addKnob(knobDef{Name: "body_plate_ratio", Min: 0.8, Max: 3.0}, bodyCfg.PlateRatio)
+		addKnob(knobDef{Name: "body_stiffness_ratio", Min: 3.0, Max: 25.0, LogScale: true}, bodyCfg.StiffnessRatio)
 		addKnob(knobDef{Name: "body_direct", Min: 0.1, Max: 1.2}, bodyCfg.DirectLevel)
 		addKnob(knobDef{Name: "body_low_decay", Min: 0.01, Max: 0.5, LogScale: true}, bodyCfg.LowDecayS)
 		addKnob(knobDef{Name: "body_high_decay", Min: 0.001, Max: 0.15, LogScale: true}, bodyCfg.HighDecayS)
@@ -208,8 +209,10 @@ func applyCandidate(
 			bodyCfg.Modes = int(math.Round(v))
 		case "body_brightness":
 			bodyCfg.Brightness = v
-		case "body_density":
-			bodyCfg.Density = v
+		case "body_plate_ratio":
+			bodyCfg.PlateRatio = v
+		case "body_stiffness_ratio":
+			bodyCfg.StiffnessRatio = v
 		case "body_direct":
 			bodyCfg.DirectLevel = v
 		case "body_low_decay":
