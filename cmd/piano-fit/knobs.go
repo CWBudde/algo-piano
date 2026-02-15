@@ -105,7 +105,9 @@ func initCandidate(
 		addKnob(knobDef{Name: "body_brightness", Min: 0.5, Max: 2.5}, bodyCfg.Brightness)
 		addKnob(knobDef{Name: "body_density", Min: 0.5, Max: 4.0}, bodyCfg.Density)
 		addKnob(knobDef{Name: "body_direct", Min: 0.1, Max: 1.2}, bodyCfg.DirectLevel)
-		addKnob(knobDef{Name: "body_decay", Min: 0.001, Max: 0.5, LogScale: true}, bodyCfg.DecayS)
+		addKnob(knobDef{Name: "body_low_decay", Min: 0.01, Max: 0.5, LogScale: true}, bodyCfg.LowDecayS)
+		addKnob(knobDef{Name: "body_high_decay", Min: 0.001, Max: 0.15, LogScale: true}, bodyCfg.HighDecayS)
+		addKnob(knobDef{Name: "body_crossover", Min: 200, Max: 3000, LogScale: true}, bodyCfg.CrossoverHz)
 		addKnob(knobDef{Name: "body_duration", Min: 0.005, Max: 0.3, LogScale: true}, bodyCfg.DurationS)
 		addKnob(knobDef{Name: "body_fadeout", Min: 0.001, Max: 0.05, LogScale: true}, bodyCfg.FadeOutS)
 	}
@@ -210,8 +212,12 @@ func applyCandidate(
 			bodyCfg.Density = v
 		case "body_direct":
 			bodyCfg.DirectLevel = v
-		case "body_decay":
-			bodyCfg.DecayS = v
+		case "body_low_decay":
+			bodyCfg.LowDecayS = v
+		case "body_high_decay":
+			bodyCfg.HighDecayS = v
+		case "body_crossover":
+			bodyCfg.CrossoverHz = v
 		case "body_duration":
 			bodyCfg.DurationS = v
 		case "body_fadeout":
