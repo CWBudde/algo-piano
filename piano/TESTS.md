@@ -22,6 +22,8 @@ This maps each split source file to its direct and indirect test coverage.
 - `TestPhysicalCouplingAmountScalesOutgoingGain` (`ringing_test.go`)
 - `TestPhysicalCouplingDetuneSigmaPenalizesOffHarmonicTargets` (`ringing_test.go`)
 - `TestPhysicalCouplingDistanceExponentReducesFarTargets` (`ringing_test.go`)
+- `TestPhysicalCouplingSourceStringCountScalesOutgoingGain` (`ringing_test.go`)
+- `TestStringCountCouplingScaleMonotonic` (`ringing_test.go`)
 - `TestSoftPedalReducesAttackBrightness` (`pedals_test.go`)
 - `TestPerNoteResonanceFilterIsFrequencySelective` (`resonance_test.go`)
 - `TestSympatheticResonanceEnergizesSilentHeldString` (`resonance_test.go`)

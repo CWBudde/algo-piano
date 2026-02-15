@@ -269,3 +269,41 @@ func TestPhysicalCouplingDistanceExponentReducesFarTargets(t *testing.T) {
 		t.Fatalf("expected steeper distance exponent to amplify near/far contrast: base=%f steep=%f", baseRatio, steepRatio)
 	}
 }
+
+func TestPhysicalCouplingSourceStringCountScalesOutgoingGain(t *testing.T) {
+	params := NewDefaultParams()
+	params.CouplingMode = CouplingModePhysical
+	params.CouplingAmount = 1.0
+	params.CouplingMaxNeighbors = 12
+	sb := NewStringBank(48000, params)
+
+	sumGain := func(edges []couplingEdge) float32 {
+		total := float32(0)
+		for _, e := range edges {
+			total += e.gain
+		}
+		return total
+	}
+
+	lowOut := sumGain(sb.coupling[30])  // 1-string regime
+	midOut := sumGain(sb.coupling[60])  // 2-string regime
+	highOut := sumGain(sb.coupling[84]) // 3-string regime
+	if lowOut <= 0 || midOut <= 0 || highOut <= 0 {
+		t.Fatalf("expected positive outgoing gains: low=%e mid=%e high=%e", lowOut, midOut, highOut)
+	}
+	if !(lowOut < midOut && midOut < highOut) {
+		t.Fatalf("expected outgoing gains to rise with source unison count: low=%e mid=%e high=%e", lowOut, midOut, highOut)
+	}
+}
+
+func TestStringCountCouplingScaleMonotonic(t *testing.T) {
+	s1 := stringCountCouplingScale(1)
+	s2 := stringCountCouplingScale(2)
+	s3 := stringCountCouplingScale(3)
+	if !(s1 > 0 && s2 > s1 && s3 > s2) {
+		t.Fatalf("expected monotonic unison scaling: s1=%f s2=%f s3=%f", s1, s2, s3)
+	}
+	if s3 < 0.99 || s3 > 1.01 {
+		t.Fatalf("expected 3-string regime scale near unity, got=%f", s3)
+	}
+}
