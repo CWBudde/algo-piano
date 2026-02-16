@@ -36,6 +36,7 @@ type File struct {
 	HammerDampingScale         *float32               `json:"hammer_damping_scale"`
 	HammerInitialVelocityScale *float32               `json:"hammer_initial_velocity_scale"`
 	HammerContactTimeScale     *float32               `json:"hammer_contact_time_scale"`
+	HighFreqDamping            *float32               `json:"high_freq_damping,omitempty"`
 	UnisonDetuneScale          *float32               `json:"unison_detune_scale"`
 	UnisonCrossfeed            *float32               `json:"unison_crossfeed"`
 	StringModel                *string                `json:"string_model"`
@@ -208,6 +209,12 @@ func ApplyFile(dst *piano.Params, f *File) error {
 			return fmt.Errorf("hammer_contact_time_scale must be > 0")
 		}
 		dst.HammerContactTimeScale = *f.HammerContactTimeScale
+	}
+	if f.HighFreqDamping != nil {
+		if *f.HighFreqDamping < 0 || *f.HighFreqDamping > 0.99 {
+			return fmt.Errorf("high_freq_damping must be in [0,0.99]")
+		}
+		dst.HighFreqDamping = *f.HighFreqDamping
 	}
 	if f.UnisonDetuneScale != nil {
 		if *f.UnisonDetuneScale < 0 {

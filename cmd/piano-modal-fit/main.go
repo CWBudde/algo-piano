@@ -706,6 +706,7 @@ func writePreset(path string, p *piano.Params) error {
 		HammerDampingScale         float32              `json:"hammer_damping_scale"`
 		HammerInitialVelocityScale float32              `json:"hammer_initial_velocity_scale"`
 		HammerContactTimeScale     float32              `json:"hammer_contact_time_scale"`
+		HighFreqDamping            float32              `json:"high_freq_damping,omitempty"`
 		UnisonDetuneScale          float32              `json:"unison_detune_scale"`
 		UnisonCrossfeed            float32              `json:"unison_crossfeed"`
 		StringModel                string               `json:"string_model"`
@@ -752,6 +753,7 @@ func writePreset(path string, p *piano.Params) error {
 		HammerDampingScale:         p.HammerDampingScale,
 		HammerInitialVelocityScale: p.HammerInitialVelocityScale,
 		HammerContactTimeScale:     p.HammerContactTimeScale,
+		HighFreqDamping:            p.HighFreqDamping,
 		UnisonDetuneScale:          p.UnisonDetuneScale,
 		UnisonCrossfeed:            p.UnisonCrossfeed,
 		StringModel:                string(p.StringModel),

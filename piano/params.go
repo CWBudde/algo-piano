@@ -45,6 +45,12 @@ type Params struct {
 	HammerInitialVelocityScale float32
 	HammerContactTimeScale     float32
 
+	// Frequency-dependent string loss: one-pole lowpass coefficient in DWG loop,
+	// and order-dependent decay scaling in modal model. Higher values damp high
+	// frequencies more aggressively. Based on Bensa et al. (2003) freq-dependent
+	// damping terms b1/b2 in the stiff string PDE.
+	HighFreqDamping float32
+
 	UnisonDetuneScale float32
 	UnisonCrossfeed   float32
 	StringModel       StringModel
@@ -106,6 +112,7 @@ func NewDefaultParams() *Params {
 		HammerDampingScale:         1.0,
 		HammerInitialVelocityScale: 1.0,
 		HammerContactTimeScale:     1.0,
+		HighFreqDamping:            0.05,
 		UnisonDetuneScale:          1.0,
 		UnisonCrossfeed:            0.0008,
 		StringModel:                StringModelDWG,

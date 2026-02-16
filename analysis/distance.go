@@ -65,6 +65,11 @@ type Metrics struct {
 	// Per-position spectral detail (evenly spaced across signal).
 	SpectralPositions []SpectralPosition `json:"spectral_positions,omitempty"`
 
+	// Per-band spectral RMSE breakdown for diagnostics.
+	SpectralLowRMSEDB  float64 `json:"spectral_low_rmse_db"`  // 0-500 Hz
+	SpectralMidRMSEDB  float64 `json:"spectral_mid_rmse_db"`  // 500-2000 Hz
+	SpectralHighRMSEDB float64 `json:"spectral_high_rmse_db"` // 2000+ Hz
+
 	// Normalized component contributions (0-1 each, weighted sum = Score).
 	TimeNorm     float64 `json:"time_norm"`
 	EnvelopeNorm float64 `json:"envelope_norm"`

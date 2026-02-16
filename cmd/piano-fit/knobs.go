@@ -90,6 +90,7 @@ func initCandidate(
 		addKnob(knobDef{Name: "hammer_damping_scale", Min: 0.6, Max: 1.8}, float64(base.HammerDampingScale))
 		addKnob(knobDef{Name: "hammer_initial_velocity_scale", Min: 0.7, Max: 1.4}, float64(base.HammerInitialVelocityScale))
 		addKnob(knobDef{Name: "hammer_contact_time_scale", Min: 0.7, Max: 1.6}, float64(base.HammerContactTimeScale))
+		addKnob(knobDef{Name: "high_freq_damping", Min: 0.0, Max: 0.6}, float64(base.HighFreqDamping))
 		addKnob(knobDef{Name: "unison_detune_scale", Min: 0.0, Max: 2.0}, float64(base.UnisonDetuneScale))
 		addKnob(knobDef{Name: "unison_crossfeed", Min: 0.0, Max: 0.005}, float64(base.UnisonCrossfeed))
 		addKnob(knobDef{Name: fmt.Sprintf("per_note.%d.loss", note), Min: 0.985, Max: 0.99995}, float64(np.Loss))
@@ -194,6 +195,8 @@ func applyCandidate(
 			params.HammerInitialVelocityScale = float32(v)
 		case "hammer_contact_time_scale":
 			params.HammerContactTimeScale = float32(v)
+		case "high_freq_damping":
+			params.HighFreqDamping = float32(v)
 		case "unison_detune_scale":
 			params.UnisonDetuneScale = float32(v)
 		case "unison_crossfeed":

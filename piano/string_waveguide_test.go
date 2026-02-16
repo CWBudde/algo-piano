@@ -139,6 +139,42 @@ func TestStrikePositionChangesSpectralTilt(t *testing.T) {
 	}
 }
 
+func TestHighFreqDampingReducesHighPartialEnergy(t *testing.T) {
+	const sampleRate = 48000
+	const f0 = 220.0
+	const numSamples = 48000 // 1 second
+
+	// Low damping: high partials sustain.
+	lowDamp := NewStringWaveguide(sampleRate, f0)
+	lowDamp.SetLoopLoss(0.9997, 0.02)
+	lowDamp.ExciteAtPosition(0.7, 0.12) // near bridge for strong harmonics
+
+	// High damping: high partials decay faster.
+	highDamp := NewStringWaveguide(sampleRate, f0)
+	highDamp.SetLoopLoss(0.9997, 0.45)
+	highDamp.ExciteAtPosition(0.7, 0.12)
+
+	lowSamples := make([]float32, numSamples)
+	highSamples := make([]float32, numSamples)
+	for i := 0; i < numSamples; i++ {
+		lowSamples[i] = lowDamp.Process()
+		highSamples[i] = highDamp.Process()
+	}
+
+	// Measure spectral centroid in the tail (last 0.5s). Higher damping
+	// should produce a lower centroid (less high-frequency energy).
+	tailStart := numSamples / 2
+	lowCentroid := spectralCentroid(lowSamples[tailStart:], sampleRate, 2048)
+	highCentroid := spectralCentroid(highSamples[tailStart:], sampleRate, 2048)
+
+	if highCentroid >= lowCentroid {
+		t.Fatalf("expected higher damping to lower spectral centroid in tail: low=%.1fHz high=%.1fHz",
+			lowCentroid, highCentroid)
+	}
+	t.Logf("tail centroid: low_damp=%.1fHz high_damp=%.1fHz (ratio=%.2f)",
+		lowCentroid, highCentroid, highCentroid/lowCentroid)
+}
+
 func TestUnisonDetuneProducesBeating(t *testing.T) {
 	const sampleRate = 48000
 	const note = 69

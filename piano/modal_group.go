@@ -43,6 +43,7 @@ func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringG
 	lossGain := float32(0.9998)
 	inharmonicity := float32(0.0)
 	unisonDetuneScale := float32(1.0)
+	highFreqDamping := float32(0.05)
 	maxPartials := modalMaxPartials
 	gainExp := float32(1.1)
 	excitation := float32(1.0)
@@ -52,6 +53,9 @@ func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringG
 	if params != nil {
 		if params.UnisonDetuneScale >= 0 {
 			unisonDetuneScale = params.UnisonDetuneScale
+		}
+		if params.HighFreqDamping > 0 {
+			highFreqDamping = params.HighFreqDamping
 		}
 		if params.ModalPartials > 0 {
 			maxPartials = params.ModalPartials
@@ -100,8 +104,8 @@ func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringG
 				cosW:          float32(math.Cos(w)),
 				sinW:          float32(math.Sin(w)),
 				gain:          gain,
-				decayUndamped: modalDecay(lossGain, partialF, order, false, undampedK),
-				decayDamped:   modalDecay(lossGain, partialF, order, true, dampedK),
+				decayUndamped: modalDecay(lossGain, partialF, order, false, undampedK, highFreqDamping),
+				decayDamped:   modalDecay(lossGain, partialF, order, true, dampedK, highFreqDamping),
 			}
 			m.decay = m.decayDamped
 			modes = append(modes, m)
@@ -114,9 +118,9 @@ func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringG
 				cosW:          float32(math.Cos(w)),
 				sinW:          float32(math.Sin(w)),
 				gain:          1.0,
-				decayUndamped: modalDecay(lossGain, fallbackF, 1, false, undampedK),
-				decayDamped:   modalDecay(lossGain, fallbackF, 1, true, dampedK),
-				decay:         modalDecay(lossGain, fallbackF, 1, true, dampedK),
+				decayUndamped: modalDecay(lossGain, fallbackF, 1, false, undampedK, highFreqDamping),
+				decayDamped:   modalDecay(lossGain, fallbackF, 1, true, dampedK, highFreqDamping),
+				decay:         modalDecay(lossGain, fallbackF, 1, true, dampedK, highFreqDamping),
 			})
 		}
 		strings = append(strings, modalString{modes: modes})
@@ -146,10 +150,17 @@ func modalPartialFrequency(baseF float32, order float32, inharmonicity float32) 
 	return baseF * order * stretch
 }
 
-func modalDecay(lossGain float32, freq float32, order int, damped bool, scale float32) float32 {
+func modalDecay(lossGain float32, freq float32, order int, damped bool, scale float32, highFreqDamping float32) float32 {
 	base := clampFloat32(lossGain, 0.94, 0.99995)
-	base -= 0.00004 * float32(order-1)
-	base -= 0.00000035 * freq
+	// Frequency-dependent loss: higher partials decay faster.
+	// The highFreqDamping parameter scales the order and frequency terms.
+	// At default 0.05 this matches the original hardcoded behavior.
+	// Higher values (e.g. 0.2-0.5) produce more realistic piano-like
+	// high-frequency rolloff during sustain, matching Bensa et al.'s
+	// observation of stronger damping at high wave numbers (b2 term).
+	hfScale := highFreqDamping / 0.05 // normalized so default=1.0
+	base -= 0.00004 * hfScale * float32(order-1)
+	base -= 0.00000035 * hfScale * freq
 	minVal := float32(0.90)
 	maxVal := float32(0.999995)
 	if damped {
