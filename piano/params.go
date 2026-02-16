@@ -21,6 +21,10 @@ type Params struct {
 
 	OutputGain float32
 
+	// Note range for string-bank allocation and processing (inclusive, MIDI 0..127).
+	MinNote int
+	MaxNote int
+
 	// Legacy single-IR fields (backwards compat: used when Body/Room paths are empty).
 	IRWavPath string
 	IRWetMix  float32
@@ -96,6 +100,8 @@ func NewDefaultParams() *Params {
 	return &Params{
 		PerNote:                    make(map[int]*NoteParams),
 		OutputGain:                 1.0,
+		MinNote:                    21,
+		MaxNote:                    108,
 		IRWavPath:                  "",
 		IRWetMix:                   1.0,
 		IRDryMix:                   0.0,

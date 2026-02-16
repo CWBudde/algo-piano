@@ -22,6 +22,8 @@ const (
 	webModalExcitation   = float32(2.7738688)
 	webModalUndampedLoss = float32(0.4)
 	webModalDampedLoss   = float32(0.9669802)
+	webMinNote           = 60
+	webMaxNote           = 83
 )
 
 func main() {
@@ -56,6 +58,8 @@ func wasmInit(this js.Value, args []js.Value) interface{} {
 	params.ModalExcitation = webModalExcitation
 	params.ModalUndampedLoss = webModalUndampedLoss
 	params.ModalDampedLoss = webModalDampedLoss
+	params.MinNote = webMinNote
+	params.MaxNote = webMaxNote
 	globalPiano = piano.NewPiano(sampleRate, 16, params)
 
 	// Pre-allocate output buffer for 128 stereo frames

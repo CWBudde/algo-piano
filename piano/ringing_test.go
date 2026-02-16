@@ -26,6 +26,41 @@ func TestStringBankUnisonStringCountByRange(t *testing.T) {
 	}
 }
 
+func TestStringBankDefaultRangeIs88Key(t *testing.T) {
+	sb := NewStringBank(48000, NewDefaultParams())
+
+	if sb.Group(20) != nil || sb.Group(109) != nil {
+		t.Fatalf("expected notes outside default 88-key range to be unallocated")
+	}
+	if sb.Group(21) == nil || sb.Group(108) == nil {
+		t.Fatalf("expected edge notes of default range to be allocated")
+	}
+}
+
+func TestStringBankCustomRangeLimitsGroupsAndCoupling(t *testing.T) {
+	params := NewDefaultParams()
+	params.MinNote = 60
+	params.MaxNote = 71
+	params.CouplingEnabled = true
+	params.CouplingMode = CouplingModeStatic
+	params.CouplingOctaveGain = 0.001
+	params.CouplingFifthGain = 0.001
+
+	sb := NewStringBank(48000, params)
+	if sb.Group(59) != nil || sb.Group(72) != nil {
+		t.Fatalf("expected notes outside custom range to be unallocated")
+	}
+	if sb.Group(60) == nil || sb.Group(71) == nil {
+		t.Fatalf("expected notes inside custom range to be allocated")
+	}
+
+	for _, e := range sb.coupling[60] {
+		if e.to < 60 || e.to > 71 {
+			t.Fatalf("expected coupling target in range [60,71], got %d", e.to)
+		}
+	}
+}
+
 func TestStringBankDetuneScaleZeroCollapsesDetuning(t *testing.T) {
 	params := NewDefaultParams()
 	params.UnisonDetuneScale = 0.0

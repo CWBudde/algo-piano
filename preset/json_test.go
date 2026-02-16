@@ -15,6 +15,8 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
 	presetPath := filepath.Join(dir, "preset.json")
 	content := `{
   "output_gain": 0.9,
+  "min_note": 23,
+  "max_note": 104,
   "ir_wav_path": "ir.wav",
   "ir_wet_mix": 0.7,
   "ir_dry_mix": 0.2,
@@ -65,6 +67,9 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
 	}
 	if p.OutputGain != 0.9 {
 		t.Fatalf("output_gain mismatch: %f", p.OutputGain)
+	}
+	if p.MinNote != 23 || p.MaxNote != 104 {
+		t.Fatalf("note range mismatch: min=%d max=%d", p.MinNote, p.MaxNote)
 	}
 	if p.IRWavPath != irPath {
 		t.Fatalf("ir path mismatch: got=%q want=%q", p.IRWavPath, irPath)
@@ -180,5 +185,17 @@ func TestLoadJSONRejectsInvalidModalFields(t *testing.T) {
 	}
 	if _, err := LoadJSON(presetPath); err == nil {
 		t.Fatalf("expected error for invalid modal_partials")
+	}
+}
+
+func TestLoadJSONRejectsInvalidNoteRange(t *testing.T) {
+	dir := t.TempDir()
+	presetPath := filepath.Join(dir, "preset.json")
+	content := `{"min_note":90,"max_note":80}`
+	if err := os.WriteFile(presetPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write preset: %v", err)
+	}
+	if _, err := LoadJSON(presetPath); err == nil {
+		t.Fatalf("expected error for invalid min/max note range")
 	}
 }
