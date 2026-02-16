@@ -70,6 +70,11 @@ type Params struct {
 
 	SoftPedalStrikeOffset float32
 	SoftPedalHardness     float32
+
+	// Hammer attack noise: broadband felt-impact noise burst at note onset.
+	AttackNoiseLevel      float32 // Amplitude relative to hammer force (0 = off)
+	AttackNoiseDurationMs float32 // Duration of noise burst in ms (typically 1-5)
+	AttackNoiseColor      float32 // Spectral tilt in dB/octave (0 = white, negative = pink/brown)
 }
 
 // NoteParams holds parameters for a specific note.
@@ -121,5 +126,8 @@ func NewDefaultParams() *Params {
 		CouplingMaxNeighbors:       10,
 		SoftPedalStrikeOffset:      0.08,
 		SoftPedalHardness:          0.78,
+		AttackNoiseLevel:           0.0,
+		AttackNoiseDurationMs:      2.5,
+		AttackNoiseColor:           -3.0,
 	}
 }

@@ -405,20 +405,23 @@ This phase is split into execution subphases to make progress and ownership expl
 
 ### Tasks
 
-#### 11.1 — Fix output level calibration
+#### 11.1 — Fix output level calibration ✅
 
-- [ ] Investigate why candidate is 40 dB quieter than reference
-- [ ] Check signal chain gain stages: hammer exciter amplitude → string waveguide → body convolver → room convolver → output gain
-- [ ] Widen output_gain knob range if needed, or find the scaling bug
-- [ ] Verify spectral-compare shows <5 dB level gap after fix
+- [x] Investigate why candidate is 40 dB quieter than reference
+  - Root cause: hardcoded `contactForce * 0.002` in `piano/control.go:117` (-54 dB attenuation)
+- [x] Check signal chain gain stages: hammer exciter amplitude → string waveguide → body convolver → room convolver → output gain
+- [x] Widen output_gain knob range if needed, or find the scaling bug
+  - Changed force scaling `0.002 → 0.2` (+40 dB), widened output_gain range `[0.4,1.8] → [0.01,5.0]`
+- [x] Verify spectral-compare shows <5 dB level gap after fix
+  - Peak level gap: -41 dB → -1 dB with stage3 preset
 
 #### 11.2 — Add hammer attack noise component
 
-- [ ] Add a short broadband noise burst at note onset in the hammer exciter
-- [ ] Parameters: attack_noise_level (amplitude), attack_noise_duration_ms (~1-5ms), attack_noise_color (spectral tilt)
-- [ ] The noise models felt-on-string impact and gives the initial "click"
-- [ ] Make parameters optimizable as piano-fit knobs
-- [ ] Verify attack window (0-20ms) spectral energy improves
+- [x] Add a short broadband noise burst at note onset in the hammer exciter
+- [x] Parameters: attack_noise_level (amplitude), attack_noise_duration_ms (~1-5ms), attack_noise_color (spectral tilt)
+- [x] The noise models felt-on-string impact and gives the initial "click"
+- [x] Make parameters optimizable as piano-fit knobs
+- [x] Verify attack window (0-20ms) spectral energy improves
 
 #### 11.3 — Improve high-frequency sustain
 
@@ -462,7 +465,7 @@ go run --tags asm ./cmd/spectral-compare \
     --sample-rate 48000
 ```
 
-Output: peak levels, lag alignment, then a table per time window (attack 0-20ms, early 20-100ms, sustain 100-500ms, decay 0.5-2s, late 2-4s) with per-band spectral RMSE (sub-bass through air), reference and candidate power levels, and diff. Bands with RMSE > 15 dB are flagged with `<<<`.
+Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a table per time window (attack 0-20ms, early 20-100ms, sustain 100-500ms, decay 0.5-2s, late 2-4s) with per-band spectral RMSE (sub-bass through air), reference and candidate power levels, and diff. Bands with RMSE > 15 dB are flagged with `<<<`. Includes overall spectral RMSE and optimizer-aligned metrics (score, similarity, 4 sub-components). Uses adaptive FFT size per window (512 for attack, 2048 for early, 4096 for longer windows).
 
 ### Current state (as of 2026-02-15)
 
@@ -470,7 +473,9 @@ Output: peak levels, lag alignment, then a table per time window (attack 0-20ms,
 - Body IR uses Kirchhoff plate eigenmodes with 2-way frequency-dependent decay
 - Optimized body IR defaults from Stage 2 fitting (PlateRatio=2.36, StiffnessRatio=8.33, ModeWarp=1.20, CrossoverHz=1145)
 - Stage 2 passthrough fix: 27x speedup (room convolver skipped when room-ir group not active)
-- Best scores: Stage 1=0.391, Stage 2=0.382, Stage 3=0.389
+- 11.1 fix: hammer force scaling 0.002→0.2, output_gain range [0.01,5.0], peak level gap -41→-1 dB
+- Distance metric: multi-window spectral RMSE (5 positions across signal), per-position detail, dominant-factor display in piano-fit output (`spec@3.6s:60%`)
+- `piano-distance` shows full component breakdown table with normalized contributions
 
 **Done when:** spectral RMSE < 10 dB, overall score < 0.25, attack transient matches reference character.
 
@@ -516,6 +521,7 @@ Output: peak levels, lag alignment, then a table per time window (attack 0-20ms,
 Tooling:
 
 - [x] Added `cmd/piano-modal-fit` to calibrate modal knobs against DWG renders and export a calibrated modal preset + report.
+- [x] Switched `cmd/piano-modal-fit` objective search from ad-hoc random mutations to Mayfly (`--mayfly-variant`, `--mayfly-pop`) with local post-refinement.
 
 ### 12.4 — Validation + performance acceptance
 

@@ -62,6 +62,9 @@ type Metrics struct {
 	CandDecayDBPerS float64 `json:"cand_decay_db_per_s"`
 	DecayDiffDBPerS float64 `json:"decay_diff_db_per_s"`
 
+	// Per-position spectral detail (evenly spaced across signal).
+	SpectralPositions []SpectralPosition `json:"spectral_positions,omitempty"`
+
 	// Normalized component contributions (0-1 each, weighted sum = Score).
 	TimeNorm     float64 `json:"time_norm"`
 	EnvelopeNorm float64 `json:"envelope_norm"`
@@ -71,6 +74,12 @@ type Metrics struct {
 
 	Score      float64 `json:"score"`
 	Similarity float64 `json:"similarity"`
+}
+
+// SpectralPosition records spectral RMSE at a specific time offset.
+type SpectralPosition struct {
+	OffsetSec float64 `json:"offset_sec"`
+	RMSEDB    float64 `json:"rmse_db"`
 }
 
 // Compare returns objective distance metrics and a combined score in [0,1].
@@ -149,7 +158,7 @@ func Compare(reference []float64, candidate []float64, sampleRate int) Metrics {
 		m.EnvelopeRMSEDB = rms1(envDiff)
 	}
 
-	m.SpectralRMSEDB = spectralRMSEDBMulti(refA, candA)
+	m.SpectralRMSEDB, m.SpectralPositions = spectralRMSEDBMulti(refA, candA, sampleRate)
 
 	hopSec := 128.0 / float64(sampleRate)
 	m.RefDecayDBPerS = decaySlopeDBPerS(refEnv, hopSec)
@@ -445,13 +454,14 @@ func rmsEnvelope(x []float64, frame int, hop int) []float64 {
 
 // spectralRMSEDBMulti computes spectral RMSE across multiple time positions,
 // giving a more representative comparison than a single early window.
-func spectralRMSEDBMulti(a []float64, b []float64) float64 {
+// It also returns per-position detail for diagnostics.
+func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) (float64, []SpectralPosition) {
 	n := len(a)
 	if len(b) < n {
 		n = len(b)
 	}
 	if n < 512 {
-		return 0
+		return 0, nil
 	}
 
 	winSize := 4096
@@ -461,7 +471,7 @@ func spectralRMSEDBMulti(a []float64, b []float64) float64 {
 	// Round down to even for FFT.
 	winSize &^= 1
 	if winSize < 512 {
-		return spectralRMSEDB(a, b)
+		return spectralRMSEDB(a, b), nil
 	}
 
 	// Sample up to 5 positions spread across the signal.
@@ -492,6 +502,7 @@ func spectralRMSEDBMulti(a []float64, b []float64) float64 {
 
 	var totalSum float64
 	totalCnt := 0
+	detail := make([]SpectralPosition, 0, len(positions))
 
 	for _, pos := range positions {
 		aw := make([]float64, winSize)
@@ -502,6 +513,7 @@ func spectralRMSEDBMulti(a []float64, b []float64) float64 {
 		}
 
 		var sum float64
+		cnt := bins - 1
 		if err == nil {
 			specA := make([]complex128, bins+1)
 			specB := make([]complex128, bins+1)
@@ -514,7 +526,11 @@ func spectralRMSEDBMulti(a []float64, b []float64) float64 {
 						sum += d * d
 					}
 					totalSum += sum
-					totalCnt += bins - 1
+					totalCnt += cnt
+					detail = append(detail, SpectralPosition{
+						OffsetSec: float64(pos) / float64(sampleRate),
+						RMSEDB:    math.Sqrt(sum / float64(cnt)),
+					})
 					continue
 				}
 			}
@@ -527,13 +543,17 @@ func spectralRMSEDBMulti(a []float64, b []float64) float64 {
 			sum += d * d
 		}
 		totalSum += sum
-		totalCnt += bins - 1
+		totalCnt += cnt
+		detail = append(detail, SpectralPosition{
+			OffsetSec: float64(pos) / float64(sampleRate),
+			RMSEDB:    math.Sqrt(sum / float64(cnt)),
+		})
 	}
 
 	if totalCnt == 0 {
-		return 0
+		return 0, nil
 	}
-	return math.Sqrt(totalSum / float64(totalCnt))
+	return math.Sqrt(totalSum / float64(totalCnt)), detail
 }
 
 func spectralRMSEDB(a []float64, b []float64) float64 {
