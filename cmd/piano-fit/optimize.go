@@ -785,15 +785,30 @@ func formatDominant(m analysis.Metrics) string {
 
 	label := best.name
 
-	// When spectral dominates, show which time position is worst.
-	if best.name == "spec" && len(m.SpectralPositions) > 1 {
-		worst := m.SpectralPositions[0]
-		for _, sp := range m.SpectralPositions[1:] {
-			if sp.RMSEDB > worst.RMSEDB {
-				worst = sp
-			}
+	// When spectral dominates, show which time position and band are worst.
+	if best.name == "spec" {
+		// Find worst band.
+		worstBand := "low"
+		worstBandVal := m.SpectralLowRMSEDB
+		if m.SpectralMidRMSEDB > worstBandVal {
+			worstBand = "mid"
+			worstBandVal = m.SpectralMidRMSEDB
 		}
-		label = fmt.Sprintf("spec@%.1fs", worst.OffsetSec)
+		if m.SpectralHighRMSEDB > worstBandVal {
+			worstBand = "hi"
+		}
+
+		if len(m.SpectralPositions) > 1 {
+			worst := m.SpectralPositions[0]
+			for _, sp := range m.SpectralPositions[1:] {
+				if sp.RMSEDB > worst.RMSEDB {
+					worst = sp
+				}
+			}
+			label = fmt.Sprintf("spec/%s@%.1fs", worstBand, worst.OffsetSec)
+		} else {
+			label = fmt.Sprintf("spec/%s", worstBand)
+		}
 	}
 
 	return fmt.Sprintf("%s:%.0f%%", label, pct)

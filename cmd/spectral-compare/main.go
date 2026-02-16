@@ -272,6 +272,8 @@ func main() {
 	fmt.Printf("  TimeRMSE:        %.4f  (norm'd to 0.25 → %.1f%%)\n", m.TimeRMSE, clamp01(m.TimeRMSE/0.25)*100)
 	fmt.Printf("  EnvelopeRMSEDB:  %.1f dB (norm'd to 30 → %.1f%%)\n", m.EnvelopeRMSEDB, clamp01(m.EnvelopeRMSEDB/30)*100)
 	fmt.Printf("  SpectralRMSEDB:  %.1f dB (norm'd to 30 → %.1f%%)\n", m.SpectralRMSEDB, clamp01(m.SpectralRMSEDB/30)*100)
+	fmt.Printf("    low(0-500Hz):  %.1f dB  mid(500-2k): %.1f dB  high(2k+): %.1f dB\n",
+		m.SpectralLowRMSEDB, m.SpectralMidRMSEDB, m.SpectralHighRMSEDB)
 	fmt.Printf("  DecayDiffDBPerS: %.1f dB/s (norm'd to 40 → %.1f%%)\n", m.DecayDiffDBPerS, clamp01(m.DecayDiffDBPerS/40)*100)
 	fmt.Printf("  Score:           %.3f  Similarity: %.3f\n", m.Score, m.Similarity)
 }
