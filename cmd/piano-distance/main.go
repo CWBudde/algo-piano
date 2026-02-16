@@ -108,6 +108,8 @@ func main() {
 	fmt.Printf("Similarity:       %.2f%%\n", metrics.Similarity*100.0)
 	fmt.Printf("Dominant factor:  %s\n", metrics.Dominant)
 	fmt.Printf("\nDecay slopes: ref=%.1f dB/s  cand=%.1f dB/s\n", metrics.RefDecayDBPerS, metrics.CandDecayDBPerS)
+	fmt.Printf("\nSpectral bands:   low(0-500Hz)=%.1f dB  mid(500-2k)=%.1f dB  high(2k+)=%.1f dB\n",
+		metrics.SpectralLowRMSEDB, metrics.SpectralMidRMSEDB, metrics.SpectralHighRMSEDB)
 }
 
 func renderCandidate(
