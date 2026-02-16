@@ -425,10 +425,17 @@ This phase is split into execution subphases to make progress and ownership expl
 
 #### 11.3 — Improve high-frequency sustain
 
-- [ ] Investigate frequency-dependent string loss (current loss is per-sample, uniform across harmonics)
-- [ ] Option A: Add a loss_frequency_scale parameter — higher harmonics get less additional damping
-- [ ] Option B: Add a separate high-frequency loss term (2-pole lowpass on the waveguide delay line, already common in Karplus-Strong models)
-- [ ] Verify hi-mid and high band energy in sustain/decay phases improves
+- [x] Investigate frequency-dependent string loss (current loss is per-sample, uniform across harmonics)
+  - DWG model had one-pole lowpass in loop but coefficient hardcoded to 0.05
+  - Modal model had negligible order-dependent decay terms
+- [x] Option A: Add a loss_frequency_scale parameter — higher harmonics get less additional damping
+  - Added `high_freq_damping` parameter [0.0, 0.6] exposed in Params, preset JSON, and piano-fit knobs
+  - DWG: controls the existing one-pole lowpass coefficient in the waveguide loop
+  - Modal: scales the order and frequency dependent decay terms in modalDecay
+- [x] Option B: Add a separate high-frequency loss term (2-pole lowpass on the waveguide delay line, already common in Karplus-Strong models)
+  - The existing one-pole was sufficient once properly parameterized; 2-pole not needed at this stage
+- [x] Verify hi-mid and high band energy in sustain/decay phases improves
+  - Test confirms: tail spectral centroid drops from 1711 Hz (low damp) to 816 Hz (high damp)
 
 #### 11.4 — Spectral distance improvements
 

@@ -139,6 +139,7 @@ func writePresetJSON(path string, p *piano.Params) error {
 		HammerDampingScale         float32              `json:"hammer_damping_scale,omitempty"`
 		HammerInitialVelocityScale float32              `json:"hammer_initial_velocity_scale,omitempty"`
 		HammerContactTimeScale     float32              `json:"hammer_contact_time_scale,omitempty"`
+		HighFreqDamping            float32              `json:"high_freq_damping,omitempty"`
 		UnisonDetuneScale          float32              `json:"unison_detune_scale,omitempty"`
 		UnisonCrossfeed            float32              `json:"unison_crossfeed,omitempty"`
 		SoftPedalStrikeOffset      float32              `json:"soft_pedal_strike_offset,omitempty"`
@@ -169,6 +170,7 @@ func writePresetJSON(path string, p *piano.Params) error {
 		HammerDampingScale:         p.HammerDampingScale,
 		HammerInitialVelocityScale: p.HammerInitialVelocityScale,
 		HammerContactTimeScale:     p.HammerContactTimeScale,
+		HighFreqDamping:            p.HighFreqDamping,
 		UnisonDetuneScale:          p.UnisonDetuneScale,
 		UnisonCrossfeed:            p.UnisonCrossfeed,
 		SoftPedalStrikeOffset:      p.SoftPedalStrikeOffset,

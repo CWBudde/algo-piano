@@ -55,6 +55,9 @@ func newRingingStringGroup(sampleRate int, note int, params *Params) *RingingStr
 		if params.UnisonDetuneScale >= 0 {
 			unisonDetuneScale = params.UnisonDetuneScale
 		}
+		if params.HighFreqDamping > 0 {
+			highFreqDamping = params.HighFreqDamping
+		}
 		if np, ok := params.PerNote[note]; ok && np != nil {
 			if np.Loss > 0.0 && np.Loss <= 1.0 {
 				lossGain = np.Loss
