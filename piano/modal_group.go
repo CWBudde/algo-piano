@@ -224,7 +224,7 @@ func (g *ModalStringGroup) setSustain(down bool) {
 }
 
 func (g *ModalStringGroup) updateDamperState() {
-	engageDamper := !(g.keyDown || g.sustainDown)
+	engageDamper := !g.keyDown && !g.sustainDown
 	for si := range g.strings {
 		modes := g.strings[si].modes
 		for mi := range modes {

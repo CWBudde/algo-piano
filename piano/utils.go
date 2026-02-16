@@ -3,7 +3,7 @@ package piano
 import (
 	"math"
 
-	"github.com/cwbudde/algo-approx"
+	approx "github.com/cwbudde/algo-approx"
 )
 
 // midiNoteToFreq converts MIDI note number to frequency in Hz.
@@ -84,12 +84,4 @@ func xorshift32(state *uint32) uint32 {
 	x ^= x << 5
 	*state = x
 	return x
-}
-
-func toFloat64(in []float32) []float64 {
-	out := make([]float64, len(in))
-	for i, v := range in {
-		out[i] = float64(v)
-	}
-	return out
 }
