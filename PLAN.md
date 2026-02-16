@@ -439,9 +439,14 @@ This phase is split into execution subphases to make progress and ownership expl
 
 #### 11.4 — Spectral distance improvements
 
-- [ ] Consider making spectralRMSEDB use multiple time windows (STFT-based) instead of just the first 4096 samples
-- [ ] Weight early/sustain/decay phases differently in the score
-- [ ] Add per-band spectral distance to the analysis.Metrics for diagnostics
+- [x] Consider making spectralRMSEDB use multiple time windows (STFT-based) instead of just the first 4096 samples
+  - Already used 5 positions; increased to 8 for finer coverage
+- [x] Weight early/sustain/decay phases differently in the score
+  - Phase detection via envelope peak and -20dB threshold
+  - Weights: attack=40%, sustain=35%, decay=25%
+- [x] Add per-band spectral distance to the analysis.Metrics for diagnostics
+  - Added SpectralLowRMSEDB (0-500Hz), SpectralMidRMSEDB (500-2kHz), SpectralHighRMSEDB (2kHz+)
+  - Displayed in piano-distance, spectral-compare, and piano-fit formatDominant
 
 #### 11.5 — Body IR Kirchhoff model refinements (deferred)
 
@@ -543,6 +548,34 @@ Tooling:
 - [ ] Define shipping rule:
   - [ ] “low CPU” profile defaults to modal core
   - [ ] “high accuracy” profile defaults to DWG core
+
+### 12.5 — Upstream SIMD integration follow-up (`algo-dsp` + `algo-vecmath`)
+
+Goal: adopt upstream modal/quadrature oscillator SIMD work into `algo-piano` once released, with clear validation gates.
+
+- [ ] `PIANO-401` — Track upstream readiness and version pins.
+  - [ ] `algo-vecmath` tickets complete: `VEC-301..VEC-308`
+  - [ ] `algo-dsp` tickets complete: `DSP-201..DSP-207`
+  - [ ] update `go.mod` to released versions containing those tickets
+- [ ] `PIANO-402` — Add adapter layer in modal path.
+  - [ ] map `ModalStringGroup` mode state to upstream SoA arrays
+  - [ ] preserve existing modal behavior/knobs (`modal_partials`, damping, inharmonicity, strike shape)
+  - [ ] keep scalar fallback path behind build/runtime switch for debugging and parity tests
+- [ ] `PIANO-403` — Replace per-mode scalar update loop with upstream block kernels.
+  - [ ] integrate block API at `StringBank.Process` cadence (block size 128 default)
+  - [ ] ensure no additional per-block allocations
+  - [ ] keep coupling/resonance semantics unchanged
+- [ ] `PIANO-404` — Correctness/parity test gate.
+  - [ ] add scalar-vs-upstream parity tests on fixed seeds/notes/velocities
+  - [ ] verify sustain pedal transitions and damped/undamped mode decay transitions
+  - [ ] long-render stability: no NaN/Inf and no denormal-related regressions
+- [ ] `PIANO-405` — Performance acceptance gate.
+  - [ ] benchmark modal CPU vs current baseline (same sample rate/block/polyphony)
+  - [ ] benchmark DWG vs modal after integration
+  - [ ] update benchmark artifacts/documentation with machine + Go version + date
+- [ ] `PIANO-406` — Shipping profile decision refresh.
+  - [ ] if modal SIMD path meets quality + CPU targets, re-evaluate default profile mapping
+  - [ ] keep DWG profile as high-accuracy reference for regression checks
 
 **Done when:** modal core is selectable, calibrated against DWG via an automated matching step, and documented profiles exist for low-CPU vs high-accuracy operation.
 

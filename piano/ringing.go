@@ -135,7 +135,7 @@ func (g *RingingStringGroup) setSustain(down bool) {
 }
 
 func (g *RingingStringGroup) updateDamperState() {
-	engageDamper := !(g.keyDown || g.sustainDown)
+	engageDamper := !g.keyDown && !g.sustainDown
 	for _, s := range g.strings {
 		s.SetDamper(engageDamper)
 	}
