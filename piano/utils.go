@@ -52,6 +52,40 @@ func minf(a float32, b float32) float32 {
 	return b
 }
 
+func clampf(x, lo, hi float32) float32 {
+	if x < lo {
+		return lo
+	}
+	if x > hi {
+		return hi
+	}
+	return x
+}
+
+func expf(x float32) float32 {
+	return float32(math.Exp(float64(x)))
+}
+
+// expDecayPerSample returns the per-sample multiplicative factor to achieve
+// the given attenuation in dB over nSamples.
+func expDecayPerSample(attenuationDB float32, nSamples int) float32 {
+	if nSamples <= 1 {
+		return 0
+	}
+	// 10^(-dB/20) = target ratio, then nth root.
+	return expf(-attenuationDB * 0.11512925 / float32(nSamples)) // ln(10)/20 ≈ 0.11512925
+}
+
+// xorshift32 is a fast 32-bit PRNG for audio-rate noise generation.
+func xorshift32(state *uint32) uint32 {
+	x := *state
+	x ^= x << 13
+	x ^= x >> 17
+	x ^= x << 5
+	*state = x
+	return x
+}
+
 func toFloat64(in []float32) []float64 {
 	out := make([]float64, len(in))
 	for i, v := range in {

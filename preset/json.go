@@ -56,6 +56,9 @@ type File struct {
 	CouplingMaxNeighbors       *int                   `json:"coupling_max_neighbors"`
 	SoftPedalStrikeOffset      *float32               `json:"soft_pedal_strike_offset"`
 	SoftPedalHardness          *float32               `json:"soft_pedal_hardness"`
+	AttackNoiseLevel           *float32               `json:"attack_noise_level,omitempty"`
+	AttackNoiseDurationMs      *float32               `json:"attack_noise_duration_ms,omitempty"`
+	AttackNoiseColor           *float32               `json:"attack_noise_color,omitempty"`
 	PerNote                    map[string]NoteSetting `json:"per_note"`
 }
 
@@ -328,6 +331,21 @@ func ApplyFile(dst *piano.Params, f *File) error {
 			return fmt.Errorf("soft_pedal_hardness must be > 0")
 		}
 		dst.SoftPedalHardness = *f.SoftPedalHardness
+	}
+	if f.AttackNoiseLevel != nil {
+		if *f.AttackNoiseLevel < 0 {
+			return fmt.Errorf("attack_noise_level must be >= 0")
+		}
+		dst.AttackNoiseLevel = *f.AttackNoiseLevel
+	}
+	if f.AttackNoiseDurationMs != nil {
+		if *f.AttackNoiseDurationMs <= 0 || *f.AttackNoiseDurationMs > 20 {
+			return fmt.Errorf("attack_noise_duration_ms must be in (0,20]")
+		}
+		dst.AttackNoiseDurationMs = *f.AttackNoiseDurationMs
+	}
+	if f.AttackNoiseColor != nil {
+		dst.AttackNoiseColor = *f.AttackNoiseColor
 	}
 
 	if len(f.PerNote) == 0 {

@@ -143,6 +143,9 @@ func writePresetJSON(path string, p *piano.Params) error {
 		UnisonCrossfeed            float32              `json:"unison_crossfeed,omitempty"`
 		SoftPedalStrikeOffset      float32              `json:"soft_pedal_strike_offset,omitempty"`
 		SoftPedalHardness          float32              `json:"soft_pedal_hardness,omitempty"`
+		AttackNoiseLevel           float32              `json:"attack_noise_level,omitempty"`
+		AttackNoiseDurationMs      float32              `json:"attack_noise_duration_ms,omitempty"`
+		AttackNoiseColor           float32              `json:"attack_noise_color,omitempty"`
 		PerNote                    map[string]noteEntry `json:"per_note,omitempty"`
 	}
 
@@ -170,6 +173,9 @@ func writePresetJSON(path string, p *piano.Params) error {
 		UnisonCrossfeed:            p.UnisonCrossfeed,
 		SoftPedalStrikeOffset:      p.SoftPedalStrikeOffset,
 		SoftPedalHardness:          p.SoftPedalHardness,
+		AttackNoiseLevel:           p.AttackNoiseLevel,
+		AttackNoiseDurationMs:      p.AttackNoiseDurationMs,
+		AttackNoiseColor:           p.AttackNoiseColor,
 		PerNote:                    map[string]noteEntry{},
 	}
 	keys := make([]int, 0, len(p.PerNote))

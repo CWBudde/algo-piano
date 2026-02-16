@@ -95,6 +95,9 @@ func initCandidate(
 		addKnob(knobDef{Name: fmt.Sprintf("per_note.%d.loss", note), Min: 0.985, Max: 0.99995}, float64(np.Loss))
 		addKnob(knobDef{Name: fmt.Sprintf("per_note.%d.inharmonicity", note), Min: 0.0, Max: 0.6}, float64(np.Inharmonicity))
 		addKnob(knobDef{Name: fmt.Sprintf("per_note.%d.strike_position", note), Min: 0.08, Max: 0.45}, float64(np.StrikePosition))
+		addKnob(knobDef{Name: "attack_noise_level", Min: 0.0, Max: 0.5}, float64(base.AttackNoiseLevel))
+		addKnob(knobDef{Name: "attack_noise_duration_ms", Min: 0.5, Max: 8.0}, float64(base.AttackNoiseDurationMs))
+		addKnob(knobDef{Name: "attack_noise_color", Min: -12.0, Max: 0.0}, float64(base.AttackNoiseColor))
 		addKnob(knobDef{Name: "render.velocity", Min: 40, Max: 127, IsInt: true}, float64(baseVelocity))
 		addKnob(knobDef{Name: "render.release_after", Min: 0.2, Max: 3.5}, baseReleaseAfter)
 	}
@@ -195,6 +198,12 @@ func applyCandidate(
 			params.UnisonDetuneScale = float32(v)
 		case "unison_crossfeed":
 			params.UnisonCrossfeed = float32(v)
+		case "attack_noise_level":
+			params.AttackNoiseLevel = float32(v)
+		case "attack_noise_duration_ms":
+			params.AttackNoiseDurationMs = float32(v)
+		case "attack_noise_color":
+			params.AttackNoiseColor = float32(v)
 		case fmt.Sprintf("per_note.%d.loss", note):
 			np.Loss = float32(v)
 		case fmt.Sprintf("per_note.%d.inharmonicity", note):

@@ -16,6 +16,7 @@ import (
 	"github.com/cwbudde/algo-piano/analysis"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
+	"github.com/cwbudde/mayfly"
 )
 
 type knobSet struct {
@@ -77,6 +78,8 @@ var matchWindows = []windowSpec{
 	{name: "decay", startS: 0.45, endS: 2.4, weight: 0.25},
 }
 
+const modalKnobDims = 5
+
 func main() {
 	basePreset := flag.String("preset", "assets/presets/default.json", "DWG reference preset JSON path")
 	outputPreset := flag.String("output-preset", "assets/presets/modal-calibrated.json", "Path to write calibrated modal preset JSON")
@@ -90,7 +93,9 @@ func main() {
 	minDuration := flag.Float64("min-duration", 2.0, "Minimum render duration in seconds")
 	maxDuration := flag.Float64("max-duration", 14.0, "Maximum render duration in seconds")
 	blockSize := flag.Int("render-block-size", 128, "Render block size")
-	iters := flag.Int("iters", 120, "Random search iterations before local refinement")
+	iters := flag.Int("iters", 120, "Evaluation budget for Mayfly objective before local refinement")
+	mayflyVariant := flag.String("mayfly-variant", "desma", "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
+	mayflyPop := flag.Int("mayfly-pop", 10, "Male/female population size per Mayfly run")
 	seed := flag.Int64("seed", 1, "Random seed")
 	flag.Parse()
 
@@ -105,6 +110,9 @@ func main() {
 	}
 	if *iters < 1 {
 		die("iters must be >= 1")
+	}
+	if *mayflyPop < 2 {
+		*mayflyPop = 2
 	}
 	if *decayHoldBlocks < 1 {
 		*decayHoldBlocks = 1
@@ -165,24 +173,52 @@ func main() {
 	evals := 1
 	fmt.Printf("Initial score=%.4f knobs=%+v\n", bestScore, best)
 
-	// Random search with annealed neighborhood.
-	for i := 0; i < *iters; i++ {
-		alpha := 1.0 - float64(i)/float64(maxInt(1, *iters))
-		cand := mutateKnobs(best, alpha, rng)
-		score, _, evalErr := evaluateKnobs(base, cand, notes, references, rs)
-		if evalErr != nil {
-			fmt.Fprintf(os.Stderr, "warn: eval failed at iter=%d: %v\n", i+1, evalErr)
-			continue
+	variant := strings.ToLower(strings.TrimSpace(*mayflyVariant))
+	mayflyBudget := *iters
+	if mayflyBudget < *mayflyPop*2 {
+		mayflyBudget = *mayflyPop * 2
+	}
+	mayflyIters := maxInt(1, mayflyBudget/(2*(*mayflyPop)))
+	progressEvery := maxInt(20, 2*(*mayflyPop))
+	objectiveCalls := 0
+	expensiveEvals := 0
+	cfg, err := newMayflyConfig(variant, *mayflyPop, modalKnobDims, mayflyIters)
+	if err != nil {
+		die("mayfly setup failed: %v", err)
+	}
+	cfg.Rand = rng
+	cfg.ObjectiveFunc = func(pos []float64) float64 {
+		objectiveCalls++
+		if expensiveEvals >= mayflyBudget {
+			return bestScore + 0.25
 		}
-		evals++
+		expensiveEvals++
+		cand := knobsFromNormalized(pos)
+		score, _, evalErr := evaluateKnobs(base, cand, notes, references, rs)
+		if evalErr != nil || !isFiniteFloat(score) {
+			if expensiveEvals%progressEvery == 0 {
+				fmt.Printf("Progress eval=%d/%d score=%.4f\n", expensiveEvals, mayflyBudget, bestScore)
+			}
+			return 10.0
+		}
 		if score < bestScore {
 			best = cand
 			bestScore = score
-			fmt.Printf("Improved iter=%d score=%.4f knobs=%+v\n", i+1, bestScore, best)
-		} else if (i+1)%20 == 0 {
-			fmt.Printf("Progress iter=%d/%d score=%.4f\n", i+1, *iters, bestScore)
+			fmt.Printf("Improved eval=%d/%d score=%.4f knobs=%+v\n", expensiveEvals, mayflyBudget, bestScore, best)
+		} else if expensiveEvals%progressEvery == 0 {
+			fmt.Printf("Progress eval=%d/%d score=%.4f\n", expensiveEvals, mayflyBudget, bestScore)
 		}
+		return score
 	}
+	res, err := runMayfly(cfg)
+	if err != nil {
+		die("mayfly optimization failed: %v", err)
+	}
+	if res != nil && res.FuncEvalCount > objectiveCalls {
+		objectiveCalls = res.FuncEvalCount
+	}
+	evals += expensiveEvals
+	fmt.Printf("Mayfly done variant=%s pop=%d iterations=%d evals=%d objective-calls=%d best=%.4f\n", variant, *mayflyPop, mayflyIters, expensiveEvals, objectiveCalls, bestScore)
 
 	// Lightweight coordinate refinement.
 	best, bestScore, refinedEvals := refineLocally(base, best, bestScore, notes, references, rs)
@@ -434,26 +470,6 @@ func refineLocally(base *piano.Params, start knobSet, startScore float64, notes 
 	return best, bestScore, evals
 }
 
-func mutateKnobs(best knobSet, alpha float64, rng *rand.Rand) knobSet {
-	if alpha < 0.05 {
-		alpha = 0.05
-	}
-	next := best
-	if rng.Float64() < 0.35 {
-		next.ModalPartials = best.ModalPartials + rng.Intn(7) - 3
-	} else {
-		next.ModalPartials = int(math.Round(float64(best.ModalPartials) + rng.NormFloat64()*(2.8*alpha)))
-	}
-	next.ModalGainExponent = best.ModalGainExponent + rng.NormFloat64()*(0.38*alpha)
-	next.ModalExcitation = best.ModalExcitation + rng.NormFloat64()*(0.42*alpha)
-	next.ModalUndampedLoss = best.ModalUndampedLoss + rng.NormFloat64()*(0.36*alpha)
-	next.ModalDampedLoss = best.ModalDampedLoss + rng.NormFloat64()*(0.42*alpha)
-	if rng.Float64() < 0.15 {
-		next = randomKnobs(rng)
-	}
-	return normalizeKnobs(next)
-}
-
 func initialKnobs(p *piano.Params) knobSet {
 	if p == nil {
 		return knobSet{
@@ -473,16 +489,6 @@ func initialKnobs(p *piano.Params) knobSet {
 	})
 }
 
-func randomKnobs(rng *rand.Rand) knobSet {
-	return normalizeKnobs(knobSet{
-		ModalPartials:     4 + rng.Intn(13),
-		ModalGainExponent: 0.65 + rng.Float64()*1.9,
-		ModalExcitation:   0.35 + rng.Float64()*2.8,
-		ModalUndampedLoss: 0.55 + rng.Float64()*1.45,
-		ModalDampedLoss:   0.55 + rng.Float64()*2.2,
-	})
-}
-
 func normalizeKnobs(k knobSet) knobSet {
 	if k.ModalPartials < 2 {
 		k.ModalPartials = 2
@@ -495,6 +501,45 @@ func normalizeKnobs(k knobSet) knobSet {
 	k.ModalUndampedLoss = clamp(k.ModalUndampedLoss, 0.4, 2.4)
 	k.ModalDampedLoss = clamp(k.ModalDampedLoss, 0.4, 3.2)
 	return k
+}
+
+func knobsToNormalized(k knobSet) []float64 {
+	k = normalizeKnobs(k)
+	return []float64{
+		normalizeUnit(float64(k.ModalPartials), 2.0, 20.0),
+		normalizeUnit(k.ModalGainExponent, 0.4, 3.2),
+		normalizeUnit(k.ModalExcitation, 0.2, 4.0),
+		normalizeUnit(k.ModalUndampedLoss, 0.4, 2.4),
+		normalizeUnit(k.ModalDampedLoss, 0.4, 3.2),
+	}
+}
+
+func knobsFromNormalized(pos []float64) knobSet {
+	get := func(idx int, lo float64, hi float64, round bool) float64 {
+		v := 0.0
+		if idx >= 0 && idx < len(pos) {
+			v = clamp(pos[idx], 0, 1)
+		}
+		out := lo + v*(hi-lo)
+		if round {
+			out = math.Round(out)
+		}
+		return out
+	}
+	return normalizeKnobs(knobSet{
+		ModalPartials:     int(get(0, 2.0, 20.0, true)),
+		ModalGainExponent: get(1, 0.4, 3.2, false),
+		ModalExcitation:   get(2, 0.2, 4.0, false),
+		ModalUndampedLoss: get(3, 0.4, 2.4, false),
+		ModalDampedLoss:   get(4, 0.4, 3.2, false),
+	})
+}
+
+func normalizeUnit(v float64, lo float64, hi float64) float64 {
+	if hi <= lo {
+		return 0
+	}
+	return clamp((v-lo)/(hi-lo), 0, 1)
 }
 
 func applyModalKnobs(p *piano.Params, k knobSet) {
@@ -681,6 +726,9 @@ func writePreset(path string, p *piano.Params) error {
 		CouplingMaxNeighbors       int                  `json:"coupling_max_neighbors"`
 		SoftPedalStrikeOffset      float32              `json:"soft_pedal_strike_offset"`
 		SoftPedalHardness          float32              `json:"soft_pedal_hardness"`
+		AttackNoiseLevel           float32              `json:"attack_noise_level,omitempty"`
+		AttackNoiseDurationMs      float32              `json:"attack_noise_duration_ms,omitempty"`
+		AttackNoiseColor           float32              `json:"attack_noise_color,omitempty"`
 		PerNote                    map[string]noteEntry `json:"per_note,omitempty"`
 	}
 
@@ -724,6 +772,9 @@ func writePreset(path string, p *piano.Params) error {
 		CouplingMaxNeighbors:       p.CouplingMaxNeighbors,
 		SoftPedalStrikeOffset:      p.SoftPedalStrikeOffset,
 		SoftPedalHardness:          p.SoftPedalHardness,
+		AttackNoiseLevel:           p.AttackNoiseLevel,
+		AttackNoiseDurationMs:      p.AttackNoiseDurationMs,
+		AttackNoiseColor:           p.AttackNoiseColor,
 		PerNote:                    map[string]noteEntry{},
 	}
 	for note, np := range p.PerNote {
@@ -750,6 +801,46 @@ func writeJSON(path string, v any) error {
 	}
 	b = append(b, '\n')
 	return os.WriteFile(path, b, 0o644)
+}
+
+func newMayflyConfig(variant string, pop int, dims int, iters int) (*mayfly.Config, error) {
+	var cfg *mayfly.Config
+	switch variant {
+	case "ma":
+		cfg = mayfly.NewDefaultConfig()
+	case "desma":
+		cfg = mayfly.NewDESMAConfig()
+	case "olce":
+		cfg = mayfly.NewOLCEConfig()
+	case "eobbma":
+		cfg = mayfly.NewEOBBMAConfig()
+	case "gsasma":
+		cfg = mayfly.NewGSASMAConfig()
+	case "mpma":
+		cfg = mayfly.NewMPMAConfig()
+	case "aoblmoa":
+		cfg = mayfly.NewAOBLMOAConfig()
+	default:
+		return nil, fmt.Errorf("unsupported variant %q", variant)
+	}
+	cfg.ProblemSize = dims
+	cfg.LowerBound = 0.0
+	cfg.UpperBound = 1.0
+	cfg.MaxIterations = iters
+	cfg.NPop = pop
+	cfg.NPopF = pop
+	cfg.NC = 2 * pop
+	cfg.NM = maxInt(1, int(math.Round(0.05*float64(pop))))
+	return cfg, nil
+}
+
+func runMayfly(cfg *mayfly.Config) (_ *mayfly.Result, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("mayfly panic: %v", r)
+		}
+	}()
+	return mayfly.Optimize(cfg)
 }
 
 func clamp(v float64, lo float64, hi float64) float64 {
