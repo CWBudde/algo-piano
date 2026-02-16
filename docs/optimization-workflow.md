@@ -24,6 +24,27 @@ The idea: alternate between piano-only and IR stages so each builds on the previ
 
 ## Workflow
 
+### Stage 0: Reset to Clean State
+
+Before starting (or restarting) the optimization pipeline, clear any stale checkpoints and output files. This is necessary whenever the model code or knob definitions have changed, because:
+
+- **Report files contain knob snapshots**: The `*.report.json` files store the optimizer's best knob values by name. If knobs were added, removed, or renamed, a resumed run would start from an incomplete or mismatched state.
+- **Preset files reflect old parameters**: Stage output presets may lack newly added fields (e.g. `attack_noise_level`, `high_freq_damping`) or contain values calibrated for an older model version. Feeding them forward would propagate stale settings.
+- **The optimizer uses `--resume=true` by default**: Without clearing reports, `piano-fit` silently resumes from the old checkpoint rather than exploring the new parameter space.
+
+```bash
+# Remove all stage outputs and checkpoints
+rm -f out/stages/stage*.json out/stages/stage*.report.json
+rm -f out/stages/stage*-ir-body.wav out/stages/stage*-ir-room.wav
+rm -f out/stages/final.json
+
+# Verify clean state
+ls out/stages/
+# Should be empty (or contain only non-stage files)
+```
+
+After clearing, proceed with Stage 1 using the default preset as the starting point.
+
 ```
 Stage 1: --optimize=piano,mix         (piano knobs, default IR, no resonance)
     ↓ output preset

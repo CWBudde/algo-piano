@@ -502,7 +502,7 @@ func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) spectralResul
 
 	// Determine phase boundaries using RMS envelope of the reference.
 	env := rmsEnvelope(a[:n], 256, 128)
-	attackEnd, sustainEnd := detectPhases(env, sampleRate, 128)
+	attackEnd, sustainEnd := detectPhases(env, 128)
 
 	// Sample up to 8 positions spread across the signal for finer coverage.
 	nPos := 8
@@ -644,7 +644,7 @@ func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) spectralResul
 // and the end of the sustain phase, using the RMS envelope.
 // Attack ends at the first envelope peak. Sustain ends when the envelope
 // drops 20 dB below the peak.
-func detectPhases(env []float64, sampleRate int, envHop int) (attackEndSample int, sustainEndSample int) {
+func detectPhases(env []float64, envHop int) (attackEndSample int, sustainEndSample int) {
 	if len(env) == 0 {
 		return 0, 0
 	}
