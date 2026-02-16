@@ -248,9 +248,11 @@ func (g *RingingStringGroup) fundamental() float32 {
 	return g.f0
 }
 
-// StringBank owns persistent ringing state for all piano notes.
+// StringBank owns persistent ringing state for configured piano note range.
 type StringBank struct {
 	sampleRate               int
+	minNote                  int
+	maxNote                  int
 	stringModel              StringModel
 	unisonCrossfeed          float32
 	couplingEnabled          bool
@@ -277,9 +279,30 @@ type StringBank struct {
 	outputBuf                []float32
 }
 
+func sanitizeNoteRange(minNote int, maxNote int) (int, int) {
+	if minNote < 0 {
+		minNote = 0
+	}
+	if minNote > 127 {
+		minNote = 127
+	}
+	if maxNote < 0 {
+		maxNote = 0
+	}
+	if maxNote > 127 {
+		maxNote = 127
+	}
+	if minNote > maxNote {
+		minNote, maxNote = maxNote, minNote
+	}
+	return minNote, maxNote
+}
+
 func NewStringBank(sampleRate int, params *Params) *StringBank {
 	unisonCrossfeed := float32(0.0008)
 	stringModel := StringModelDWG
+	minNote := 21
+	maxNote := 108
 	couplingEnabled := true
 	couplingMode := CouplingModeStatic
 	couplingAmount := float32(1.0)
@@ -332,13 +355,18 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 		if params.CouplingMaxNeighbors > 0 {
 			couplingMaxNeighbors = params.CouplingMaxNeighbors
 		}
+		minNote = params.MinNote
+		maxNote = params.MaxNote
 	}
+	minNote, maxNote = sanitizeNoteRange(minNote, maxNote)
 	if !couplingEnabled || couplingAmount <= 0 {
 		couplingMode = CouplingModeOff
 	}
 
 	sb := &StringBank{
 		sampleRate:               sampleRate,
+		minNote:                  minNote,
+		maxNote:                  maxNote,
 		stringModel:              stringModel,
 		unisonCrossfeed:          unisonCrossfeed,
 		couplingEnabled:          couplingMode != CouplingModeOff,
@@ -354,7 +382,7 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 		targets:                  make([]resonanceTarget, 0, 128),
 		activeNotes:              make([]int, 0, 128),
 	}
-	for note := 0; note < 128; note++ {
+	for note := sb.minNote; note <= sb.maxNote; note++ {
 		if stringModel == StringModelModal {
 			g := newModalStringGroup(sampleRate, note, params)
 			sb.modalGroups[note] = g
@@ -397,23 +425,28 @@ func (sb *StringBank) initDistanceMap() {
 	}
 }
 
+func (sb *StringBank) noteInRange(note int) bool {
+	if sb == nil {
+		return false
+	}
+	return note >= sb.minNote && note <= sb.maxNote
+}
+
 func (sb *StringBank) initStaticCouplingGraph(octaveGain float32, fifthGain float32) {
 	for i := range sb.coupling {
 		sb.coupling[i] = sb.coupling[i][:0]
 	}
-	for note := 0; note < 128; note++ {
+	for note := sb.minNote; note <= sb.maxNote; note++ {
 		srcScale := sb.sourceStringCouplingScale(note)
 		edges := make([]couplingEdge, 0, 4)
 		if octaveGain > 0 {
-			if note+12 <= 127 {
-				to := note + 12
+			if to := note + 12; sb.noteInRange(to) {
 				edges = append(edges, couplingEdge{
 					to:   to,
 					gain: octaveGain * srcScale * sb.targetStringCouplingScale(to),
 				})
 			}
-			if note-12 >= 0 {
-				to := note - 12
+			if to := note - 12; sb.noteInRange(to) {
 				edges = append(edges, couplingEdge{
 					to:   to,
 					gain: octaveGain * srcScale * sb.targetStringCouplingScale(to),
@@ -421,15 +454,13 @@ func (sb *StringBank) initStaticCouplingGraph(octaveGain float32, fifthGain floa
 			}
 		}
 		if fifthGain > 0 {
-			if note+7 <= 127 {
-				to := note + 7
+			if to := note + 7; sb.noteInRange(to) {
 				edges = append(edges, couplingEdge{
 					to:   to,
 					gain: fifthGain * srcScale * sb.targetStringCouplingScale(to),
 				})
 			}
-			if note-7 >= 0 {
-				to := note - 7
+			if to := note - 7; sb.noteInRange(to) {
 				edges = append(edges, couplingEdge{
 					to:   to,
 					gain: fifthGain * srcScale * sb.targetStringCouplingScale(to),
@@ -456,12 +487,13 @@ func (sb *StringBank) initPhysicalCouplingGraph(sampleRate int) {
 
 	nyquist := 0.5 * float32(sampleRate)
 	maxNeighbors := sb.couplingMaxNeighbors
-	if maxNeighbors > 127 {
-		maxNeighbors = 127
+	maxPossible := sb.maxNote - sb.minNote
+	if maxNeighbors > maxPossible {
+		maxNeighbors = maxPossible
 	}
-	for src := 0; src < 128; src++ {
+	for src := sb.minNote; src <= sb.maxNote; src++ {
 		candidates := make([]couplingCandidate, 0, 24)
-		for dst := 0; dst < 128; dst++ {
+		for dst := sb.minNote; dst <= sb.maxNote; dst++ {
 			if dst == src {
 				continue
 			}
@@ -574,14 +606,14 @@ func stringCountCouplingScale(stringCount int) float32 {
 }
 
 func (sb *StringBank) Group(note int) *RingingStringGroup {
-	if note < 0 || note > 127 {
+	if !sb.noteInRange(note) {
 		return nil
 	}
 	return sb.groups[note]
 }
 
 func (sb *StringBank) ModalGroup(note int) *ModalStringGroup {
-	if note < 0 || note > 127 {
+	if !sb.noteInRange(note) {
 		return nil
 	}
 	return sb.modalGroups[note]
@@ -595,7 +627,7 @@ func (sb *StringBank) StringModel() StringModel {
 }
 
 func (sb *StringBank) activeGroup(note int) ringingGroup {
-	if note < 0 || note > 127 {
+	if !sb.noteInRange(note) {
 		return nil
 	}
 	if sb.stringModel == StringModelModal {
@@ -617,12 +649,12 @@ func (sb *StringBank) noteStringCount(note int) int {
 	if g != nil {
 		return g.stringCount()
 	}
-	if note < 0 || note > 127 {
-		return 1
+	if !sb.noteInRange(note) {
+		return 0
 	}
 	detunes, _ := defaultUnisonForNote(note)
 	if len(detunes) == 0 {
-		return 1
+		return 0
 	}
 	return len(detunes)
 }
@@ -635,14 +667,14 @@ func (sb *StringBank) noteFundamental(note int) float32 {
 			return f0
 		}
 	}
-	if note < 0 || note > 127 {
+	if !sb.noteInRange(note) {
 		return 0
 	}
 	return midiNoteToFreq(note)
 }
 
 func (sb *StringBank) markActive(note int) {
-	if note < 0 || note > 127 || sb.active[note] {
+	if !sb.noteInRange(note) || sb.active[note] {
 		return
 	}
 	sb.active[note] = true
@@ -661,7 +693,7 @@ func (sb *StringBank) SetKeyDown(note int, down bool) {
 }
 
 func (sb *StringBank) SetSustain(down bool) {
-	for note := 0; note < 128; note++ {
+	for note := sb.minNote; note <= sb.maxNote; note++ {
 		g := sb.activeGroup(note)
 		if g == nil {
 			continue

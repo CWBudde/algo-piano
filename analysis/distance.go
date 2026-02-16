@@ -163,7 +163,12 @@ func Compare(reference []float64, candidate []float64, sampleRate int) Metrics {
 		m.EnvelopeRMSEDB = rms1(envDiff)
 	}
 
-	m.SpectralRMSEDB, m.SpectralPositions = spectralRMSEDBMulti(refA, candA, sampleRate)
+	spectResult := spectralRMSEDBMulti(refA, candA, sampleRate)
+	m.SpectralRMSEDB = spectResult.overall
+	m.SpectralPositions = spectResult.positions
+	m.SpectralLowRMSEDB = spectResult.lowRMSE
+	m.SpectralMidRMSEDB = spectResult.midRMSE
+	m.SpectralHighRMSEDB = spectResult.highRMSE
 
 	hopSec := 128.0 / float64(sampleRate)
 	m.RefDecayDBPerS = decaySlopeDBPerS(refEnv, hopSec)
@@ -457,34 +462,54 @@ func rmsEnvelope(x []float64, frame int, hop int) []float64 {
 	return out
 }
 
-// spectralRMSEDBMulti computes spectral RMSE across multiple time positions,
-// giving a more representative comparison than a single early window.
-// It also returns per-position detail for diagnostics.
-func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) (float64, []SpectralPosition) {
+type spectralResult struct {
+	overall   float64
+	positions []SpectralPosition
+	lowRMSE   float64 // 0-500 Hz
+	midRMSE   float64 // 500-2000 Hz
+	highRMSE  float64 // 2000+ Hz
+}
+
+// Phase weights for early/sustain/decay portions of the signal.
+// Early attack carries the most perceptual weight (timbral identity),
+// sustain is next, and decay is least critical.
+const (
+	phaseWeightAttack  = 0.40
+	phaseWeightSustain = 0.35
+	phaseWeightDecay   = 0.25
+)
+
+// spectralRMSEDBMulti computes spectral RMSE across multiple time positions
+// with phase-aware weighting (attack > sustain > decay) and per-band breakdown.
+func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) spectralResult {
 	n := len(a)
 	if len(b) < n {
 		n = len(b)
 	}
 	if n < 512 {
-		return 0, nil
+		return spectralResult{}
 	}
 
 	winSize := 4096
 	if n < winSize {
 		winSize = n
 	}
-	// Round down to even for FFT.
-	winSize &^= 1
+	winSize &^= 1 // Round down to even for FFT.
 	if winSize < 512 {
-		return spectralRMSEDB(a, b), nil
+		v := spectralRMSEDB(a, b)
+		return spectralResult{overall: v}
 	}
 
-	// Sample up to 5 positions spread across the signal.
-	positions := make([]int, 0, 5)
+	// Determine phase boundaries using RMS envelope of the reference.
+	env := rmsEnvelope(a[:n], 256, 128)
+	attackEnd, sustainEnd := detectPhases(env, sampleRate, 128)
+
+	// Sample up to 8 positions spread across the signal for finer coverage.
+	nPos := 8
+	positions := make([]int, 0, nPos)
 	if n <= winSize {
 		positions = append(positions, 0)
 	} else {
-		nPos := 5
 		stride := (n - winSize) / (nPos - 1)
 		if stride < 1 {
 			stride = 1
@@ -505,11 +530,37 @@ func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) (float64, []S
 		hann[i] = 0.5 - 0.5*math.Cos(2*math.Pi*float64(i)/float64(winSize-1))
 	}
 
-	var totalSum float64
-	totalCnt := 0
+	// Band boundaries in bins.
+	binHz := float64(sampleRate) / float64(winSize)
+	lowBinEnd := int(500.0/binHz) + 1
+	midBinEnd := int(2000.0/binHz) + 1
+	if lowBinEnd < 1 {
+		lowBinEnd = 1
+	}
+	if midBinEnd < lowBinEnd {
+		midBinEnd = lowBinEnd
+	}
+	if lowBinEnd > bins {
+		lowBinEnd = bins
+	}
+	if midBinEnd > bins {
+		midBinEnd = bins
+	}
+
+	type bandAccum struct {
+		sum float64
+		cnt int
+	}
+
+	var weightedSum, weightTotal float64
 	detail := make([]SpectralPosition, 0, len(positions))
+	var bandLow, bandMid, bandHigh bandAccum
 
 	for _, pos := range positions {
+		// Determine phase weight for this window position.
+		centerSample := pos + winSize/2
+		weight := phaseWeight(centerSample, attackEnd, sustainEnd)
+
 		aw := make([]float64, winSize)
 		bw := make([]float64, winSize)
 		for i := 0; i < winSize; i++ {
@@ -517,48 +568,120 @@ func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) (float64, []S
 			bw[i] = b[pos+i] * hann[i]
 		}
 
-		var sum float64
+		var posSum float64
+		var lowSum, midSum, highSum float64
 		cnt := bins - 1
+
+		computeBins := func(getMag func(k int) (float64, float64)) {
+			for k := 1; k < bins; k++ {
+				da, db := getMag(k)
+				d := da - db
+				dsq := d * d
+				posSum += dsq
+				if k < lowBinEnd {
+					lowSum += dsq
+					bandLow.cnt++
+				} else if k < midBinEnd {
+					midSum += dsq
+					bandMid.cnt++
+				} else {
+					highSum += dsq
+					bandHigh.cnt++
+				}
+			}
+		}
+
+		computed := false
 		if err == nil {
 			specA := make([]complex128, bins+1)
 			specB := make([]complex128, bins+1)
 			if e := plan.forward(specA, aw); e == nil {
 				if e := plan.forward(specB, bw); e == nil {
-					for k := 1; k < bins; k++ {
-						da := linToDB(cmplx.Abs(specA[k]))
-						db := linToDB(cmplx.Abs(specB[k]))
-						d := da - db
-						sum += d * d
-					}
-					totalSum += sum
-					totalCnt += cnt
-					detail = append(detail, SpectralPosition{
-						OffsetSec: float64(pos) / float64(sampleRate),
-						RMSEDB:    math.Sqrt(sum / float64(cnt)),
+					computeBins(func(k int) (float64, float64) {
+						return linToDB(cmplx.Abs(specA[k])), linToDB(cmplx.Abs(specB[k]))
 					})
-					continue
+					computed = true
 				}
 			}
 		}
-		// Fallback: naive DFT for this position.
-		for k := 1; k < bins; k++ {
-			da := linToDB(dftBinMag(aw, k))
-			db := linToDB(dftBinMag(bw, k))
-			d := da - db
-			sum += d * d
+		if !computed {
+			computeBins(func(k int) (float64, float64) {
+				return linToDB(dftBinMag(aw, k)), linToDB(dftBinMag(bw, k))
+			})
 		}
-		totalSum += sum
-		totalCnt += cnt
+
+		bandLow.sum += lowSum
+		bandMid.sum += midSum
+		bandHigh.sum += highSum
+
+		posRMSE := math.Sqrt(posSum / float64(cnt))
+		weightedSum += weight * posSum / float64(cnt)
+		weightTotal += weight
 		detail = append(detail, SpectralPosition{
 			OffsetSec: float64(pos) / float64(sampleRate),
-			RMSEDB:    math.Sqrt(sum / float64(cnt)),
+			RMSEDB:    posRMSE,
 		})
 	}
 
-	if totalCnt == 0 {
-		return 0, nil
+	var result spectralResult
+	result.positions = detail
+	if weightTotal > 0 {
+		result.overall = math.Sqrt(weightedSum / weightTotal)
 	}
-	return math.Sqrt(totalSum / float64(totalCnt)), detail
+	if bandLow.cnt > 0 {
+		result.lowRMSE = math.Sqrt(bandLow.sum / float64(bandLow.cnt))
+	}
+	if bandMid.cnt > 0 {
+		result.midRMSE = math.Sqrt(bandMid.sum / float64(bandMid.cnt))
+	}
+	if bandHigh.cnt > 0 {
+		result.highRMSE = math.Sqrt(bandHigh.sum / float64(bandHigh.cnt))
+	}
+	return result
+}
+
+// detectPhases finds the sample indices marking the end of the attack phase
+// and the end of the sustain phase, using the RMS envelope.
+// Attack ends at the first envelope peak. Sustain ends when the envelope
+// drops 20 dB below the peak.
+func detectPhases(env []float64, sampleRate int, envHop int) (attackEndSample int, sustainEndSample int) {
+	if len(env) == 0 {
+		return 0, 0
+	}
+
+	// Find peak envelope frame.
+	peakIdx := 0
+	peakVal := env[0]
+	for i, v := range env {
+		if v > peakVal {
+			peakVal = v
+			peakIdx = i
+		}
+	}
+	attackEndSample = (peakIdx + 1) * envHop
+
+	// Sustain ends when envelope drops 20 dB from peak.
+	thresholdDB := linToDB(peakVal) - 20.0
+	sustainEndSample = len(env) * envHop // default: whole signal is sustain
+	for i := peakIdx; i < len(env); i++ {
+		if linToDB(env[i]) < thresholdDB {
+			sustainEndSample = i * envHop
+			break
+		}
+	}
+	return attackEndSample, sustainEndSample
+}
+
+// phaseWeight returns the weight for a spectral window centered at the given sample,
+// based on which phase of the signal it falls in.
+func phaseWeight(centerSample int, attackEnd int, sustainEnd int) float64 {
+	if centerSample < attackEnd {
+		return phaseWeightAttack
+	}
+	if centerSample < sustainEnd {
+		return phaseWeightSustain
+	}
+	return phaseWeightDecay
 }
 
 func spectralRMSEDB(a []float64, b []float64) float64 {

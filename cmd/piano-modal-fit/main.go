@@ -688,6 +688,8 @@ func writePreset(path string, p *piano.Params) error {
 	}
 	type out struct {
 		OutputGain                 float32              `json:"output_gain"`
+		MinNote                    int                  `json:"min_note"`
+		MaxNote                    int                  `json:"max_note"`
 		IRWavPath                  string               `json:"ir_wav_path,omitempty"`
 		IRWetMix                   float32              `json:"ir_wet_mix"`
 		IRDryMix                   float32              `json:"ir_dry_mix"`
@@ -735,6 +737,8 @@ func writePreset(path string, p *piano.Params) error {
 
 	o := out{
 		OutputGain:                 p.OutputGain,
+		MinNote:                    p.MinNote,
+		MaxNote:                    p.MaxNote,
 		IRWavPath:                  p.IRWavPath,
 		IRWetMix:                   p.IRWetMix,
 		IRDryMix:                   p.IRDryMix,

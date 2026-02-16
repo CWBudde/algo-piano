@@ -15,6 +15,8 @@ import (
 // File is the JSON schema for piano presets.
 type File struct {
 	OutputGain *float32 `json:"output_gain"`
+	MinNote    *int     `json:"min_note,omitempty"`
+	MaxNote    *int     `json:"max_note,omitempty"`
 	// Legacy single-IR fields.
 	IRWavPath string   `json:"ir_wav_path"`
 	IRWetMix  *float32 `json:"ir_wet_mix"`
@@ -116,6 +118,25 @@ func ApplyFile(dst *piano.Params, f *File) error {
 		}
 		dst.OutputGain = *f.OutputGain
 	}
+	nextMin := dst.MinNote
+	nextMax := dst.MaxNote
+	if f.MinNote != nil {
+		if *f.MinNote < 0 || *f.MinNote > 127 {
+			return fmt.Errorf("min_note must be in [0,127]")
+		}
+		nextMin = *f.MinNote
+	}
+	if f.MaxNote != nil {
+		if *f.MaxNote < 0 || *f.MaxNote > 127 {
+			return fmt.Errorf("max_note must be in [0,127]")
+		}
+		nextMax = *f.MaxNote
+	}
+	if nextMin > nextMax {
+		return fmt.Errorf("min_note must be <= max_note")
+	}
+	dst.MinNote = nextMin
+	dst.MaxNote = nextMax
 	if f.IRWavPath != "" {
 		dst.IRWavPath = strings.TrimSpace(f.IRWavPath)
 	}
