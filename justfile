@@ -321,3 +321,7 @@ fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" outp
         --mayfly-round-evals "$mayfly_round_evals" \
         --workers "$workers" \
         "${extra_resume_report[@]}"
+
+fix:
+    just lint-fix
+    just fmt
