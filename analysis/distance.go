@@ -16,15 +16,15 @@ var (
 
 type spectralFFTPlan struct {
 	mu   sync.Mutex
-	fast *algofft.FastPlanReal64
-	safe *algofft.PlanRealT[float64, complex128]
+	fast *algofft.FastPlanReal[float64, complex128]
+	safe *algofft.PlanReal[float64, complex128]
 }
 
 type lagFFTPlan struct {
 	mu   sync.Mutex
 	n    int
-	fast *algofft.FastPlanReal64
-	safe *algofft.PlanRealT[float64, complex128]
+	fast *algofft.FastPlanReal[float64, complex128]
+	safe *algofft.PlanReal[float64, complex128]
 
 	inA   []float64
 	inB   []float64

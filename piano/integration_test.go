@@ -5,8 +5,7 @@ import (
 	"testing"
 
 	algofft "github.com/cwbudde/algo-fft"
-	pdefd "github.com/cwbudde/algo-pde/fd"
-	pdepoisson "github.com/cwbudde/algo-pde/poisson"
+	pdebc "github.com/cwbudde/algo-pde/bc"
 )
 
 func TestLongRenderHasNoNaNOrInf(t *testing.T) {
@@ -49,7 +48,10 @@ func TestAlgoPDEEigenspectrumSanity(t *testing.T) {
 	const n = 64
 	const h = 1.0 / 64.0
 
-	periodic := pdefd.Eigenvalues(n, h, pdepoisson.Periodic)
+	periodic, err := pdebc.Eigenvalues(n, h, pdebc.Periodic)
+	if err != nil {
+		t.Fatalf("periodic eigenvalues: %v", err)
+	}
 	if len(periodic) != n {
 		t.Fatalf("unexpected periodic eigenvalue count: %d", len(periodic))
 	}
@@ -57,7 +59,10 @@ func TestAlgoPDEEigenspectrumSanity(t *testing.T) {
 		t.Fatalf("expected periodic zero mode at index 0, got %g", periodic[0])
 	}
 
-	dirichlet := pdefd.Eigenvalues(n, h, pdepoisson.Dirichlet)
+	dirichlet, err := pdebc.Eigenvalues(n, h, pdebc.Dirichlet)
+	if err != nil {
+		t.Fatalf("dirichlet eigenvalues: %v", err)
+	}
 	if len(dirichlet) != n {
 		t.Fatalf("unexpected dirichlet eigenvalue count: %d", len(dirichlet))
 	}
