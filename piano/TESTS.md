@@ -42,10 +42,30 @@ This maps each split source file to its direct and indirect test coverage.
 ## `modal_group.go`
 
 - `TestStringBankModalModelSelectable` (`ringing_test.go`)
-- `TestStringBankModalProcessHasNoPerBlockHeapAllocs` (`ringing_test.go`)
+- `TestStringBankModalProcessHasNoPerBlockHeapAllocs` (`ringing_test.go`) — per kernel and arena
 - `TestPianoSetStringModelSwitchesCore` (`ringing_test.go`)
 - `TestModalPartialsParameterControlsModeCount` (`ringing_test.go`)
 - `TestModalExcitationParameterScalesOutputEnergy` (`ringing_test.go`)
+- `TestModalSoAOffsetsAreConsistent` (`modal_parity_test.go`)
+- `TestModalFallbackSingleModeLayout` (`modal_parity_test.go`)
+- `TestModalLongRenderIsFiniteAcrossKernels` (`modal_parity_test.go`)
+
+## `modal_kernel.go`
+
+Every kernel must be bit-exact with the scalar reference; the parity tests
+assert equality with no tolerance.
+
+- `TestModalKernelScalarMatchesVecmathBitExact` (`modal_parity_test.go`)
+- `TestModalKernelParityAcrossDamperTransitions` (`modal_parity_test.go`)
+- `TestModalKernelParityWithCouplingAndResonance` (`modal_parity_test.go`)
+- `TestModalKernelParityAtLowSampleRate` (`modal_parity_test.go`) — ragged mode counts
+- `TestModalAccScratchIsZeroBetweenSamples` (`modal_parity_test.go`)
+
+## `modal_arena.go`
+
+- `TestModalArenaBindsAndReleases` (`modal_parity_test.go`)
+- `TestModalArenaSurvivesActiveSetChanges` (`modal_parity_test.go`)
+- covered indirectly by every `assertKernelParity` case, which includes the arena
 
 ## `control.go`
 

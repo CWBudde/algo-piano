@@ -551,31 +551,72 @@ Tooling:
 
 ### 12.5 — Upstream SIMD integration follow-up (`algo-dsp` + `algo-vecmath`)
 
-Goal: adopt upstream modal/quadrature oscillator SIMD work into `algo-piano` once released, with clear validation gates.
+Goal: adopt SIMD modal/quadrature oscillator kernels into `algo-piano`, with clear validation gates.
 
-- [ ] `PIANO-401` — Track upstream readiness and version pins.
-  - [ ] `algo-vecmath` tickets complete: `VEC-301..VEC-308`
-  - [ ] `algo-dsp` tickets complete: `DSP-201..DSP-207`
-  - [ ] update `go.mod` to released versions containing those tickets
-- [ ] `PIANO-402` — Add adapter layer in modal path.
-  - [ ] map `ModalStringGroup` mode state to upstream SoA arrays
-  - [ ] preserve existing modal behavior/knobs (`modal_partials`, damping, inharmonicity, strike shape)
-  - [ ] keep scalar fallback path behind build/runtime switch for debugging and parity tests
-- [ ] `PIANO-403` — Replace per-mode scalar update loop with upstream block kernels.
-  - [ ] integrate block API at `StringBank.Process` cadence (block size 128 default)
-  - [ ] ensure no additional per-block allocations
-  - [ ] keep coupling/resonance semantics unchanged
-- [ ] `PIANO-404` — Correctness/parity test gate.
-  - [ ] add scalar-vs-upstream parity tests on fixed seeds/notes/velocities
-  - [ ] verify sustain pedal transitions and damped/undamped mode decay transitions
-  - [ ] long-render stability: no NaN/Inf and no denormal-related regressions
-- [ ] `PIANO-405` — Performance acceptance gate.
-  - [ ] benchmark modal CPU vs current baseline (same sample rate/block/polyphony)
-  - [ ] benchmark DWG vs modal after integration
-  - [ ] update benchmark artifacts/documentation with machine + Go version + date
+**Upstream reality check (2026-08-16).** The original gate assumed `algo-dsp`
+would ship a modal oscillator layer. It has not, and the `DSP-201..DSP-207`
+ticket IDs never existed upstream — the real item is `algo-dsp` **Phase 41 —
+SIMD Modal Oscillator Bank**, still _Planned_, with no `dsp/osc` or `dsp/modal`
+package in v0.7.0. `algo-piano` therefore calls `algo-vecmath` directly.
+
+`algo-vecmath` v0.1.3 state:
+
+- `VEC-301..VEC-305` — done and verified (`RotateDecayComplexF32`,
+  `RotateDecayAccumulateF32`, generic + AVX2 + SSE2 backends).
+- `VEC-306` (arm64 NEON) — **marked done upstream but not implemented.** arm64
+  falls back to the generic scalar kernel, so no SIMD gain applies there.
+- `VEC-307` — partial (no `RotateDecay` baseline table).
+- `VEC-308` (denormal/long-tail tests) — open.
+
+- [x] `PIANO-401` — Track upstream readiness and version pins.
+  - [x] `algo-vecmath` audited: 301–305 usable, 306 missing, 307 partial, 308 open
+  - [x] `algo-dsp` Phase 41 confirmed not started — no upstream modal layer to adopt
+  - [x] update `go.mod`: `algo-approx` v0.2.0, `algo-dsp` v0.7.0, `algo-fft` v0.8.0,
+        `algo-pde` v0.2.2, `algo-vecmath` v0.1.3 (now a direct dependency)
+- [x] `PIANO-402` — Add adapter layer in modal path.
+  - [x] `ModalStringGroup` mode state converted to flat SoA (`piano/modal_group.go`)
+  - [x] existing modal knobs preserved (`modal_partials`, damping, inharmonicity, strike shape)
+  - [x] scalar fallback kept behind a runtime switch (`modalKernelMode`, `modalArenaEnabled`)
+- [x] `PIANO-403` — Replace the per-mode scalar update loop with SIMD kernels.
+  - [x] batch across **notes**, not across time: `piano/modal_arena.go` compacts every
+        active group into one arena and makes a single kernel call per sample
+  - [x] no additional per-block allocations (arena pre-sized at bank construction)
+  - [x] coupling/resonance semantics unchanged
+- [x] `PIANO-404` — Correctness/parity test gate.
+  - [x] bit-exact parity tests across scalar / accum / rotate / arena (`piano/modal_parity_test.go`)
+  - [x] sustain pedal and damped/undamped transitions covered
+  - [x] long-render stability: no NaN/Inf; denormal spin fixed (see below)
+- [x] `PIANO-405` — Performance acceptance gate.
+  - [x] modal CPU vs pre-refactor baseline: **−26.9%** (8 notes), **−21.4%** (86 notes)
+  - [x] DWG vs modal benchmarked — see caveat under `PIANO-406`
+  - [x] results recorded in `BENCHMARKS.md` with machine, Go version and date
 - [ ] `PIANO-406` — Shipping profile decision refresh.
-  - [ ] if modal SIMD path meets quality + CPU targets, re-evaluate default profile mapping
+  - [ ] **Blocked on a real finding:** the modal core is _not_ currently cheaper
+        than DWG at the default 8 partials — the two are within noise across the
+        polyphony sweep. The "low CPU profile defaults to modal" rule in 12.4
+        cannot be adopted on the assumption that modal is faster.
+  - [ ] determine how far `modal_partials` can drop before quality suffers, then
+        re-evaluate the mapping on measured numbers
   - [ ] keep DWG profile as high-accuracy reference for regression checks
+
+**Lesson worth keeping.** Calling `algo-vecmath` once _per note_ was measured
+**slower** than the scalar loop it replaced (+8% to +11% at high polyphony): one
+note holds only ~24 modes, so per-call overhead beat the vectorization. Batching
+all active notes into a single ~1500-mode call is what produced the win. Batch
+width is the deciding factor before adding SIMD anywhere else in the voice path.
+
+**Separately fixed:** modal partials decayed into the float32 denormal range and,
+because a sustained group never deactivates, stalled there indefinitely (93% of
+mode state denormal after 2000 blocks). Flushing inaudible modes at block rate
+cut sustained-decay cost from 4.2 ms to 0.59 ms — a larger win than the SIMD work.
+
+**Follow-ups not in scope here:**
+
+- `injectAtPosition` calls `math.Sin` per mode per sample during hammer contact
+  (`piano/modal_group.go`), likely costlier than the rotate loop. Cache the shape
+  vector keyed on `strikePos`.
+- Revisit if `algo-dsp` Phase 41 ships, or if `VEC-306` lands and arm64 becomes
+  a target.
 
 **Done when:** modal core is selectable, calibrated against DWG via an automated matching step, and documented profiles exist for low-CPU vs high-accuracy operation.
 
