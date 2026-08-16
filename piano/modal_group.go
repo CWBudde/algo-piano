@@ -362,7 +362,37 @@ func (g *ModalStringGroup) stringGain(si int) float32 {
 	return 1.0
 }
 
+// modalFlushThreshold is the magnitude below which a mode's state is forced to
+// zero. It sits far above the float32 denormal range (~1.18e-38) yet far below
+// anything audible (~-500 dBFS), so the flush is inaudible but still catches a
+// decaying mode before it reaches denormal territory.
+//
+// Checking once per block is enough: the slowest per-sample decay factor is
+// 0.86, so over 128 samples a mode shrinks by at most ~4.3e-9. A mode just
+// above the threshold therefore stays normal until the next check.
+const modalFlushThreshold = 1e-25
+
+// flushDenormalModes zeroes modes that have decayed into inaudibility.
+//
+// Without this, high partials reach the denormal range long before the
+// fundamental goes quiet, and — because a sustained group never deactivates —
+// they stay there indefinitely. Denormal arithmetic is microcoded and stalls
+// the whole SIMD lane group, which measurably dominates the modal render cost
+// during long sustains.
+func (g *ModalStringGroup) flushDenormalModes() {
+	for i := range g.re {
+		re, im := g.re[i], g.im[i]
+		if re > -modalFlushThreshold && re < modalFlushThreshold &&
+			im > -modalFlushThreshold && im < modalFlushThreshold {
+			g.re[i] = 0
+			g.im[i] = 0
+		}
+	}
+}
+
 func (g *ModalStringGroup) endBlock(blockEnergy float64, frames int) bool {
+	g.flushDenormalModes()
+
 	if g.isUndamped() {
 		g.active = true
 		g.quietBlocks = 0
