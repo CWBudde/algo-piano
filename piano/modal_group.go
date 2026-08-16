@@ -4,27 +4,35 @@ import "math"
 
 const modalMaxPartials = 8
 
-type modalMode struct {
-	order         int
-	cosW          float32
-	sinW          float32
-	gain          float32
-	decayUndamped float32
-	decayDamped   float32
-	decay         float32
-	re            float32
-	im            float32
-}
-
-type modalString struct {
-	modes []modalMode
-}
+// soaFieldCount is the number of parallel float32 mode arrays carved out of
+// the single backing allocation in newModalStringGroup.
+const soaFieldCount = 9
 
 // ModalStringGroup is a low-CPU per-note ringing model using damped sinusoidal modes.
+//
+// Mode state is held as a struct-of-arrays: every unison string's modes are
+// concatenated into one flat run, so string si owns the index range
+// [modeStart[si], modeStart[si+1]). This layout lets the whole group be advanced
+// by a single vectorized rotate-decay kernel call per sample.
 type ModalStringGroup struct {
-	note       int
-	f0         float32
-	strings    []modalString
+	note int
+	f0   float32
+
+	// Flat SoA mode state, all backed by soaBuf.
+	re            []float32
+	im            []float32
+	cosW          []float32
+	sinW          []float32
+	decay         []float32 // active decay: a copy of damped or undamped
+	decayUndamped []float32
+	decayDamped   []float32
+	gain          []float32
+	acc           []float32 // per-sample scratch; all-zero between samples
+	soaBuf        []float32
+
+	order     []int32 // partial order per mode, for modalShape
+	modeStart []int32 // len == stringCount+1, monotonically non-decreasing
+
 	gains      []float32
 	resFilters []noteResonator
 	partials   int
@@ -84,59 +92,86 @@ func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringG
 
 	freq := midiNoteToFreq(note)
 	detunes, gains := defaultUnisonForNote(note)
-	strings := make([]modalString, 0, len(detunes))
 
 	sr := float32(sampleRate)
 	nyquist := 0.5 * sr
+
+	// Pass 1: count admitted modes per string. Mode counts are ragged because
+	// each unison string has its own detuned base frequency, so a partial near
+	// the Nyquist cutoff can be admitted for one string and rejected for
+	// another. Strings whose fundamental is already above the cutoff fall back
+	// to a single mode.
+	modeStart := make([]int32, len(detunes)+1)
 	for i := range detunes {
-		ratio := centsToRatio(detunes[i] * unisonDetuneScale)
-		baseF := freq * ratio
-		modes := make([]modalMode, 0, maxPartials)
+		baseF := freq * centsToRatio(detunes[i]*unisonDetuneScale)
+		count := 0
 		for order := 1; order <= maxPartials; order++ {
-			partialF := modalPartialFrequency(baseF, float32(order), inharmonicity)
-			if partialF >= nyquist*0.95 {
+			if modalPartialFrequency(baseF, float32(order), inharmonicity) >= nyquist*0.95 {
 				break
 			}
-			w := 2.0 * math.Pi * float64(partialF/sr)
-			gain := float32(1.0 / math.Pow(float64(order), float64(gainExp)))
-			m := modalMode{
-				order:         order,
-				cosW:          float32(math.Cos(w)),
-				sinW:          float32(math.Sin(w)),
-				gain:          gain,
-				decayUndamped: modalDecay(lossGain, partialF, order, false, undampedK, highFreqDamping),
-				decayDamped:   modalDecay(lossGain, partialF, order, true, dampedK, highFreqDamping),
-			}
-			m.decay = m.decayDamped
-			modes = append(modes, m)
+			count++
 		}
-		if len(modes) == 0 {
-			fallbackF := minf(maxf(baseF, 20), nyquist*0.45)
-			w := 2.0 * math.Pi * float64(fallbackF/sr)
-			modes = append(modes, modalMode{
-				order:         1,
-				cosW:          float32(math.Cos(w)),
-				sinW:          float32(math.Sin(w)),
-				gain:          1.0,
-				decayUndamped: modalDecay(lossGain, fallbackF, 1, false, undampedK, highFreqDamping),
-				decayDamped:   modalDecay(lossGain, fallbackF, 1, true, dampedK, highFreqDamping),
-				decay:         modalDecay(lossGain, fallbackF, 1, true, dampedK, highFreqDamping),
-			})
+		if count == 0 {
+			count = 1 // single-mode fallback
 		}
-		strings = append(strings, modalString{modes: modes})
+		modeStart[i+1] = modeStart[i] + int32(count)
 	}
 
+	n := int(modeStart[len(modeStart)-1])
+	soaBuf := make([]float32, soaFieldCount*n)
 	g := &ModalStringGroup{
-		note:       note,
-		f0:         freq,
-		strings:    strings,
-		gains:      append([]float32(nil), gains...),
-		partials:   maxPartials,
-		gainExp:    gainExp,
-		excitation: excitation,
-		undampedK:  undampedK,
-		dampedK:    dampedK,
+		note:          note,
+		f0:            freq,
+		re:            soaBuf[0*n : 1*n : 1*n],
+		im:            soaBuf[1*n : 2*n : 2*n],
+		cosW:          soaBuf[2*n : 3*n : 3*n],
+		sinW:          soaBuf[3*n : 4*n : 4*n],
+		decay:         soaBuf[4*n : 5*n : 5*n],
+		decayUndamped: soaBuf[5*n : 6*n : 6*n],
+		decayDamped:   soaBuf[6*n : 7*n : 7*n],
+		gain:          soaBuf[7*n : 8*n : 8*n],
+		acc:           soaBuf[8*n : 9*n : 9*n],
+		soaBuf:        soaBuf,
+		order:         make([]int32, n),
+		modeStart:     modeStart,
+		gains:         append([]float32(nil), gains...),
+		partials:      maxPartials,
+		gainExp:       gainExp,
+		excitation:    excitation,
+		undampedK:     undampedK,
+		dampedK:       dampedK,
 	}
+
+	// Pass 2: fill the mode parameters.
+	for i := range detunes {
+		baseF := freq * centsToRatio(detunes[i]*unisonDetuneScale)
+		lo, hi := int(modeStart[i]), int(modeStart[i+1])
+
+		if hi-lo == 1 && modalPartialFrequency(baseF, 1, inharmonicity) >= nyquist*0.95 {
+			fallbackF := minf(maxf(baseF, 20), nyquist*0.45)
+			w := 2.0 * math.Pi * float64(fallbackF/sr)
+			g.order[lo] = 1
+			g.cosW[lo] = float32(math.Cos(w))
+			g.sinW[lo] = float32(math.Sin(w))
+			g.gain[lo] = 1.0
+			g.decayUndamped[lo] = modalDecay(lossGain, fallbackF, 1, false, undampedK, highFreqDamping)
+			g.decayDamped[lo] = modalDecay(lossGain, fallbackF, 1, true, dampedK, highFreqDamping)
+			continue
+		}
+
+		for idx := lo; idx < hi; idx++ {
+			order := idx - lo + 1
+			partialF := modalPartialFrequency(baseF, float32(order), inharmonicity)
+			w := 2.0 * math.Pi * float64(partialF/sr)
+			g.order[idx] = int32(order)
+			g.cosW[idx] = float32(math.Cos(w))
+			g.sinW[idx] = float32(math.Sin(w))
+			g.gain[idx] = float32(1.0 / math.Pow(float64(order), float64(gainExp)))
+			g.decayUndamped[idx] = modalDecay(lossGain, partialF, order, false, undampedK, highFreqDamping)
+			g.decayDamped[idx] = modalDecay(lossGain, partialF, order, true, dampedK, highFreqDamping)
+		}
+	}
+
 	g.initResonanceFilters(sampleRate)
 	g.updateDamperState()
 	return g
@@ -224,17 +259,11 @@ func (g *ModalStringGroup) setSustain(down bool) {
 }
 
 func (g *ModalStringGroup) updateDamperState() {
-	engageDamper := !g.keyDown && !g.sustainDown
-	for si := range g.strings {
-		modes := g.strings[si].modes
-		for mi := range modes {
-			if engageDamper {
-				modes[mi].decay = modes[mi].decayDamped
-			} else {
-				modes[mi].decay = modes[mi].decayUndamped
-			}
-		}
+	src := g.decayDamped
+	if g.keyDown || g.sustainDown {
+		src = g.decayUndamped
 	}
+	copy(g.decay, src)
 }
 
 func (g *ModalStringGroup) isUndamped() bool {
@@ -267,20 +296,20 @@ func (g *ModalStringGroup) injectAtPosition(force float32, strikePos float32, mo
 	if strikePos > 0.99 {
 		strikePos = 0.99
 	}
-	for si := range g.strings {
+	for si := 0; si+1 < len(g.modeStart); si++ {
 		sg := float32(1.0)
 		if si < len(g.gains) {
 			sg = g.gains[si]
 		}
-		modes := g.strings[si].modes
-		for mi := range modes {
-			m := &modes[mi]
-			shape := modalShape(m.order, strikePos)
+		lo, hi := int(g.modeStart[si]), int(g.modeStart[si+1])
+		for idx := lo; idx < hi; idx++ {
+			order := g.order[idx]
+			shape := modalShape(int(order), strikePos)
 			if shape > -1e-6 && shape < 1e-6 {
 				continue
 			}
-			amp := force * sg * modeScale * shape / float32(m.order)
-			m.re += amp
+			amp := force * sg * modeScale * shape / float32(order)
+			g.re[idx] += amp
 		}
 	}
 	g.active = true
@@ -300,36 +329,37 @@ func (g *ModalStringGroup) injectCouplingForce(force float32) {
 }
 
 func (g *ModalStringGroup) processSample(unisonCrossfeed float32) float32 {
-	sample := float32(0)
-	for si := range g.strings {
-		sg := float32(1.0)
-		if si < len(g.gains) {
-			sg = g.gains[si]
-		}
-		sModes := g.strings[si].modes
-		strSample := float32(0)
-		for mi := range sModes {
-			m := &sModes[mi]
-			nx := m.decay * (m.re*m.cosW - m.im*m.sinW)
-			ny := m.decay * (m.re*m.sinW + m.im*m.cosW)
-			m.re = nx
-			m.im = ny
-			strSample += nx * m.gain
-		}
-		sample += strSample * sg
-	}
+	return g.applyCrossfeed(g.advanceModes(), unisonCrossfeed)
+}
 
+// reduceArenaSample completes one sample for a group whose modes were already
+// advanced by the arena's batched kernel call: it only reduces the accumulator
+// and applies the crossfeed.
+func (g *ModalStringGroup) reduceArenaSample(unisonCrossfeed float32) float32 {
+	return g.applyCrossfeed(g.reduceAcc(), unisonCrossfeed)
+}
+
+func (g *ModalStringGroup) applyCrossfeed(sample float32, unisonCrossfeed float32) float32 {
 	// Keep unison crossfeed very lightweight in modal mode (1st mode only).
-	if len(g.strings) > 1 && unisonCrossfeed > 0 {
+	if g.stringCount() > 1 && unisonCrossfeed > 0 {
 		cross := sample * unisonCrossfeed * 0.08
-		for si := range g.strings {
-			if len(g.strings[si].modes) == 0 {
+		for si := 0; si+1 < len(g.modeStart); si++ {
+			lo, hi := g.modeStart[si], g.modeStart[si+1]
+			if lo == hi {
 				continue
 			}
-			g.strings[si].modes[0].re += cross
+			g.re[lo] += cross
 		}
 	}
 	return sample
+}
+
+// stringGain returns the unison gain for string si, defaulting to unity.
+func (g *ModalStringGroup) stringGain(si int) float32 {
+	if si < len(g.gains) {
+		return g.gains[si]
+	}
+	return 1.0
 }
 
 func (g *ModalStringGroup) endBlock(blockEnergy float64, frames int) bool {
@@ -354,7 +384,15 @@ func (g *ModalStringGroup) endBlock(blockEnergy float64, frames int) bool {
 }
 
 func (g *ModalStringGroup) stringCount() int {
-	return len(g.strings)
+	return len(g.modeStart) - 1
+}
+
+// modeCount returns the number of modes allocated to unison string si.
+func (g *ModalStringGroup) modeCount(si int) int {
+	if si < 0 || si+1 >= len(g.modeStart) {
+		return 0
+	}
+	return int(g.modeStart[si+1] - g.modeStart[si])
 }
 
 func (g *ModalStringGroup) fundamental() float32 {

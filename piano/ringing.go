@@ -277,6 +277,7 @@ type StringBank struct {
 	couplingAbs              [128]float64
 	sampleOut                [128]float32
 	outputBuf                []float32
+	modalArena               *modalArena
 }
 
 func sanitizeNoteRange(minNote int, maxNote int) (int, int) {
@@ -392,6 +393,9 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 		g := newRingingStringGroup(sampleRate, note, params)
 		sb.groups[note] = g
 		sb.targets = append(sb.targets, g)
+	}
+	if stringModel == StringModelModal {
+		sb.modalArena = newModalArena(sb.modalGroups[:], sb.maxNote-sb.minNote+1)
 	}
 	sb.initDistanceMap()
 	sb.rebuildCouplingGraph()
@@ -751,9 +755,17 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 		sb.couplingAbs[note] = 0
 	}
 
+	// Compact every active modal group into one contiguous mode block so the
+	// whole bank advances with a single vectorized kernel call per sample.
+	arena := sb.modalArena
+	arenaBound := modalArenaEnabled && arena != nil && arena.acquire(sb, sb.activeNotes)
+
 	for i := 0; i < numFrames; i++ {
 		if hammer != nil {
 			hammer.ProcessSample(sb)
+		}
+		if arenaBound {
+			arena.advance()
 		}
 		var mix float32
 		for _, note := range sb.activeNotes {
@@ -762,7 +774,13 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 			if g == nil || !g.isActive() {
 				continue
 			}
-			s := g.processSample(sb.unisonCrossfeed)
+			var s float32
+			if arenaBound && arena.boundNote[note] {
+				// Already advanced by arena.advance; only reduce and crossfeed.
+				s = sb.modalGroups[note].reduceArenaSample(sb.unisonCrossfeed)
+			} else {
+				s = g.processSample(sb.unisonCrossfeed)
+			}
 			sb.sampleOut[note] = s
 			mix += s
 			sf := float64(s)
@@ -776,6 +794,13 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 		}
 		out[i] = mix
 	}
+
+	// Hand state back to the groups before coupling, so everything downstream
+	// sees the ordinary per-group storage.
+	if arenaBound {
+		arena.release(sb)
+	}
+
 	if sb.couplingEnabled {
 		sb.applySparseCouplingBlockwise(numFrames)
 	}

@@ -507,28 +507,44 @@ func TestStringBankModalModelSelectable(t *testing.T) {
 }
 
 func TestStringBankModalProcessHasNoPerBlockHeapAllocs(t *testing.T) {
-	params := NewDefaultParams()
-	params.StringModel = StringModelModal
-	params.CouplingEnabled = true
-	params.CouplingMode = CouplingModeStatic
-	params.CouplingOctaveGain = 0.0012
-	params.CouplingFifthGain = 0.0004
-
-	sb := NewStringBank(48000, params)
-	h := NewHammerExciter(48000, params)
-	sb.SetSustain(true)
-	sb.SetKeyDown(60, true)
-	h.Trigger(60, 100)
-
-	for i := 0; i < 32; i++ {
-		_ = sb.Process(128, h)
+	variants := []struct {
+		name  string
+		apply func(t *testing.T)
+	}{
+		{"arena", withModalArena},
+		{"pergroup_scalar", func(t *testing.T) { withModalKernel(t, modalKernelScalar) }},
+		{"pergroup_accum", func(t *testing.T) { withModalKernel(t, modalKernelAccum) }},
+		{"pergroup_rotate", func(t *testing.T) { withModalKernel(t, modalKernelRotate) }},
 	}
 
-	allocs := testing.AllocsPerRun(1000, func() {
-		_ = sb.Process(128, h)
-	})
-	if allocs != 0 {
-		t.Fatalf("expected zero per-block heap allocs in modal path, got %.3f", allocs)
+	for _, v := range variants {
+		t.Run(v.name, func(t *testing.T) {
+			v.apply(t)
+
+			params := NewDefaultParams()
+			params.StringModel = StringModelModal
+			params.CouplingEnabled = true
+			params.CouplingMode = CouplingModeStatic
+			params.CouplingOctaveGain = 0.0012
+			params.CouplingFifthGain = 0.0004
+
+			sb := NewStringBank(48000, params)
+			h := NewHammerExciter(48000, params)
+			sb.SetSustain(true)
+			sb.SetKeyDown(60, true)
+			h.Trigger(60, 100)
+
+			for i := 0; i < 32; i++ {
+				_ = sb.Process(128, h)
+			}
+
+			allocs := testing.AllocsPerRun(1000, func() {
+				_ = sb.Process(128, h)
+			})
+			if allocs != 0 {
+				t.Fatalf("expected zero per-block heap allocs in modal path, got %.3f", allocs)
+			}
+		})
 	}
 }
 
@@ -563,10 +579,10 @@ func TestModalPartialsParameterControlsModeCount(t *testing.T) {
 	a.ModalPartials = 4
 	sbA := NewStringBank(48000, a)
 	gA := sbA.ModalGroup(60)
-	if gA == nil || len(gA.strings) == 0 {
+	if gA == nil || gA.stringCount() == 0 {
 		t.Fatalf("expected modal group with strings")
 	}
-	countA := len(gA.strings[0].modes)
+	countA := gA.modeCount(0)
 	if countA < 1 {
 		t.Fatalf("expected at least one mode")
 	}
@@ -576,10 +592,10 @@ func TestModalPartialsParameterControlsModeCount(t *testing.T) {
 	b.ModalPartials = 12
 	sbB := NewStringBank(48000, b)
 	gB := sbB.ModalGroup(60)
-	if gB == nil || len(gB.strings) == 0 {
+	if gB == nil || gB.stringCount() == 0 {
 		t.Fatalf("expected modal group with strings")
 	}
-	countB := len(gB.strings[0].modes)
+	countB := gB.modeCount(0)
 	if countB < countA {
 		t.Fatalf("expected more allowed partials to keep >= modes: low=%d high=%d", countA, countB)
 	}
