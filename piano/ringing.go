@@ -8,12 +8,13 @@ import (
 type ringingGroup interface {
 	resonanceTarget
 	setKeyDown(down bool)
-	setSustain(down bool)
+	setSustainAmount(amount float32)
 	injectHammerForce(force float32, strikePos float32)
 	injectCouplingForce(force float32)
 	processSample(unisonCrossfeed float32) float32
 	endBlock(blockEnergy float64, frames int) bool
 	isActive() bool
+	takeResonanceEnergy() bool
 	stringCount() int
 	fundamental() float32
 }
@@ -26,10 +27,14 @@ type RingingStringGroup struct {
 	gains      []float32
 	resFilters []noteResonator
 
-	keyDown     bool
-	sustainDown bool
-	active      bool
-	quietBlocks int
+	keyDown       bool
+	sustainAmount float32
+	active        bool
+	quietBlocks   int
+
+	// resonanceEnergized records that injectResonance deposited energy since
+	// the bank last looked. The bank clears it when it enrolls the note.
+	resonanceEnergized bool
 }
 
 type couplingEdge struct {
@@ -125,24 +130,33 @@ func (g *RingingStringGroup) setKeyDown(down bool) {
 	}
 }
 
-func (g *RingingStringGroup) setSustain(down bool) {
-	g.sustainDown = down
+func (g *RingingStringGroup) setSustainAmount(amount float32) {
+	g.sustainAmount = clampf(amount, 0, 1)
 	g.updateDamperState()
-	if down {
+	if g.sustainAmount > 0 {
 		g.active = true
 		g.quietBlocks = 0
 	}
 }
 
 func (g *RingingStringGroup) updateDamperState() {
-	engageDamper := !g.keyDown && !g.sustainDown
+	damping := g.damperAmount()
 	for _, s := range g.strings {
-		s.SetDamper(engageDamper)
+		s.SetDamperAmount(damping)
 	}
 }
 
+// damperAmount is how firmly the damper rests on the string: a held key lifts
+// it completely, otherwise the pedal lifts it in proportion to its depth.
+func (g *RingingStringGroup) damperAmount() float32 {
+	if g.keyDown {
+		return 0
+	}
+	return 1 - g.sustainAmount
+}
+
 func (g *RingingStringGroup) isUndamped() bool {
-	return g.keyDown || g.sustainDown
+	return g.keyDown || g.sustainAmount > 0
 }
 
 func (g *RingingStringGroup) isActive() bool {
@@ -172,7 +186,18 @@ func (g *RingingStringGroup) injectResonance(energy float32) {
 		s.InjectForceAtPosition(energy*sg, 0.82)
 	}
 	g.active = true
+	g.resonanceEnergized = true
 	g.quietBlocks = 0
+}
+
+// takeResonanceEnergy reports whether sympathetic energy was injected since the
+// last call and clears the flag.
+func (g *RingingStringGroup) takeResonanceEnergy() bool {
+	if !g.resonanceEnergized {
+		return false
+	}
+	g.resonanceEnergized = false
+	return true
 }
 
 func (g *RingingStringGroup) injectHammerForce(force float32, strikePos float32) {
@@ -267,6 +292,7 @@ type StringBank struct {
 	couplingDistanceExponent float32
 	groups                   [128]*RingingStringGroup
 	modalGroups              [128]*ModalStringGroup
+	resonancePending         bool
 	targets                  []resonanceTarget
 	coupling                 [128][]couplingEdge
 	distanceMap              [128][128]float32
@@ -685,6 +711,36 @@ func (sb *StringBank) markActive(note int) {
 	sb.activeNotes = append(sb.activeNotes, note)
 }
 
+// syncResonatingNotes enrolls groups that were energized from outside the
+// bank's own note handling. Sympathetic resonance is injected straight into the
+// undamped groups by ResonanceEngine.InjectFromBridge, which marks a group
+// active without ever touching the active-note list; without this sweep such a
+// group would accumulate energy that Process never renders. The sweep runs at
+// most once per block, only after the resonance engine reported an injection,
+// so it adds no per-sample work and no allocations (markActive appends into the
+// pre-sized active-note list).
+func (sb *StringBank) syncResonatingNotes() {
+	if !sb.resonancePending {
+		return
+	}
+	sb.resonancePending = false
+	for note := sb.minNote; note <= sb.maxNote; note++ {
+		g := sb.activeGroup(note)
+		if g == nil || !g.takeResonanceEnergy() {
+			continue
+		}
+		sb.markActive(note)
+	}
+}
+
+// NotifyResonanceInjected tells the bank that the resonance engine deposited
+// energy into at least one group, so the next block has to look for groups that
+// need enrolling. Without the flag the idle bank would pay for the sweep on
+// every block.
+func (sb *StringBank) NotifyResonanceInjected() {
+	sb.resonancePending = true
+}
+
 func (sb *StringBank) SetKeyDown(note int, down bool) {
 	g := sb.activeGroup(note)
 	if g == nil {
@@ -697,12 +753,22 @@ func (sb *StringBank) SetKeyDown(note int, down bool) {
 }
 
 func (sb *StringBank) SetSustain(down bool) {
+	if down {
+		sb.SetSustainAmount(1)
+		return
+	}
+	sb.SetSustainAmount(0)
+}
+
+// SetSustainAmount applies a continuous pedal depth in [0,1] to every group in
+// the persistent bank, including notes that have not been struck yet.
+func (sb *StringBank) SetSustainAmount(amount float32) {
 	for note := sb.minNote; note <= sb.maxNote; note++ {
 		g := sb.activeGroup(note)
 		if g == nil {
 			continue
 		}
-		g.setSustain(down)
+		g.setSustainAmount(amount)
 	}
 }
 
@@ -739,6 +805,7 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 	if numFrames <= 0 {
 		return out
 	}
+	sb.syncResonatingNotes()
 	if len(sb.activeNotes) == 0 {
 		for i := 0; i < numFrames; i++ {
 			if hammer != nil {
@@ -921,11 +988,27 @@ func (r *RingingState) SetSustain(down bool) {
 	r.bank.SetSustain(down)
 }
 
+// SetSustainAmount applies a continuous sustain pedal depth in [0,1].
+func (r *RingingState) SetSustainAmount(amount float32) {
+	if r == nil || r.bank == nil {
+		return
+	}
+	r.bank.SetSustainAmount(amount)
+}
+
 func (r *RingingState) Process(numFrames int, hammer *HammerExciter) []float32 {
 	if r == nil || r.bank == nil {
 		return make([]float32, numFrames)
 	}
 	return r.bank.Process(numFrames, hammer)
+}
+
+// NotifyResonanceInjected forwards the resonance engine's report to the bank.
+func (r *RingingState) NotifyResonanceInjected() {
+	if r == nil || r.bank == nil {
+		return
+	}
+	r.bank.NotifyResonanceInjected()
 }
 
 func (r *RingingState) ResonanceTargets() []resonanceTarget {

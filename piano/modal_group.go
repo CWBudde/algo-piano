@@ -41,10 +41,14 @@ type ModalStringGroup struct {
 	undampedK  float32
 	dampedK    float32
 
-	keyDown     bool
-	sustainDown bool
-	active      bool
-	quietBlocks int
+	keyDown       bool
+	sustainAmount float32
+	active        bool
+	quietBlocks   int
+
+	// resonanceEnergized records that injectResonance deposited energy since
+	// the bank last looked. The bank clears it when it enrolls the note.
+	resonanceEnergized bool
 }
 
 func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringGroup {
@@ -249,25 +253,47 @@ func (g *ModalStringGroup) setKeyDown(down bool) {
 	}
 }
 
-func (g *ModalStringGroup) setSustain(down bool) {
-	g.sustainDown = down
+func (g *ModalStringGroup) setSustainAmount(amount float32) {
+	g.sustainAmount = clampf(amount, 0, 1)
 	g.updateDamperState()
-	if down {
+	if g.sustainAmount > 0 {
 		g.active = true
 		g.quietBlocks = 0
 	}
 }
 
+// updateDamperState blends the per-mode decay factors between the damped and
+// undamped tables according to how firmly the damper rests on the string. The
+// fully-lifted and fully-seated cases stay exact table copies so the modal core
+// remains bit-identical to the pre-partial-pedal behaviour.
 func (g *ModalStringGroup) updateDamperState() {
-	src := g.decayDamped
-	if g.keyDown || g.sustainDown {
-		src = g.decayUndamped
+	damping := g.damperAmount()
+	switch damping {
+	case 0:
+		copy(g.decay, g.decayUndamped)
+	case 1:
+		copy(g.decay, g.decayDamped)
+	default:
+		undamped := g.decayUndamped
+		damped := g.decayDamped
+		decay := g.decay
+		for i := range decay {
+			decay[i] = undamped[i] + (damped[i]-undamped[i])*damping
+		}
 	}
-	copy(g.decay, src)
+}
+
+// damperAmount is how firmly the damper rests on the string: a held key lifts
+// it completely, otherwise the pedal lifts it in proportion to its depth.
+func (g *ModalStringGroup) damperAmount() float32 {
+	if g.keyDown {
+		return 0
+	}
+	return 1 - g.sustainAmount
 }
 
 func (g *ModalStringGroup) isUndamped() bool {
-	return g.keyDown || g.sustainDown
+	return g.keyDown || g.sustainAmount > 0
 }
 
 func (g *ModalStringGroup) isActive() bool {
@@ -317,7 +343,21 @@ func (g *ModalStringGroup) injectAtPosition(force float32, strikePos float32, mo
 }
 
 func (g *ModalStringGroup) injectResonance(energy float32) {
+	if energy == 0 {
+		return
+	}
 	g.injectAtPosition(energy, 0.82, 0.55)
+	g.resonanceEnergized = true
+}
+
+// takeResonanceEnergy reports whether sympathetic energy was injected since the
+// last call and clears the flag.
+func (g *ModalStringGroup) takeResonanceEnergy() bool {
+	if !g.resonanceEnergized {
+		return false
+	}
+	g.resonanceEnergized = false
+	return true
 }
 
 func (g *ModalStringGroup) injectHammerForce(force float32, strikePos float32) {

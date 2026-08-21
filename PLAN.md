@@ -339,11 +339,11 @@ This phase is split into execution subphases to make progress and ownership expl
 
 ### Phase 9.5 — Instrument Semantics + Radiation + Web Migration
 
-- [ ] Make sustain/damper semantics instrument-wide:
-  - [ ] Sustain pedal down undamps relevant strings in the persistent bank (not just recently struck notes).
-  - [ ] Note release with sustain down stops excitation only; ringing continues until damping changes.
-  - [ ] Sustain pedal up reapplies damping deterministically to non-held strings.
-  - [ ] If partial pedal is supported, map to physical damping coefficients (not timer-based release logic).
+- [x] Make sustain/damper semantics instrument-wide:
+  - [x] Sustain pedal down undamps relevant strings in the persistent bank (not just recently struck notes).
+  - [x] Note release with sustain down stops excitation only; ringing continues until damping changes.
+  - [x] Sustain pedal up reapplies damping deterministically to non-held strings.
+  - [x] If partial pedal is supported, map to physical damping coefficients (not timer-based release logic).
 - [ ] Lock linear radiation path around bank output:
   - [ ] enforce `string-bank bridge mix -> body IR -> room IR`
   - [ ] keep body/room separation first-class in params/presets
@@ -351,7 +351,7 @@ This phase is split into execution subphases to make progress and ownership expl
   - [ ] complete WASM runtime IR apply (`wasmLoadIR`)
 - [ ] Web/demo compatibility:
   - [ ] keep JS/WASM note + pedal API stable
-  - [ ] retire sustain timer release behavior in web layer once physical pedal semantics are active
+  - [x] retire sustain timer release behavior in web layer once physical pedal semantics are active
   - [ ] verify no UI/playability regressions
 
 ### Phase 9.6 — Validation, Calibration, and Performance
