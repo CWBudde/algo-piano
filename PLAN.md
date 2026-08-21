@@ -14,224 +14,68 @@ Conventions used in this plan:
 
 ---
 
-## Phase 0 — Repo skeleton + build ("hello audio") ✓
+## Phases 0–8A — Foundation through first calibration baseline ✓
 
-- [x] Create basic Go project layout
-  - [x] Initialize module: `go mod init github.com/cwbudde/algo-piano`
-  - [x] Add `cmd/` for executables
-    - [x] `cmd/piano-render` (renders a short WAV for one note)
-    - [x] `cmd/piano-play` (placeholder for realtime playback)
-  - [x] Add packages
-    - [x] `piano/` (public engine API)
-    - [x] `dsp/` (delay lines, filters, interpolators)
-    - [x] `conv/` (partitioned convolution - placeholder)
-    - [x] `preset/` (parameter schema + loader - placeholder)
-  - [x] Add `assets/ir/`, `assets/presets/`, `examples/`
-- [x] Add minimal WAV writer for `piano-render`
-  - [x] Self-contained WAV writer in `dsp/wav.go` (16-bit PCM, low allocations)
-- [x] Define core public API (Go types; stubs allowed initially)
-  - [x] `type Piano struct` (global engine, voice allocation)
-  - [x] `type Voice struct` (one note, owns 1–3 strings)
-  - [x] `type StringWaveguide struct`
-  - [x] `type HammerModel interface` (or concrete `Hammer` type)
-  - [x] `type SoundboardConvolver struct` (initially pass-through)
-  - [x] `type Params struct` (preset structs)
-- [x] Add minimal DSP utilities (pure Go)
-  - [x] Denormal/flush-to-zero strategy (`FlushDenormals`)
-  - [x] `Biquad` filter (float32 path; no heap allocs in Process)
-  - [x] `DelayLine` circular buffer
-  - [x] Fractional delay interpolator (linear and cubic Lagrange)
+All items in these phases are complete; details live in the code, tests and
+linked docs. Kept here as a one-line record of what each phase established.
 
-**Done when:** `go run ./cmd/piano-render` produces a WAV with a non-zero signal. ✓
+- **Phase 0 — Repo skeleton + build.** Go module layout (`cmd/`, `piano/`,
+  `dsp/`, `conv/`, `preset/`, `assets/`), self-contained 16-bit WAV writer,
+  core public API types (`Piano`, `Voice`, `StringWaveguide`, `HammerModel`,
+  `SoundboardConvolver`, `Params`), and base DSP utilities (`FlushDenormals`,
+  `Biquad`, `DelayLine`, linear/cubic-Lagrange fractional delay).
+- **Phase 1 — First audible note.** Single-delay-line waveguide with feedback
+  and bridge pickoff, `N = fs/f0` tuning with fractional delay
+  (`TestTuningAccuracy`), temporary bipolar-triangular excitation with
+  velocity scaling, `NoteOn`/`NoteOff` in `Voice`.
+- **Phase 2 — Loss + dispersion.** Frequency-dependent loop loss, tunable
+  allpass dispersion cascade with note→inharmonicity mapping, fractional
+  strike position — each with its own behavioural test.
+- **Phase 3 — Hammer model.** Time-limited power-law felt contact
+  (`F = k·δ^p` plus Hunt–Crossley dissipation) with stability clamps,
+  integrated into waveguide scattering at the strike point; louder strikes
+  measurably brighten and long renders stay NaN/Inf free.
+- **Phase 4 — Unison strings.** 1–3 strings per voice with per-string detune
+  and gain, bridge-output sum with crossfeed, beating verified by test.
+- **Phase 5 — Soundboard/body IR.** Uniform partitioned overlap-add
+  `SoundboardConvolver` on the `algo-fft` backend (48 kHz, mono→stereo,
+  reset/flush), bounded-error test against direct convolution, wired into
+  `Piano`'s voice mix.
+- **Phase 6 — Pedals, dampers, releases.** Per-voice damper state, sustain CC
+  with smoothed transitions, una corda affecting strike position and hammer
+  hardness, plus pedal-up/pedal-down decay tests.
+- **Phase 7 — Sympathetic resonance.** `ResonanceEngine` tracking undamped
+  strings and injecting band-limited bridge energy, including per-note tuned
+  filtering; bloom under sustain verified by test.
+- **Phase 8 — Presets + parameterization.** `Params` schema for per-note
+  physical parameters plus a JSON preset loader and `assets/presets/default.*`,
+  so presets are tweakable without recompiling.
+- **Phase 8A — Reference distance harness.** `analysis` package (time-domain,
+  envelope, log-spectral and decay-slope metrics with automatic lag
+  alignment), `cmd/piano-distance` with render controls and JSON output, and
+  the first reproducible C4 baseline (2026-02-13: score `0.6147`, similarity
+  `8.55%`, envelope `15.708 dB`, spectral `23.756 dB`, decay slope
+  `7.858 dB/s`).
 
----
-
-## Phase 1 — First audible note (1 string, no convolution) ✓
-
-- [x] Implement `StringWaveguide` (lossless first, pure Go)
-  - [x] Single delay line with feedback (simplified approach)
-  - [x] Reflection coefficient (0.9999 for nearly lossless)
-  - [x] Bridge pickoff output as float sample
-  - [x] Parameters: `f0`, `sampleRate`, `delayLength`
-- [x] Implement tuning
-  - [x] Compute delay length `N = fs/f0` for complete loop
-  - [x] Add fractional delay with linear interpolation for fine tuning
-  - [x] Add unit test (`TestTuningAccuracy`): pitch within ±1-2 Hz tolerance
-- [x] Implement a temporary excitation (no hammer yet)
-  - [x] Bipolar triangular displacement for pluck/impulse excitation
-  - [x] Add `NoteOn` + `NoteOff` flow in `Voice`
-  - [x] Velocity scaling for excitation force
-
-**Done when:** `piano-render --note 69` produces a stable pitched tone. ✓
-
----
-
-## Phase 2 — Make the string “piano-ish” (loss + dispersion)
-
-- [x] Add loop loss filter inside the waveguide
-  - [x] Start with simple frequency-independent loss (single gain)
-  - [x] Upgrade to frequency-dependent loss (1–2 biquads or a small IIR)
-  - [x] Add test: energy decays monotonically for a damped configuration
-- [x] Add dispersion (inharmonicity) filter
-  - [x] Implement a tunable allpass cascade inside the loop
-  - [x] Add parameter mapping: note -> inharmonicity/dispersion settings
-  - [x] Add test: partials deviate from harmonic series in the correct direction
-- [x] Add strike position (still with temporary excitation)
-  - [x] Implement injection at a configurable fractional position along the string
-  - [x] Add test: moving strike position changes spectral tilt (qualitative)
-
-**Done when:** decay feels realistic and higher notes are inharmonic.
-
----
-
-## Phase 3 — Hammer model (nonlinear, short contact window)
-
-- [x] Implement `HammerModel` interface
-  - [x] Inputs: hammer velocity (from MIDI velocity mapping), strike position
-  - [x] Outputs: an injection signal/force for the string junction
-  - [x] Make contact time-limited (stop evaluating once separation happens)
-- [x] Implement power-law felt compression contact
-  - [x] Model: $F = k\,\delta^p$ plus dissipative term (e.g. Hunt–Crossley style)
-  - [x] Add safeguards for numerical stability (clamp, minimum dt assumptions)
-  - [x] Add test: increasing velocity increases brightness (qualitative metric)
-- [x] Integrate hammer into waveguide scattering at strike point
-  - [x] Implement strike junction scattering (simple and stable first)
-  - [x] Ensure no NaNs/inf in long renders
-
-**Done when:** loud/soft strikes clearly change timbre and remain stable.
-
----
-
-## Phase 4 — Unison strings (2–3 strings per note)
-
-- [x] Extend `Voice` to hold 1–3 `StringWaveguide` instances
-  - [x] Per-string detune in cents (small randomization or preset map)
-  - [x] Per-string gain differences
-- [x] Couple/mix strings
-  - [x] MVP: sum bridge outputs with tiny crossfeed
-  - [ ] (optional) Add weak coupling at bridge for “double decay” realism
-- [x] Add tests
-  - [x] Beats appear for two detuned strings (measure envelope modulation)
-
-**Done when:** chords and sustained notes have natural beating/bloom.
-
----
-
-## Phase 5 — Soundboard/body (commuted synthesis via IR convolution)
-
-- [x] Decide IR format and shipping strategy
-  - [x] Choose supported sample rates (e.g. 48k only initially)
-  - [x] Choose mono/stereo IR layout under `assets/ir/`
-- [x] Implement `SoundboardConvolver` (partitioned convolution)
-  - [x] MVP: uniform partitioned overlap-add
-  - [ ] Small early partitions for latency; larger for efficiency (later)
-  - [x] Provide stereo output from one mono bridge signal
-  - [x] Add reset/flush behavior for note-off and engine reset
-- [x] Pick FFT/convolution backend (pure Go)
-  - [x] Use `algo-fft`; let the library select the concrete FFT strategy
-  - [x] Use `algo-fft` convolution implementation as the default backend
-- [x] Add correctness test
-  - [x] Compare partitioned convolution vs direct convolution on small signals
-  - [x] Define acceptable error bound (float)
-- [x] Wire it into `Piano`
-  - [x] Mix all voices’ bridge outputs -> convolver -> stereo out
-
-**Done when:** swapping IRs causes big, plausible body/room changes.
-
----
-
-## Phase 6 — Pedals, dampers, and releases
-
-- [x] Damper model
-  - [x] Implement per-voice damper state
-  - [x] When damper engaged: increase loop loss aggressively
-  - [x] When sustain pedal down: keep strings in low-loss mode
-- [x] Sustain pedal
-  - [x] Add CC handling and smooth parameter transitions
-- [x] (optional) Una corda / soft pedal
-  - [x] Modify strike position and hammer hardness
-- [x] Add tests
-  - [x] Note release with pedal up decays quickly
-  - [x] With sustain down, note continues ringing
-
-**Done when:** pedal behavior matches basic piano expectations.
-
----
-
-## Phase 7 — Sympathetic resonance (big realism lever)
-
-- [x] Implement `ResonanceEngine`
-  - [x] Maintain list of undamped strings (pedal down or key held)
-  - [x] Inject filtered bridge/soundboard energy into undamped strings
-- [x] Choose MVP injection strategy
-  - [x] MVP: inject a band-limited version of the global bridge signal
-  - [x] (optional) Per-note filter tuned near each string’s fundamental/partials
-- [x] Add tests
-  - [x] With sustain down, silent keys cause audible bloom after strikes
-
-**Done when:** sustain pedal produces believable “wash” and bloom.
-
----
-
-## Phase 8 — Presets + parameterization
-
-- [x] Define `Params` schema
-  - [x] Per-note: `f0`, dispersion/inharmonicity, loss coefficients, strike position
-  - [ ] Unison: detune map, gains
-  - [ ] Global: IR set, output gain, limiter (optional)
-- [x] Add preset loader
-  - [x] Choose JSON or YAML and implement a minimal parser strategy
-  - [x] Add `assets/presets/default.*`
-- [ ] Add tooling hooks (optional)
-  - [ ] Offline helper to fit decay times / inharmonicity targets from recordings
-
-**Done when:** you can tweak a preset without recompiling.
-
----
-
-## Phase 8A — Reference distance harness (C4 calibration baseline) ✓
-
-- [x] Add objective distance tooling
-  - [x] Add `analysis` package with multi-metric audio distance:
-    - [x] time-domain RMSE
-    - [x] envelope RMSE (dB)
-    - [x] log-spectral RMSE (dB)
-    - [x] decay-slope mismatch (dB/s)
-  - [x] Add automatic lag estimation/alignment before scoring
-- [x] Add CLI tool `cmd/piano-distance`
-  - [x] Compare `reference/*.wav` against rendered model output
-  - [x] Support candidate render controls (`release-after`, decay threshold, min/max duration)
-  - [x] Optional JSON output for machine-readable tuning loops
-- [x] Establish first baseline against `reference/c4.wav`
-  - [x] Baseline (2026-02-13):
-    - [x] `Distance score`: `0.6147`
-    - [x] `Similarity`: `8.55%`
-    - [x] `Envelope RMSE`: `15.708 dB`
-    - [x] `Spectral RMSE`: `23.756 dB`
-    - [x] `Decay slope diff`: `7.858 dB/s`
-
-**Done when:** we can quantify model-vs-reference mismatch with reproducible numbers. ✓
+Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
+**Phase 15** so these phases close cleanly.
 
 ---
 
 ## Phase 8B — Distance-guided timbre matching (C4 first, then scale out)
 
-- [x] Collect and expose first optimization surface (hammer + detuning + IR influence)
-  - [x] Add preset-controlled hammer influence scales
-  - [x] Add preset-controlled unison detune/crossfeed scales
-  - [x] Add preset-controlled IR wet/dry/gain mix
-  - [x] Document suggested Mayfly bounds and optimization order in `docs/plans/2026-02-13-phase8b-tweak-surface.md`
+- [x] First optimization surface exposed: preset-controlled hammer influence,
+      unison detune/crossfeed and IR wet/dry/gain scales, with suggested Mayfly
+      bounds and optimization order in
+      `docs/plans/2026-02-13-phase8b-tweak-surface.md`.
 - [ ] Add render-control fitting loop (before touching physical params)
-  - [x] Add fast inner-loop CLI: `cmd/piano-fit-fast` (time-budgeted iterative optimization with checkpointed best preset/report)
-  - [x] Add runnable entrypoint: `just fit-c4-fast ...`
+  - [x] Fast inner loop in place: `cmd/piano-fit-fast` (time-budgeted, checkpointed
+        best preset/report), `just fit-c4-fast` entrypoint, persisted control
+        settings with score snapshot, and relative IR paths in fitter output that
+        stay loadable from `assets/presets/`. Fitted controls (`velocity=118`,
+        `release-after=3.5`) are the baseline for `just distance-c4`; the tracked
+        checkpoint (2026-02-13) scores `0.4107` at `19.35%` similarity.
   - [ ] Grid/coordinate search over `velocity`, `release-after`, and output gain to reduce avoidable mismatch
-  - [x] Persist best control settings with score snapshot
-  - [x] Ensure fitted preset IR path serialization stays loadable from `assets/presets/` (relative IR path handling in fitter output)
-  - [x] Use fitted render controls as baseline in `just distance-c4` (`velocity=118`, `release-after=3.5`)
-  - [x] Current reproducible fitted checkpoint (2026-02-13):
-    - [x] `Distance score`: `0.4107`
-    - [x] `Similarity`: `19.35%`
-    - [x] Controls from report: `velocity=118`, `release-after=3.5`
   - [ ] Promote post-checkpoint best (`score=0.4073`, `similarity=19.61%`, seen in run log at eval ~540) once persisted to preset/report
 - [ ] Add physically-meaningful fitting passes for note parameters
   - [ ] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
@@ -245,12 +89,13 @@ Conventions used in this plan:
   - [ ] Add acceptance thresholds for C4 (e.g. target score + per-metric caps)
   - [ ] CI check that rejects large regressions in distance metrics
 - [ ] Add metaheuristic optimizer integration (`github.com/CWBudde/mayfly`)
-  - [x] Define optimization vector and bounds (hammer, loss, dispersion, strike position, release controls)
-  - [x] Wrap `analysis.Compare` as objective function (weighted multi-metric score)
-  - [x] Run Mayfly on C4 first with fixed random seed + checkpointed best candidate
+  - [x] Single-note integration done: optimization vector and bounds (hammer, loss,
+        dispersion, strike position, release controls), `analysis.Compare` wrapped as
+        weighted objective, C4 runs with fixed seed and checkpointed best candidate,
+        best-fit preset persisted to a configurable path (default
+        `assets/presets/fitted-c4.json`, tracked run
+        `assets/presets/fitted-c4-mayfly.json`), plus max-eval/time budget controls.
   - [ ] Add constrained multi-note run (e.g. C3/C4/C5) with shared + per-note parameter blocks
-  - [x] Persist best-fit preset to configurable output path (default `assets/presets/fitted-c4.json`; current tracked run in `assets/presets/fitted-c4-mayfly.json`)
-  - [x] Add optimizer budget controls (max evals / time limit) for reproducible tuning sessions
 
 **Done when:** C4 distance and sub-metrics improve materially and remain stable across changes.
 
@@ -258,32 +103,21 @@ Conventions used in this plan:
 
 ## Phase 8C — Slow loop: IR-shape optimization with `ir-synth` + Mayfly
 
-- [x] Preparation for IR-parameter fitting tool
-  - [x] Define candidate CLI tool scope and IO contract in `docs/plans/2026-02-13-phase8c-ir-fit-tool.md`
-  - [x] Lock initial optimization vector to current `irsynth.Config` fields (`modes`, `brightness`, `stereo-width`, `direct`, `early`, `late`, `low-decay`, `high-decay`)
-  - [x] Define checkpoint/report artifacts and resume behavior for long outer-loop runs
-- [x] Add IR-synthesis objective loop (outer loop; slower than preset-only fitting)
-  - [x] Implement dedicated CLI `cmd/piano-fit-ir` for outer-loop IR fitting
-  - [x] Generate candidate IR per evaluation via `irsynth.GenerateStereo` (same synth core as `cmd/ir-synth`)
-  - [x] Evaluate against `reference/c4.wav` by rendering with candidate IR and scoring via `analysis.Compare`
-  - [x] Optimize over IR synthesis parameters:
-    - [x] `modes` (e.g. `32..256`)
-    - [x] `brightness` (e.g. `0.5..2.5`)
-    - [x] `stereo-width` (e.g. `0.0..1.0`)
-    - [x] `direct` (e.g. `0.1..1.2`)
-    - [x] `early` (e.g. `0..48`)
-    - [x] `late` (e.g. `0.0..0.12`)
-    - [x] `low-decay` (e.g. `0.6..5.0` s)
-    - [x] `high-decay` (e.g. `0.1..1.5` s)
-- [x] Integrate Mayfly for this outer loop
-  - [x] Objective = weighted distance score from `analysis.Compare`
-  - [x] Fixed seed + checkpoint best candidate every N evals
-  - [x] Use strict budget controls (`time-budget`, `max-evals`, round eval budget, population)
-  - [x] Add optional joint optimization mode (`--optimize-joint`) to include selected fast-loop knobs with IR knobs
-- [ ] Persist and promote winning IRs
-  - [x] Save best IRs under `assets/ir/fitted/` (default output path)
-  - [x] Record score + synth parameters in sidecar metadata (`.report.json`)
-  - [ ] Compare top-K IRs with multi-note validation before selecting default
+- [x] Preparation, tool scope and IO contract locked in
+      `docs/plans/2026-02-13-phase8c-ir-fit-tool.md`, including the optimization
+      vector over `irsynth.Config` (`modes`, `brightness`, `stereo-width`,
+      `direct`, `early`, `late`, `low-decay`, `high-decay`) and the
+      checkpoint/report/resume behaviour for long runs.
+- [x] Outer-loop IR fitting implemented as `cmd/piano-fit-ir`: candidate IRs via
+      `irsynth.GenerateStereo`, scored against `reference/c4.wav` through
+      `analysis.Compare`, optimized over the full parameter vector above.
+- [x] Mayfly integration for the outer loop: weighted distance objective, fixed
+      seed, periodic best-candidate checkpoints, strict budget controls
+      (`time-budget`, `max-evals`, round budget, population) and an optional
+      joint mode (`--optimize-joint`) mixing in fast-loop knobs.
+- [x] Best IRs saved under `assets/ir/fitted/` with score and synth parameters
+      in a `.report.json` sidecar.
+- [ ] Compare top-K IRs with multi-note validation before selecting default
 
 **Done when:** synthetic IR candidates measurably reduce spectral/envelope distance without destabilizing decay behavior.
 
@@ -293,50 +127,27 @@ Conventions used in this plan:
 
 This phase is split into execution subphases to make progress and ownership explicit.
 
-### Phase 9.1 — Foundation Refactor (completed)
+### Phase 9.1–9.4 — Foundation, persistent bank, and coupling ✓
 
-- [x] Split responsibilities into explicit components:
-  - [x] key/control state (note on/off, pedal state)
-  - [x] hammer excitation events (short nonlinear contact)
-  - [x] persistent ringing state
-- [x] Refactor away from classical transient voice ownership of string lifetime.
-- [x] Keep `Piano.NoteOn/NoteOff/SetSustainPedal` public API unchanged.
-
-### Phase 9.2 — Persistent String Bank Completion
-
-- [x] Allocate full piano string set at init (1-3 strings per note), independent of active notes.
-- [x] Maintain per-string damper state independent from note allocation.
-- [x] Keep per-string calibration hooks (detune, loss, inharmonicity, gain, strike mapping).
-- [x] Ensure no per-sample/per-block heap allocations are introduced by the bank processing path.
-
-### Phase 9.3 — Baseline Sparse Coupling (completed MVP)
-
-- [x] Add sparse coupling graph between strings.
-- [x] Implement harmonic neighborhoods:
-  - [x] unison/near-unison family
-  - [x] octave-related neighbors
-  - [x] fifth-related neighbors (coarse consonance proxy)
-- [x] Apply coupling at bridge-side injection points with stable force limits.
-- [x] Add coupling feature switch and gain controls in params/presets.
-
-### Phase 9.4 — Physically-Informed Coupling (general-parameter model)
-
-- [x] Add physically-informed weight model path (`coupling_mode=physical`) based on general parameters.
-- [x] Define coupling coefficient for source string `i` to target string `j` using:
-  - [x] overtone strength profile of source string
-  - [x] frequency alignment between source/target harmonic frequencies
-  - [x] approximate inter-string distance penalty
-  - [x] detune penalty (larger detune => weaker coupling)
-  - [x] unison-count scaling across low/mid/high note regimes (1/2/3 strings)
-- [x] Build and persist an approximate string-distance map across the instrument.
-- [x] Precompute sparse top-K coupling edges from the continuous model (threshold + neighbor cap).
-- [x] Add normalized coupling scaling (per-source edge normalization + polyphony normalization).
-- [x] Add user-facing control extent:
-  - [x] `coupling_mode`: `off | static | physical`
-  - [x] `coupling_amount`: scalar `0..1` blend/strength control
-  - [x] advanced knobs: harmonic falloff, detune sigma, distance exponent, max neighbors
-- [x] Keep hard safety clamps (`max_force`) in coupling injection path.
-
+- **9.1 Foundation refactor.** Key/control state, hammer excitation events and
+  persistent ringing state are separate components; string lifetime no longer
+  belongs to a transient voice; `NoteOn`/`NoteOff`/`SetSustainPedal` unchanged.
+- **9.2 Persistent string bank.** Full 1–3-strings-per-note set allocated at
+  init independent of active notes, per-string damper state and calibration
+  hooks (detune, loss, inharmonicity, gain, strike mapping), no per-sample or
+  per-block heap allocations in the bank path.
+- **9.3 Baseline sparse coupling (MVP).** Sparse coupling graph with
+  unison/near-unison, octave and fifth neighbourhoods, applied at bridge-side
+  injection points under stable force limits, with a feature switch and gain
+  controls in params/presets.
+- **9.4 Physically-informed coupling.** `coupling_mode=physical` weight model
+  built from overtone strength, harmonic frequency alignment, inter-string
+  distance penalty, detune penalty and unison-count scaling; persisted
+  string-distance map; sparse top-K edge precomputation with threshold and
+  neighbour cap; per-source and polyphony normalization; user controls
+  (`coupling_mode` `off|static|physical`, `coupling_amount`, plus harmonic
+  falloff, detune sigma, distance exponent and max-neighbour knobs); hard
+  `max_force` clamps retained in the injection path.
 ### Phase 9.5 — Instrument Semantics + Radiation + Web Migration
 
 - [x] Make sustain/damper semantics instrument-wide:
@@ -378,18 +189,12 @@ This phase is split into execution subphases to make progress and ownership expl
 
 ## Phase 10 — Web demo (WASM + AudioWorklet) ✓
 
-- [x] Choose build approach (Go-only)
-  - [x] Standard Go WASM (using syscall/js for bridge between Go and JS)
-  - [x] Define a stable exported API for WASM calls (process block, note events)
-- [x] Create web demo (`web/`)
-  - [x] AudioWorklet processor for real-time audio
-  - [x] UI: minimal keyboard (2 octaves) + sustain pedal toggle
-  - [x] Computer keyboard bindings for playability
-  - [x] WASM bridge with Go audio engine
-- [x] Build and deployment infrastructure
-  - [x] Build script (`scripts/build-wasm.sh`) for WASM compilation
-  - [x] GitHub Actions workflow for automated deployment to GitHub Pages
-  - [x] IR asset loading with graceful fallback
+- [x] Go-only WASM build (`syscall/js`) with a stable exported API for process
+      block and note events, keeping web/API behaviour independent of the core.
+- [x] Web demo under `web/`: AudioWorklet processor, 2-octave keyboard UI with
+      sustain toggle, computer-keyboard bindings, WASM bridge to the Go engine.
+- [x] Build and deployment: `scripts/build-wasm.sh`, GitHub Actions deploy to
+      GitHub Pages, IR asset loading with graceful fallback.
 
 **Done when:** playable in browser without glitches on a typical machine. ✓
 
@@ -408,48 +213,26 @@ This phase is split into execution subphases to make progress and ownership expl
 
 ### Tasks
 
-#### 11.1 — Fix output level calibration ✅
+#### 11.1–11.4 — Level, attack noise, HF sustain, spectral metrics ✅
 
-- [x] Investigate why candidate is 40 dB quieter than reference
-  - Root cause: hardcoded `contactForce * 0.002` in `piano/control.go:117` (-54 dB attenuation)
-- [x] Check signal chain gain stages: hammer exciter amplitude → string waveguide → body convolver → room convolver → output gain
-- [x] Widen output_gain knob range if needed, or find the scaling bug
-  - Changed force scaling `0.002 → 0.2` (+40 dB), widened output_gain range `[0.4,1.8] → [0.01,5.0]`
-- [x] Verify spectral-compare shows <5 dB level gap after fix
-  - Peak level gap: -41 dB → -1 dB with stage3 preset
-
-#### 11.2 — Add hammer attack noise component
-
-- [x] Add a short broadband noise burst at note onset in the hammer exciter
-- [x] Parameters: attack_noise_level (amplitude), attack_noise_duration_ms (~1-5ms), attack_noise_color (spectral tilt)
-- [x] The noise models felt-on-string impact and gives the initial "click"
-- [x] Make parameters optimizable as piano-fit knobs
-- [x] Verify attack window (0-20ms) spectral energy improves
-
-#### 11.3 — Improve high-frequency sustain
-
-- [x] Investigate frequency-dependent string loss (current loss is per-sample, uniform across harmonics)
-  - DWG model had one-pole lowpass in loop but coefficient hardcoded to 0.05
-  - Modal model had negligible order-dependent decay terms
-- [x] Option A: Add a loss_frequency_scale parameter — higher harmonics get less additional damping
-  - Added `high_freq_damping` parameter [0.0, 0.6] exposed in Params, preset JSON, and piano-fit knobs
-  - DWG: controls the existing one-pole lowpass coefficient in the waveguide loop
-  - Modal: scales the order and frequency dependent decay terms in modalDecay
-- [x] Option B: Add a separate high-frequency loss term (2-pole lowpass on the waveguide delay line, already common in Karplus-Strong models)
-  - The existing one-pole was sufficient once properly parameterized; 2-pole not needed at this stage
-- [x] Verify hi-mid and high band energy in sustain/decay phases improves
-  - Test confirms: tail spectral centroid drops from 1711 Hz (low damp) to 816 Hz (high damp)
-
-#### 11.4 — Spectral distance improvements
-
-- [x] Consider making spectralRMSEDB use multiple time windows (STFT-based) instead of just the first 4096 samples
-  - Already used 5 positions; increased to 8 for finer coverage
-- [x] Weight early/sustain/decay phases differently in the score
-  - Phase detection via envelope peak and -20dB threshold
-  - Weights: attack=40%, sustain=35%, decay=25%
-- [x] Add per-band spectral distance to the analysis.Metrics for diagnostics
-  - Added SpectralLowRMSEDB (0-500Hz), SpectralMidRMSEDB (500-2kHz), SpectralHighRMSEDB (2kHz+)
-  - Displayed in piano-distance, spectral-compare, and piano-fit formatDominant
+- **11.1 Output level calibration.** Root cause was a hardcoded
+  `contactForce * 0.002` in `piano/control.go` (−54 dB). Force scaling changed
+  to `0.2` and `output_gain` widened from `[0.4,1.8]` to `[0.01,5.0]`; the
+  peak level gap against the reference went from −41 dB to −1 dB (stage3).
+- **11.2 Hammer attack noise.** Short broadband burst at onset with
+  `attack_noise_level`, `attack_noise_duration_ms` and `attack_noise_color`,
+  exposed as piano-fit knobs; 0–20 ms attack-window spectral energy improved.
+- **11.3 High-frequency sustain.** Added `high_freq_damping` `[0.0, 0.6]` in
+  `Params`, preset JSON and the fit knobs — it drives the previously hardcoded
+  one-pole in the DWG loop and scales the order/frequency-dependent terms in
+  `modalDecay`. A second pole proved unnecessary. Test confirms tail spectral
+  centroid moves 1711 Hz → 816 Hz across the damping range.
+- **11.4 Spectral distance metrics.** `spectralRMSEDB` now samples 8 windows
+  instead of one, phases are detected via envelope peak and −20 dB threshold
+  and weighted (attack 40%, sustain 35%, decay 25%), and per-band metrics
+  (`SpectralLowRMSEDB` 0–500 Hz, `SpectralMidRMSEDB` 500 Hz–2 kHz,
+  `SpectralHighRMSEDB` 2 kHz+) are reported by `piano-distance`,
+  `spectral-compare` and `piano-fit`.
 
 #### 11.5 — Body IR Kirchhoff model refinements (deferred)
 
@@ -500,43 +283,25 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
 
 **Goal:** add a modal-bank string core for low-CPU operation while preserving timbral compatibility with the DWG reference path.
 
-### 12.1 — Architecture + runtime switch
+### 12.1–12.3 — Architecture, modal core, and DWG matching ✓
 
-- [x] Define a shared `StringModel` contract for per-note ringing:
-  - [x] `SetKeyDown`, `SetSustain`, excitation injection, block render, reset
-  - [x] coupling injection compatibility (same external API as DWG path)
-- [x] Implement engine-level core selection:
-  - [x] `dwg | modal` mode in params/presets
-  - [x] runtime-safe selection at init (and optional live switch if stable)
-- [x] Keep existing web/API behavior unchanged regardless of selected core.
-
-### 12.2 — Implement modal bank core
-
-- [x] Add `StringModalBank` (per-note resonator/mode set):
-  - [x] mode frequency layout (fundamental + partials with inharmonicity option)
-  - [x] per-mode damping/loss mapping across keyboard
-  - [x] excitation projection from hammer to mode amplitudes
-  - [x] sustain/damper semantics equivalent to DWG path
-- [x] Add anti-alias/stability controls for high partials near Nyquist.
-- [x] Ensure no per-block heap allocations in modal render path.
-
-### 12.3 — DWG-to-modal matching/calibration
-
-- [x] Define DWG reference renders as modal fit targets:
-  - [x] attack window
-  - [x] early sustain
-  - [x] decay envelope
-- [x] Build a fitter to match modal parameters to a high-quality DWG preset:
-  - [x] per-note or register-wise mode gain/damping fitting
-  - [ ] optional shared global priors to reduce parameter count
-- [x] Add an export flow:
-  - [x] generate modal parameter tables from DWG reference preset
-  - [x] version and store fitted modal profiles in assets/presets
-
-Tooling:
-
-- [x] Added `cmd/piano-modal-fit` to calibrate modal knobs against DWG renders and export a calibrated modal preset + report.
-- [x] Switched `cmd/piano-modal-fit` objective search from ad-hoc random mutations to Mayfly (`--mayfly-variant`, `--mayfly-pop`) with local post-refinement.
+- **12.1 Architecture + runtime switch.** Shared `StringModel` contract
+  (`SetKeyDown`, `SetSustain`, excitation injection, block render, reset, and
+  coupling injection with the same external API as DWG), engine-level
+  `dwg | modal` selection in params/presets resolved at init, web/API behaviour
+  unchanged either way.
+- **12.2 Modal bank core.** `StringModalBank` with fundamental-plus-partials
+  mode layout and optional inharmonicity, keyboard-wide per-mode damping,
+  hammer→mode excitation projection, DWG-equivalent sustain/damper semantics,
+  anti-alias/stability handling for partials near Nyquist, and no per-block
+  heap allocations.
+- **12.3 DWG-to-modal matching.** DWG renders (attack window, early sustain,
+  decay envelope) act as fit targets; per-note and register-wise mode
+  gain/damping fitting exports versioned modal profiles into
+  `assets/presets`. Tooling: `cmd/piano-modal-fit`, whose objective search was
+  moved from ad-hoc random mutation to Mayfly (`--mayfly-variant`,
+  `--mayfly-pop`) with local post-refinement. The optional shared global priors
+  are deferred to **Phase 15**.
 
 ### 12.4 — Validation + performance acceptance
 
@@ -574,28 +339,25 @@ package in v0.7.0. `algo-piano` therefore calls `algo-vecmath` directly.
 - `VEC-307` — partial (no `RotateDecay` baseline table).
 - `VEC-308` (denormal/long-tail tests) — open.
 
-- [x] `PIANO-401` — Track upstream readiness and version pins.
-  - [x] `algo-vecmath` audited: 301–305 usable, 306 missing, 307 partial, 308 open
-  - [x] `algo-dsp` Phase 41 confirmed not started — no upstream modal layer to adopt
-  - [x] update `go.mod`: `algo-approx` v0.2.0, `algo-dsp` v0.7.0, `algo-fft` v0.8.0,
-        `algo-pde` v0.2.2, `algo-vecmath` v0.1.3 (now a direct dependency)
-- [x] `PIANO-402` — Add adapter layer in modal path.
-  - [x] `ModalStringGroup` mode state converted to flat SoA (`piano/modal_group.go`)
-  - [x] existing modal knobs preserved (`modal_partials`, damping, inharmonicity, strike shape)
-  - [x] scalar fallback kept behind a runtime switch (`modalKernelMode`, `modalArenaEnabled`)
-- [x] `PIANO-403` — Replace the per-mode scalar update loop with SIMD kernels.
-  - [x] batch across **notes**, not across time: `piano/modal_arena.go` compacts every
-        active group into one arena and makes a single kernel call per sample
-  - [x] no additional per-block allocations (arena pre-sized at bank construction)
-  - [x] coupling/resonance semantics unchanged
-- [x] `PIANO-404` — Correctness/parity test gate.
-  - [x] bit-exact parity tests across scalar / accum / rotate / arena (`piano/modal_parity_test.go`)
-  - [x] sustain pedal and damped/undamped transitions covered
-  - [x] long-render stability: no NaN/Inf; denormal spin fixed (see below)
-- [x] `PIANO-405` — Performance acceptance gate.
-  - [x] modal CPU vs pre-refactor baseline: **−26.9%** (8 notes), **−21.4%** (86 notes)
-  - [x] DWG vs modal benchmarked — see caveat under `PIANO-406`
-  - [x] results recorded in `BENCHMARKS.md` with machine, Go version and date
+- [x] `PIANO-401` — Upstream readiness tracked and versions pinned:
+      `algo-vecmath` audited (301–305 usable, 306 missing, 307 partial, 308
+      open), `algo-dsp` Phase 41 confirmed not started, `go.mod` updated to
+      `algo-approx` v0.2.0, `algo-dsp` v0.7.0, `algo-fft` v0.8.0, `algo-pde`
+      v0.2.2 and `algo-vecmath` v0.1.3 (now a direct dependency).
+- [x] `PIANO-402` — Adapter layer: `ModalStringGroup` mode state converted to
+      flat SoA (`piano/modal_group.go`), existing modal knobs preserved, scalar
+      fallback kept behind `modalKernelMode` / `modalArenaEnabled`.
+- [x] `PIANO-403` — SIMD kernels replace the per-mode scalar update loop,
+      batching across **notes** via `piano/modal_arena.go` (one kernel call per
+      sample over all active groups), with no extra per-block allocations and
+      unchanged coupling/resonance semantics.
+- [x] `PIANO-404` — Parity gate: bit-exact across scalar/accum/rotate/arena
+      (`piano/modal_parity_test.go`), sustain and damped/undamped transitions
+      covered, long renders NaN/Inf free with the denormal spin fixed.
+- [x] `PIANO-405` — Performance gate: modal CPU **−26.9%** (8 notes) and
+      **−21.4%** (86 notes) vs the pre-refactor baseline, DWG vs modal
+      benchmarked (caveat under `PIANO-406`), results recorded in
+      `BENCHMARKS.md` with machine, Go version and date.
 - [ ] `PIANO-406` — Shipping profile decision refresh.
   - [ ] **Blocked on a real finding:** the modal core is _not_ currently cheaper
         than DWG at the default 8 partials — the two are within noise across the
@@ -671,6 +433,48 @@ distance measured in 12.4, so that bound cannot be tightened until it is fixed.
 - [ ] Add key-off / pedal noise (small synthesized bursts or tiny samples)
 - [ ] Add output limiter/safety clipper
 - [ ] Improve dispersion/loss mapping across the keyboard
+
+---
+
+## Phase 15 — Deferred refinements (moved from earlier phases)
+
+These items were open inside otherwise-complete phases. They are unchanged in
+scope, only split into smaller steps so they can be picked up independently.
+
+### 15.1 — Weak bridge coupling for double decay (from Phase 4)
+
+- [ ] Add weak inter-string coupling at the bridge inside a unison group in the
+      DWG core (beyond the existing output crossfeed)
+- [ ] Add the equivalent coupling in the modal core so both cores agree
+- [ ] Expose coupling strength as a preset parameter with a safe default
+- [ ] Add a test measuring the two-stage (prompt/aftersound) decay envelope
+
+### 15.2 — Non-uniform partitioned convolution (from Phase 5)
+
+- [ ] Small early partitions to cut convolver latency
+- [ ] Larger late partitions for throughput on long IRs
+- [ ] Correctness test against direct convolution at the existing error bound
+- [ ] Benchmark against the uniform scheme at equal IR length and block size
+
+### 15.3 — Complete the `Params` schema (from Phase 8)
+
+- [ ] Unison block: per-note detune map and per-string gains
+- [ ] Global block: IR set selection and output gain
+- [ ] Global block: optional limiter settings
+- [ ] Preset round-trip test (load → serialize → load) covering the new fields
+
+### 15.4 — Offline fitting helpers (optional, from Phase 8)
+
+- [ ] Helper that fits decay times from recordings to loss parameters
+- [ ] Helper that fits inharmonicity targets from recordings to dispersion
+- [ ] CLI entrypoint wiring both helpers with reproducible output artifacts
+- [ ] Document the workflow alongside the existing fitting tools
+
+### 15.5 — Shared global priors for modal fitting (from Phase 12.3)
+
+- [ ] Define a register-wise prior parameterization for mode gain/damping
+- [ ] Fit per-note deviations against the priors to cut parameter count
+- [ ] Verify fit quality does not regress against the current per-note profiles
 
 ---
 
