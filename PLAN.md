@@ -64,23 +64,30 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
 
 ## Phase 8B — Distance-guided timbre matching (C4 first, then scale out)
 
-> **Recorded scores from before 2026-08 are NOT comparable.**
-> `analysis/distance.go` changed six times between 2026-02-14 and 2026-08-16
-> (phase detection, normalisation), so every score written into a report before
-> that window was produced by a different metric implementation. This applies to
-> the `0.6147` Phase 8A baseline above and to the `best_score 0.3839` recorded in
-> `assets/presets/fitted-c4-mayfly.json.report.json` alike — re-measure, never
-> compare across that boundary. The canonical current number is below, and
+> **Recorded scores are comparable only within a renderer/metric generation.**
+> There are two boundaries, and both invalidate numbers across them:
+>
+> 1. **The metric.** `analysis/distance.go` changed six times between 2026-02-14
+>    and 2026-08-16 (phase detection, normalisation), so every score written into
+>    a report before that window was produced by a different metric
+>    implementation. This applies to the `0.6147` Phase 8A baseline above and to
+>    the `best_score 0.3839` recorded in
+>    `assets/presets/fitted-c4-mayfly.json.report.json` alike.
+> 2. **The renderer.** The DWG treble-collapse fix (#14) removed a DC pedestal
+>    that was 44.6% of the rendered candidate's RMS. It changed every render, so
+>    every Phase 8B number measured before it — including the whole pass-results
+>    table in `docs/optimization-workflow.md` — describes a synthesizer that no
+>    longer exists. Re-measure; never compare across it.
+>
 > `docs/plans/2026-08-21-phase8b-metrics.md` has the detail.
 >
-> **Current C4 baseline (re-measured 2026-08-21):**
+> **Current C4 baseline (re-measured 2026-08-21, post-#14):**
 > `assets/presets/fitted-c4-mayfly.json` vs `reference/c4.wav`, note 60,
 > velocity 118, release-after 3.5 s, 48 kHz, decay-dbfs -90, decay-hold-blocks 6,
-> min-duration 2.0, max-duration 30 — score `0.5194`, similarity `12.52%`,
-> time `0.1104`, envelope `9.008 dB`, spectral `58.18 dB`, decay slope
-> `3.177 dB/s`. Pristine HEAD and the working tree agree to the last digit
-> (`0.5194351732385747`), so this is the metric's current definition and not a
-> regression.
+> min-duration 2.0, max-duration 30 — score `0.5330`, similarity `11.86%`,
+> time `0.1022`, envelope `10.801 dB`, spectral `52.890 dB`, decay diff
+> `5.428 dB/s`. The exact value `0.5329500259948227` is what `just gate-c4`
+> prints and what `assets/thresholds/c4.json` is fenced against.
 
 - [x] First optimization surface exposed: preset-controlled hammer influence,
       unison detune/crossfeed and IR wet/dry/gain scales, with the knob groups,
@@ -116,7 +123,8 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
       `attack` → `inharmonicity` and leaves the regressing `sustain` pass out.
       Measurements below.)
   - [x] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
-        (180 s from `fitted-c4-mayfly.json`, `--pass-window 0:0.35`: legacy score
+        (measured pre-#14, see the boundary note above; 180 s from
+        `fitted-c4-mayfly.json`, `--pass-window 0:0.35`: legacy score
         `0.5194` → `0.5117`, attack centroid error `0.440` → `0.084` octaves. The
         one pass that is a net win today.)
   - [ ] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
@@ -124,11 +132,13 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         it into a shipping preset yet.** It improves exactly what `decay-v1`
         weights, segmented decay RMSE `14.58` → `12.84` dB/s, and pays with
         spectral RMSE `58.0` → `66.9` dB and partial-level RMSE `14.0` → `27.4` dB,
-        for a legacy score of `0.5581`. Cause is the saturated `NormSpectral`
-        below, not the pass machinery: at both 58 dB and 67 dB the spectral term
-        normalises to exactly 1.0, so it is a constant in `decay-v1` and exerts no
-        restoring force, while partial level carries weight 0 there. Blocked on
-        the `NormSpectral` recalibration.)
+        for a legacy score of `0.5581`. Cause was the saturated `NormSpectral`,
+        not the pass machinery: at both 58 dB and 67 dB the spectral term
+        normalised to exactly 1.0, so it was a constant in `decay-v1` and exerted
+        no restoring force, while partial level carries weight 0 there.
+        `analysis.CalibratedNorms()` has since removed that saturation, and these
+        numbers additionally predate the #14 renderer change — so the box is now
+        waiting on a re-run, not on the norms.)
   - [ ] Inharmonicity pass: fit dispersion/inharmonicity via partial-frequency error
         (runs; score-neutral from the attack-pass preset, `0.5117` → `0.5121`,
         partial-frequency RMSE `34.9` → `34.5` cents. Its three knobs have too
@@ -182,17 +192,25 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
 
 **Done when:** C4 distance and sub-metrics improve materially and remain stable across changes.
 
-**Not yet calibrated:** `NormSpectral = 30.0` is saturated for every preset in
-the repo (measured 51.5-63.7 dB, plus a degenerate 172 dB outlier), so the
-largest-weight component of `legacy-v1` provides the optimizer no gradient at
-all. The gate checks the raw dB value, which is still a real regression signal.
-Re-calibrating `NormSpectral` to ~70-80 rewrites every recorded score and so
-belongs in a separate, deliberately re-baselined change.
+**Norm calibration — done for the profiles that steer the optimizer.**
+`NormSpectral = 30.0` is saturated for every preset in the repo (measured
+47.8-68.6 dB on 2026-08-21, plus a degenerate 172 dB outlier from
+`modal-calibrated.json`), and so are `NormPartialLevel`, `NormPartialFreq`,
+`NormAttackRise` and `NormAttackCentroid`. A saturated component is a constant,
+which is why the sustain pass could degrade spectral RMSE by 9 dB with neither
+its own profile nor the legacy gate objecting.
 
-This is no longer only a missed opportunity: the sustain pass above degraded
-spectral RMSE by 9 dB and neither its own profile nor the legacy gate could see
-it, because a saturated component is a constant. **Recalibrating `NormSpectral`
-is now a prerequisite for the sustain pass, not a nice-to-have.**
+`analysis.CalibratedNorms()` fixes this for `balanced-v2`, `attack-v1`,
+`decay-v1` and `inharmonicity-v1`, with every value picked from the measured
+population spread rather than guessed. `legacy-v1` deliberately keeps
+`LegacyNorms()` and keeps saturating: that is what makes every tracked report
+and `assets/thresholds/c4.json` mean what it says. The gate checks the raw dB
+value, which is a real regression signal either way.
+
+**Still open:** the sustain and inharmonicity passes have not been re-run since.
+Every recorded pass number predates both the calibration and the #14 renderer
+change, so the two unticked boxes above are waiting on a measurement, not on a
+missing mechanism.
 
 ---
 

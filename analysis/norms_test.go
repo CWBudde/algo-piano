@@ -104,20 +104,97 @@ func TestAttackNormUsesProfileNorms(t *testing.T) {
 	}
 }
 
-// TestRegisteredProfilesResolveToLegacyNorms records the state this change
-// deliberately leaves behind: the plumbing exists, but no profile uses it yet,
-// so every profile still scores exactly as it did before. Recalibrating the
-// non-legacy profiles is a separate, measured change.
-func TestRegisteredProfilesResolveToLegacyNorms(t *testing.T) {
-	legacy := LegacyNorms()
+// TestLegacyProfileKeepsFrozenNorms pins the half of the rule that must never
+// bend: the legacy profile must never pick up a recalibrated scale, or every
+// number recorded in a tracked *.report.json and in assets/thresholds/c4.json
+// stops meaning what it says.
+func TestLegacyProfileKeepsFrozenNorms(t *testing.T) {
+	w, err := WeightsForProfile(ProfileLegacyV1)
+	if err != nil {
+		t.Fatalf("legacy profile: %v", err)
+	}
+	if got := w.Norms.resolve(); got != LegacyNorms() {
+		t.Errorf("legacy-v1 resolved norms %+v, want %+v", got, LegacyNorms())
+	}
+}
+
+// TestNonLegacyProfilesUseCalibratedNorms covers the other half of the rule
+// recorded in the calibration note: a profile meant to steer an optimizer must
+// ship recalibrated norms rather than inheriting the frozen ones.
+func TestNonLegacyProfilesUseCalibratedNorms(t *testing.T) {
 	for _, name := range Profiles() {
+		if name == ProfileLegacyV1 {
+			continue
+		}
 		w, err := WeightsForProfile(name)
 		if err != nil {
 			t.Fatalf("profile %q: %v", name, err)
 		}
-		if got := w.Norms.resolve(); got != legacy {
-			t.Errorf("profile %q resolved norms %+v, want legacy %+v", name, got, legacy)
+		if got := w.Norms.resolve(); got != CalibratedNorms() {
+			t.Errorf("profile %q resolved norms %+v, want calibrated %+v", name, got, CalibratedNorms())
 		}
+	}
+}
+
+// TestCalibratedNormsCoverObservedPopulation is the test that would have caught
+// the NormSpectral problem far earlier. It replays the worst raw value each
+// metric reached across the tracked preset population (measured 2026-08-21 on
+// the post-#14 renderer against reference/c4.wav, note 60, velocity 118,
+// release-after 3.5 s; see CalibratedNorms for the full table and for why
+// modal-calibrated.json is excluded) and asserts that no weighted component
+// saturates. A saturated component contributes a constant, so the optimizer
+// cannot see it move.
+//
+// It earns its keep: it is what caught Decay = 15.0 and AttackCentroid = 1.5,
+// both of which were calibrated against the pre-#14 renderer and no longer
+// cover the population the current one produces.
+func TestCalibratedNormsCoverObservedPopulation(t *testing.T) {
+	worst := Metrics{
+		TimeRMSE:               0.1508,
+		EnvelopeRMSEDB:         27.8828,
+		SpectralRMSEDB:         68.5563,
+		DecayDiffDBPerS:        17.1393,
+		PartialLevelRMSEDB:     25.4029,
+		PartialFreqRMSECents:   50.0013,
+		TristimulusDistance:    0.4092,
+		DecaySegmentRMSEDBPerS: 21.4234,
+		AttackAvailable:        true,
+		AttackRiseDiffMS:       24.4939,
+		AttackCentroidRMSEOct:  1.6357,
+	}
+
+	for _, name := range Profiles() {
+		if name == ProfileLegacyV1 {
+			continue // deliberately frozen and known to saturate
+		}
+		w, err := WeightsForProfile(name)
+		if err != nil {
+			t.Fatalf("profile %q: %v", name, err)
+		}
+		for _, c := range Components(worst, w) {
+			if c.Weight == 0 {
+				continue
+			}
+			if c.Saturated {
+				t.Errorf("profile %q: component %q saturates at its worst observed value %v (norm gives no gradient)",
+					name, c.Name, c.Raw)
+			}
+			t.Logf("profile %-18s %-14s raw=%-9.4g norm=%.3f", name, c.Name, c.Raw, c.Norm)
+		}
+	}
+}
+
+// TestLegacySpectralStillSaturates records, rather than fixes, the state of the
+// frozen profile. legacy-v1 keeps NormSpectral = 30.0 and therefore keeps
+// saturating on every real preset; that is the cost of comparability, and
+// piano-distance warns about it on every run. If this ever stops being true,
+// the legacy score has changed and every recorded number needs re-measuring.
+func TestLegacySpectralStillSaturates(t *testing.T) {
+	m := Metrics{SpectralRMSEDB: 47.775} // the BEST spectral RMSE in the population
+	c := findComponent(t, Components(m, DefaultWeights()), ComponentSpectral)
+	if !c.Saturated || c.Norm != 1.0 {
+		t.Errorf("legacy spectral component unexpectedly unsaturated (norm=%v): "+
+			"the frozen legacy score has changed and every recorded number needs re-measuring", c.Norm)
 	}
 }
 

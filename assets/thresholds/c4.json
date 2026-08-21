@@ -17,21 +17,24 @@
     "again without an equally explicit reason.",
     "",
     "SPECTRAL CAVEAT: spectral_rmse_db is gated as a RAW dB value, which is a real regression",
-    "signal. The NORMALISED spectral component is a different matter - at 58.2 dB against",
+    "signal. The NORMALISED spectral component is a different matter - at 52.9 dB against",
     "analysis.NormSpectral = 30.0 it is saturated, clamp01 pins it at 1.0, and it therefore",
     "contributes a constant to `score` with no gradient for the optimizer. Every preset in",
-    "the repo saturates it (measured population range 51.5-63.7 dB). Re-calibrating",
-    "NormSpectral to roughly 70-80 is the fix, but it rewrites every recorded score and so",
-    "belongs in a separate, deliberately re-baselined change - not here."
+    "the repo saturates it (measured population range 47.8-68.6 dB on 2026-08-21).",
+    "",
+    "This gate scores legacy-v1, which keeps the frozen norms and therefore keeps saturating;",
+    "that is the price of every recorded number staying comparable. The fix landed for the",
+    "profiles that steer the optimizer instead: analysis.CalibratedNorms raises Spectral to",
+    "80.0 (plus Decay, PartialLevel, PartialFreq, AttackRise and AttackCentroid) and is used",
+    "by balanced-v2, attack-v1, decay-v1 and inharmonicity-v1. legacy-v1 is untouched, so no",
+    "threshold and no recorded score moved."
   ],
-
   "max": {
     "score": 0.57,
     "time_rmse": 0.112,
     "envelope_rmse_db": 11.75,
     "spectral_rmse_db": 57.5,
     "decay_diff_db_per_s": 5.9,
-
     "partial_level_rmse_db": null,
     "partial_freq_rmse_cents": null,
     "tristimulus_distance": null,
@@ -39,7 +42,6 @@
     "attack_centroid_rmse_oct": null,
     "decay_segment_rmse_db_per_s": null
   },
-
   "recorded": {
     "date": "2026-08-21",
     "preset": "assets/presets/fitted-c4-mayfly.json",
