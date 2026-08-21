@@ -128,3 +128,43 @@ func TestPianoSetBodyIRFromBytes(t *testing.T) {
 		t.Fatal("expected error for invalid WAV bytes")
 	}
 }
+
+// TestPianoSetIRMixHonorsBodyGainWithLegacyIRPath guards against the legacy
+// remap in Process discarding an explicitly configured body gain.
+func TestPianoSetIRMixHonorsBodyGainWithLegacyIRPath(t *testing.T) {
+	const rate = 48000
+
+	render := func(bodyGain float32) []float32 {
+		params := NewDefaultParams()
+		// Legacy configuration: only the deprecated IRWavPath is populated.
+		params.IRWavPath = testIRPath
+		p := NewPiano(rate, 16, params)
+		p.SetIRMix(1.0, bodyGain, 0.0, 1.0)
+		p.NoteOn(60, 100)
+		out := make([]float32, 0, 128*100*2)
+		for range 100 {
+			out = append(out, p.Process(128)...)
+		}
+		return out
+	}
+
+	full := render(1.0)
+	half := render(0.5)
+	if len(full) != len(half) {
+		t.Fatalf("length mismatch: %d vs %d", len(full), len(half))
+	}
+
+	var maxDiff float32
+	for i := range full {
+		d := full[i] - half[i]
+		if d < 0 {
+			d = -d
+		}
+		if d > maxDiff {
+			maxDiff = d
+		}
+	}
+	if maxDiff <= 1e-6 {
+		t.Fatalf("bodyGain ignored: bodyGain=1 and bodyGain=0.5 produced (near) identical output, maxDiff=%v", maxDiff)
+	}
+}

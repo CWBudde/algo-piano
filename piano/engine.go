@@ -12,6 +12,9 @@ type Piano struct {
 	resonance     *ResonanceEngine
 	sustainPedal  bool
 	softPedal     bool
+	// irMixExplicit records that SetIRMix was called, so Process must use the
+	// dual-IR mix verbatim instead of remapping the deprecated IR params.
+	irMixExplicit bool
 }
 
 // NewPiano creates a new piano engine.
@@ -180,13 +183,13 @@ func (p *Piano) SetIRMix(bodyDry, bodyGain, roomWet, roomGain float32) {
 	p.params.BodyIRGain = bodyGain
 	p.params.RoomWetMix = roomWet
 	p.params.RoomGain = roomGain
-	// Keep the legacy remap in Process consistent: it overrides the dual-IR
-	// mix whenever only the deprecated IRWavPath is configured.
-	if p.params.RoomIRWavPath == "" && p.params.BodyIRWavPath == "" && p.params.IRWavPath != "" {
-		p.params.IRDryMix = bodyDry
-		p.params.IRWetMix = roomWet
-		p.params.IRGain = roomGain
-	}
+	// Mirror the mix onto the deprecated params so callers that still read them
+	// observe the same settings, and disable the legacy remap in Process: it
+	// cannot represent bodyGain and would otherwise reset it to 1.
+	p.params.IRDryMix = bodyDry
+	p.params.IRWetMix = roomWet
+	p.params.IRGain = roomGain
+	p.irMixExplicit = true
 }
 
 // Process renders a block of audio samples (stereo interleaved).
@@ -227,8 +230,9 @@ func (p *Piano) Process(numFrames int) []float32 {
 			roomGain = p.params.RoomGain
 		}
 		// Legacy compat: if old IRWetMix/IRDryMix/IRGain are set and new ones aren't,
-		// map old params to new signal flow.
-		if p.params.RoomIRWavPath == "" && p.params.BodyIRWavPath == "" && p.params.IRWavPath != "" {
+		// map old params to new signal flow. Skipped once SetIRMix supplied an
+		// explicit dual-IR mix, which the legacy params cannot represent.
+		if !p.irMixExplicit && p.params.RoomIRWavPath == "" && p.params.BodyIRWavPath == "" && p.params.IRWavPath != "" {
 			bodyDry = p.params.IRDryMix
 			roomWet = p.params.IRWetMix
 			roomGain = p.params.IRGain
