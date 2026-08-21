@@ -14,12 +14,12 @@ Merge both tools into a single `piano-fit` command with a `--optimize` flag that
 
 ## Knob Groups
 
-| Group     | Knobs                                                                                                                  | Count |
-| --------- | ---------------------------------------------------------------------------------------------------------------------- | ----- |
-| `piano`   | output*gain, hammer*_, unison\__, per_note.N.loss/inharmonicity/strike_position, render.velocity, render.release_after | 12    |
-| `body-ir` | body_modes, body_brightness, body_density, body_direct, body_decay, body_duration                                      | 6     |
-| `room-ir` | room_early, room_late, room_stereo_width, room_brightness, room_low_decay, room_high_decay, room_duration              | 7     |
-| `mix`     | body_dry, body_gain, room_wet, room_gain (or legacy ir_wet_mix, ir_dry_mix, ir_gain)                                   | 3-4   |
+| Group     | Knobs                                                                                                                    | Count |
+| --------- | ------------------------------------------------------------------------------------------------------------------------ | ----- |
+| `piano`   | output*gain, hammer*\_, unison\_\_, per_note.N.loss/inharmonicity/strike_position, render.velocity, render.release_after | 12    |
+| `body-ir` | body_modes, body_brightness, body_density, body_direct, body_decay, body_duration                                        | 6     |
+| `room-ir` | room_early, room_late, room_stereo_width, room_brightness, room_low_decay, room_high_decay, room_duration                | 7     |
+| `mix`     | body_dry, body_gain, room_wet, room_gain (or legacy ir_wet_mix, ir_dry_mix, ir_gain)                                     | 3-4   |
 
 Default: `--optimize=piano,mix` (equivalent to old `piano-fit-fast`).
 
