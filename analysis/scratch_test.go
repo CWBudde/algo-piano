@@ -32,13 +32,21 @@ func TestScratchPoolReusesBuffers(t *testing.T) {
 	if len(s.specA) != n/2+1 || len(s.specB) != n/2+1 {
 		t.Fatalf("expected spectra of %f bins, got %f and %f", float64(n/2+1), float64(len(s.specA)), float64(len(s.specB)))
 	}
-	first := &s.aw[0]
-	putScratch(n, s)
-	again := getScratch(n)
-	if &again.aw[0] != first {
-		t.Fatalf("expected the pooled scratch buffer to be handed back out")
+	// Reuse is best effort: under -race, sync.Pool.Put drops the value at
+	// random roughly a quarter of the time, and a GC may clear the pool. Retry
+	// so a miss cannot fail the test while a pool that never recycles still does.
+	const attempts = 32
+	reused := false
+	for i := 0; i < attempts && !reused; i++ {
+		first := &s.aw[0]
+		putScratch(n, s)
+		s = getScratch(n)
+		reused = &s.aw[0] == first
 	}
-	putScratch(n, again)
+	if !reused {
+		t.Fatalf("expected the pooled scratch buffer to be handed back out within %d attempts", attempts)
+	}
+	putScratch(n, s)
 }
 
 func TestPutScratchRejectsMismatchedSize(t *testing.T) {
