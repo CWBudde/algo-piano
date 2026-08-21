@@ -195,7 +195,7 @@ func readWAVMono(path string) ([]float64, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	dec := wav.NewDecoder(f)
 	if !dec.IsValidFile() {
@@ -241,10 +241,10 @@ func writeWAVStereo(path string, samples []float32, sampleRate int) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	enc := wav.NewEncoder(f, sampleRate, 16, 2, 1)
-	defer enc.Close()
+	defer func() { _ = enc.Close() }()
 
 	buf := &audio.Float32Buffer{
 		Format: &audio.Format{

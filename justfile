@@ -137,190 +137,131 @@ ir-synth output="assets/ir/synth_96k.wav" sample_rate="96000" duration="2.0" mod
         --modes "$modes" \
         --seed "$seed"
 
-# Fast inner-loop fitting (preset/model params) against C4 reference
-fit-c4-fast reference="reference/c4.wav" preset="assets/presets/default.json" output_preset="assets/presets/fitted-c4.json" time_budget="120" max_evals="10000" mayfly_variant="desma" mayfly_pop="10" mayfly_round_evals="240" report_every="10" checkpoint_every="1" resume="true" write_best_candidate="" seed="1" decay_dbfs="-90" decay_hold_blocks="6" min_duration="2.0" max_duration="30" note="60" sample_rate="48000" resume_report="" workers="1":
+# Fit C4 with the unified piano-fit tool (see docs/optimization-workflow.md)
+fit-c4 reference="reference/c4.wav" preset="assets/presets/default.json" output_preset="assets/presets/fitted-c4.json" output_ir="" work_dir="out/fit" optimize="piano,mix" note="60" time_budget="300" max_evals="5000" workers="auto" resume="true" seed="1" sample_rate="48000" extra="":
     #!/usr/bin/env bash
     set -euo pipefail
-    reference_raw="{{reference}}"
-    preset_raw="{{preset}}"
-    output_raw="{{output_preset}}"
-    budget_raw="{{time_budget}}"
-    max_evals_raw="{{max_evals}}"
-    mayfly_variant_raw="{{mayfly_variant}}"
-    mayfly_pop_raw="{{mayfly_pop}}"
-    mayfly_round_evals_raw="{{mayfly_round_evals}}"
-    workers_raw="{{workers}}"
-    report_every_raw="{{report_every}}"
-    checkpoint_every_raw="{{checkpoint_every}}"
-    resume_raw="{{resume}}"
-    write_best_candidate_raw="{{write_best_candidate}}"
-    seed_raw="{{seed}}"
-    decay_dbfs_raw="{{decay_dbfs}}"
-    decay_hold_blocks_raw="{{decay_hold_blocks}}"
-    min_duration_raw="{{min_duration}}"
-    max_duration_raw="{{max_duration}}"
-    note_raw="{{note}}"
-    sample_rate_raw="{{sample_rate}}"
-    resume_report_raw="{{resume_report}}"
-    reference="${reference_raw#reference=}"
-    preset="${preset_raw#preset=}"
-    output_preset="${output_raw#output_preset=}"
-    time_budget="${budget_raw#time_budget=}"
-    max_evals="${max_evals_raw#max_evals=}"
-    mayfly_variant="${mayfly_variant_raw#mayfly_variant=}"
-    mayfly_pop="${mayfly_pop_raw#mayfly_pop=}"
-    mayfly_round_evals="${mayfly_round_evals_raw#mayfly_round_evals=}"
-    workers="${workers_raw#workers=}"
-    report_every="${report_every_raw#report_every=}"
-    checkpoint_every="${checkpoint_every_raw#checkpoint_every=}"
-    resume="${resume_raw#resume=}"
-    write_best_candidate="${write_best_candidate_raw#write_best_candidate=}"
-    seed="${seed_raw#seed=}"
-    decay_dbfs="${decay_dbfs_raw#decay_dbfs=}"
-    decay_hold_blocks="${decay_hold_blocks_raw#decay_hold_blocks=}"
-    min_duration="${min_duration_raw#min_duration=}"
-    max_duration="${max_duration_raw#max_duration=}"
-    note="${note_raw#note=}"
-    sample_rate="${sample_rate_raw#sample_rate=}"
-    resume_report="${resume_report_raw#resume_report=}"
-    extra_write_best=()
-    extra_resume_report=()
-    if [ -n "$write_best_candidate" ]; then
-        extra_write_best=(--write-best-candidate "$write_best_candidate")
-    fi
-    if [ -n "$resume_report" ]; then
-        extra_resume_report=(--resume-report "$resume_report")
-    fi
-    GOCACHE="${GOCACHE:-/tmp/gocache}" go run -tags asm ./cmd/piano-fit-fast \
-        --reference "$reference" \
-        --preset "$preset" \
-        --output-preset "$output_preset" \
-        --time-budget "$time_budget" \
-        --max-evals "$max_evals" \
-        --note "$note" \
-        --sample-rate "$sample_rate" \
-        --decay-dbfs "$decay_dbfs" \
-        --decay-hold-blocks "$decay_hold_blocks" \
-        --min-duration "$min_duration" \
-        --max-duration "$max_duration" \
-        --report-every "$report_every" \
-        --checkpoint-every "$checkpoint_every" \
-        --seed "$seed" \
-        --resume="$resume" \
-        --mayfly-variant "$mayfly_variant" \
-        --mayfly-pop "$mayfly_pop" \
-        --mayfly-round-evals "$mayfly_round_evals" \
-        --workers "$workers" \
-        "${extra_resume_report[@]}" \
-        "${extra_write_best[@]}"
-
-# Slow outer-loop fitting for IR synthesis parameters against C4 reference
-fit-c4-ir reference="reference/c4.wav" preset="assets/presets/default.json" output_ir="assets/ir/fitted/c4-best.wav" output_preset="assets/presets/fitted-c4-ir.json" work_dir="out/ir-fit" time_budget="300" max_evals="10000" mayfly_variant="desma" mayfly_pop="10" mayfly_round_evals="240" report_every="10" checkpoint_every="1" resume="true" seed="1" decay_dbfs="-90" decay_hold_blocks="6" min_duration="2.0" max_duration="30" note="60" sample_rate="48000" velocity="118" release_after="3.5" top_k="5" optimize_ir_mix="false" optimize_joint="false" resume_report="" workers="1" opt_sample_rate="0" opt_min_duration="-1" opt_max_duration="-1" render_block_size="128" refine_top_k="3":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    reference_raw="{{reference}}"
-    preset_raw="{{preset}}"
-    output_ir_raw="{{output_ir}}"
-    output_preset_raw="{{output_preset}}"
-    work_dir_raw="{{work_dir}}"
-    budget_raw="{{time_budget}}"
-    max_evals_raw="{{max_evals}}"
-    mayfly_variant_raw="{{mayfly_variant}}"
-    mayfly_pop_raw="{{mayfly_pop}}"
-    mayfly_round_evals_raw="{{mayfly_round_evals}}"
-    report_every_raw="{{report_every}}"
-    checkpoint_every_raw="{{checkpoint_every}}"
-    resume_raw="{{resume}}"
-    seed_raw="{{seed}}"
-    decay_dbfs_raw="{{decay_dbfs}}"
-    decay_hold_blocks_raw="{{decay_hold_blocks}}"
-    min_duration_raw="{{min_duration}}"
-    max_duration_raw="{{max_duration}}"
-    note_raw="{{note}}"
-    sample_rate_raw="{{sample_rate}}"
-    velocity_raw="{{velocity}}"
-    release_after_raw="{{release_after}}"
-    top_k_raw="{{top_k}}"
-    optimize_ir_mix_raw="{{optimize_ir_mix}}"
-    optimize_joint_raw="{{optimize_joint}}"
-    resume_report_raw="{{resume_report}}"
-    workers_raw="{{workers}}"
-    opt_sample_rate_raw="{{opt_sample_rate}}"
-    opt_min_duration_raw="{{opt_min_duration}}"
-    opt_max_duration_raw="{{opt_max_duration}}"
-    render_block_size_raw="{{render_block_size}}"
-    refine_top_k_raw="{{refine_top_k}}"
-    reference="${reference_raw#reference=}"
-    preset="${preset_raw#preset=}"
-    output_ir="${output_ir_raw#output_ir=}"
-    output_preset="${output_preset_raw#output_preset=}"
-    work_dir="${work_dir_raw#work_dir=}"
-    time_budget="${budget_raw#time_budget=}"
-    max_evals="${max_evals_raw#max_evals=}"
-    mayfly_variant="${mayfly_variant_raw#mayfly_variant=}"
-    mayfly_pop="${mayfly_pop_raw#mayfly_pop=}"
-    mayfly_round_evals="${mayfly_round_evals_raw#mayfly_round_evals=}"
-    report_every="${report_every_raw#report_every=}"
-    checkpoint_every="${checkpoint_every_raw#checkpoint_every=}"
-    resume="${resume_raw#resume=}"
-    seed="${seed_raw#seed=}"
-    decay_dbfs="${decay_dbfs_raw#decay_dbfs=}"
-    decay_hold_blocks="${decay_hold_blocks_raw#decay_hold_blocks=}"
-    min_duration="${min_duration_raw#min_duration=}"
-    max_duration="${max_duration_raw#max_duration=}"
-    note="${note_raw#note=}"
-    sample_rate="${sample_rate_raw#sample_rate=}"
-    velocity="${velocity_raw#velocity=}"
-    release_after="${release_after_raw#release_after=}"
-    top_k="${top_k_raw#top_k=}"
-    optimize_ir_mix="${optimize_ir_mix_raw#optimize_ir_mix=}"
-    optimize_joint="${optimize_joint_raw#optimize_joint=}"
-    resume_report="${resume_report_raw#resume_report=}"
-    workers="${workers_raw#workers=}"
-    opt_sample_rate="${opt_sample_rate_raw#opt_sample_rate=}"
-    opt_min_duration="${opt_min_duration_raw#opt_min_duration=}"
-    opt_max_duration="${opt_max_duration_raw#opt_max_duration=}"
-    render_block_size="${render_block_size_raw#render_block_size=}"
-    refine_top_k="${refine_top_k_raw#refine_top_k=}"
-    mkdir -p "$(dirname "$output_ir")"
+    # just passes recipe arguments positionally, so `name=value` arrives as a raw
+    # string in whatever slot it landed in. Strip the `name=` prefix and route the
+    # value to the parameter it names, so arguments may be given in any order.
+    names=(reference preset output_preset output_ir work_dir optimize note time_budget max_evals workers resume seed sample_rate extra)
+    raw=("{{reference}}" "{{preset}}" "{{output_preset}}" "{{output_ir}}" "{{work_dir}}" "{{optimize}}" "{{note}}" "{{time_budget}}" "{{max_evals}}" "{{workers}}" "{{resume}}" "{{seed}}" "{{sample_rate}}" "{{extra}}")
+    defaults=("reference/c4.wav" "assets/presets/default.json" "assets/presets/fitted-c4.json" "" "out/fit" "piano,mix" "60" "300" "5000" "auto" "true" "1" "48000" "")
+    declare -A arg=()
+    for i in "${!names[@]}"; do
+        arg["${names[$i]}"]="${defaults[$i]}"
+    done
+    for i in "${!raw[@]}"; do
+        key="${raw[$i]%%=*}"
+        if [[ "${raw[$i]}" != *=* ]] || [[ " ${names[*]} " != *" ${key} "* ]]; then
+            arg["${names[$i]}"]="${raw[$i]}"
+        fi
+    done
+    for i in "${!raw[@]}"; do
+        key="${raw[$i]%%=*}"
+        if [[ "${raw[$i]}" == *=* ]] && [[ " ${names[*]} " == *" ${key} "* ]]; then
+            arg["$key"]="${raw[$i]#*=}"
+        fi
+    done
+    reference="${arg[reference]}"
+    preset="${arg[preset]}"
+    output_preset="${arg[output_preset]}"
+    output_ir="${arg[output_ir]}"
+    work_dir="${arg[work_dir]}"
+    optimize="${arg[optimize]}"
+    note="${arg[note]}"
+    time_budget="${arg[time_budget]}"
+    max_evals="${arg[max_evals]}"
+    workers="${arg[workers]}"
+    resume="${arg[resume]}"
+    seed="${arg[seed]}"
+    sample_rate="${arg[sample_rate]}"
+    extra="${arg[extra]}"
+    mkdir -p "$(dirname "$output_preset")"
     mkdir -p "$work_dir"
-    extra_resume_report=()
-    if [ -n "$resume_report" ]; then
-        extra_resume_report=(--resume-report "$resume_report")
+    # piano-fit hard-errors without --output-ir when the body-ir/room-ir groups are
+    # active, and ignores it otherwise, so only pass it when set.
+    extra_output_ir=()
+    if [ -n "$output_ir" ]; then
+        mkdir -p "$(dirname "$output_ir")"
+        extra_output_ir=(--output-ir "$output_ir")
     fi
-    GOCACHE="${GOCACHE:-/tmp/gocache}" go run -tags asm ./cmd/piano-fit-ir \
+    extra_args=()
+    if [ -n "$extra" ]; then
+        read -r -a extra_args <<< "$extra"
+    fi
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run -tags asm ./cmd/piano-fit \
         --reference "$reference" \
         --preset "$preset" \
-        --output-ir "$output_ir" \
         --output-preset "$output_preset" \
         --work-dir "$work_dir" \
+        --optimize "$optimize" \
+        --note "$note" \
+        --sample-rate "$sample_rate" \
         --time-budget "$time_budget" \
         --max-evals "$max_evals" \
-        --note "$note" \
-        --velocity "$velocity" \
-        --release-after "$release_after" \
-        --sample-rate "$sample_rate" \
-        --decay-dbfs "$decay_dbfs" \
-        --decay-hold-blocks "$decay_hold_blocks" \
-        --min-duration "$min_duration" \
-        --max-duration "$max_duration" \
-        --opt-sample-rate "$opt_sample_rate" \
-        --opt-min-duration "$opt_min_duration" \
-        --opt-max-duration "$opt_max_duration" \
-        --render-block-size "$render_block_size" \
-        --refine-top-k "$refine_top_k" \
-        --report-every "$report_every" \
-        --checkpoint-every "$checkpoint_every" \
-        --top-k "$top_k" \
+        --workers "$workers" \
         --seed "$seed" \
         --resume="$resume" \
-        --optimize-ir-mix="$optimize_ir_mix" \
-        --optimize-joint="$optimize_joint" \
-        --mayfly-variant "$mayfly_variant" \
-        --mayfly-pop "$mayfly_pop" \
-        --mayfly-round-evals "$mayfly_round_evals" \
-        --workers "$workers" \
-        "${extra_resume_report[@]}"
+        "${extra_output_ir[@]}" \
+        "${extra_args[@]}"
+
+# Full 5-stage C4 fitting pipeline from docs/optimization-workflow.md
+fit-c4-stages time_budget="600":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    time_budget_raw="{{time_budget}}"
+    time_budget="${time_budget_raw#time_budget=}"
+    out_dir="out/stages"
+    mkdir -p "$out_dir"
+    echo "=== Stage 1/5: piano,mix (default IR, no resonance) ==="
+    just fit-c4 \
+        "preset=assets/presets/default.json" \
+        "output_preset=$out_dir/stage1.json" \
+        "optimize=piano,mix" \
+        "time_budget=$time_budget" \
+        "max_evals=5000" \
+        "extra=--no-resonance"
+    echo "=== Stage 2/5: body-ir,mix (body IR, piano knobs fixed from stage 1) ==="
+    just fit-c4 \
+        "preset=$out_dir/stage1.json" \
+        "output_preset=$out_dir/stage2.json" \
+        "output_ir=$out_dir/stage2-ir.wav" \
+        "optimize=body-ir,mix" \
+        "time_budget=$time_budget" \
+        "max_evals=2000" \
+        "resume=false" \
+        "extra=--no-resonance"
+    echo "=== Stage 3/5: piano,mix (refine piano against the stage 2 body IR) ==="
+    just fit-c4 \
+        "preset=$out_dir/stage2.json" \
+        "output_preset=$out_dir/stage3.json" \
+        "optimize=piano,mix" \
+        "time_budget=$time_budget" \
+        "max_evals=5000" \
+        "resume=false" \
+        "extra=--no-resonance"
+    # Stages 1-3 pass --no-resonance purely to make evaluation cheaper. That
+    # override is not written into the stage presets, so dropping the flag here
+    # is enough to bring resonance back for the joint and final stages.
+    echo "=== Stage 4/5: piano,body-ir,room-ir,mix (joint refinement, resonance back on) ==="
+    just fit-c4 \
+        "preset=$out_dir/stage3.json" \
+        "output_preset=$out_dir/stage4.json" \
+        "output_ir=$out_dir/stage4-ir.wav" \
+        "optimize=piano,body-ir,room-ir,mix" \
+        "time_budget=$time_budget" \
+        "max_evals=3000" \
+        "resume=false"
+    echo "=== Stage 5/5: piano,mix (final polish with dual IR) ==="
+    just fit-c4 \
+        "preset=$out_dir/stage4.json" \
+        "output_preset=$out_dir/final.json" \
+        "optimize=piano,mix" \
+        "time_budget=$time_budget" \
+        "max_evals=5000" \
+        "resume=false"
+    echo "Final preset: $out_dir/final.json"
 
 fix:
     just lint-fix

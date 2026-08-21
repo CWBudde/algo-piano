@@ -54,10 +54,10 @@ func writeStereoWAV(path string, left []float32, right []float32, sampleRate int
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	enc := wav.NewEncoder(f, sampleRate, 16, 2, 1)
-	defer enc.Close()
+	defer func() { _ = enc.Close() }()
 
 	data := make([]float32, len(left)*2)
 	for i := 0; i < len(left); i++ {

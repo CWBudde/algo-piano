@@ -30,8 +30,11 @@ just distance-c4 reference=reference/c4.wav
 # Synthesize a new stereo IR (modal+diffuse synthetic body IR)
 just ir-synth output=assets/ir/synth_96k.wav sample_rate=96000 duration=2.0 modes=128 seed=1
 
-# Run fast inner-loop fitting for C4 (writes fitted preset + report)
-just fit-c4-fast reference=reference/c4.wav preset=assets/presets/default.json output_preset=assets/presets/fitted-c4.json time_budget=120
+# Fit C4 with the unified piano-fit tool (writes fitted preset + report)
+just fit-c4 reference=reference/c4.wav preset=assets/presets/default.json output_preset=assets/presets/fitted-c4.json time_budget=120
+
+# Or run the full 5-stage pipeline (see docs/optimization-workflow.md)
+just fit-c4-stages time_budget=600
 ```
 
 Or build the web demo locally:

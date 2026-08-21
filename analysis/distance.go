@@ -333,10 +333,10 @@ func getLagFFTPlan(n int) (*lagFFTPlan, error) {
 	}
 
 	fast, err := algofft.NewFastPlanReal64(n)
+	// Any fast-plan setup failure, ErrNotImplemented included, simply leaves
+	// p.fast nil so the safe plan below is used instead.
 	if err == nil {
 		p.fast = fast
-	} else if !errors.Is(err, algofft.ErrNotImplemented) {
-		// Ignore fast-plan setup errors and rely on the safe plan.
 	}
 
 	safe, err := algofft.NewPlanReal64(n)
@@ -752,10 +752,10 @@ func getSpectralFFTPlan(n int) (*spectralFFTPlan, error) {
 	p := &spectralFFTPlan{}
 
 	fast, err := algofft.NewFastPlanReal64(n)
+	// Any fast-plan setup failure, ErrNotImplemented included, simply leaves
+	// p.fast nil so the safe plan below is used instead.
 	if err == nil {
 		p.fast = fast
-	} else if !errors.Is(err, algofft.ErrNotImplemented) {
-		// Ignore fast-plan setup errors and rely on the safe plan.
 	}
 
 	safe, err := algofft.NewPlanReal64(n)

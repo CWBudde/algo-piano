@@ -140,11 +140,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
 		os.Exit(1)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Create encoder with 16-bit PCM (audioFormat = 1)
 	encoder := wav.NewEncoder(file, *sampleRate, 16, numChannels, 1)
-	defer encoder.Close()
+	defer func() { _ = encoder.Close() }()
 
 	// Create audio buffer
 	buf := &audio.Float32Buffer{

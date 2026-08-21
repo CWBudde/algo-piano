@@ -124,7 +124,7 @@ func (c *SoundboardConvolver) SetIRFromWAV(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	return c.SetIRFromReader(f, path)
 }
@@ -268,7 +268,7 @@ func (c *BodyConvolver) SetIRFromWAV(path string, targetRate int) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	return c.SetIRFromReader(f, path, targetRate)
 }

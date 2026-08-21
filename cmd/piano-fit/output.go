@@ -120,20 +120,23 @@ func writePresetJSON(path string, p *piano.Params) error {
 		StrikePosition float32 `json:"strike_position,omitempty"`
 	}
 	type out struct {
-		OutputGain                 float32              `json:"output_gain,omitempty"`
-		MinNote                    int                  `json:"min_note"`
-		MaxNote                    int                  `json:"max_note"`
-		IRWavPath                  string               `json:"ir_wav_path,omitempty"`
-		IRWetMix                   float32              `json:"ir_wet_mix,omitempty"`
-		IRDryMix                   float32              `json:"ir_dry_mix,omitempty"`
-		IRGain                     float32              `json:"ir_gain,omitempty"`
-		BodyIRWavPath              string               `json:"body_ir_wav_path,omitempty"`
-		BodyIRGain                 float32              `json:"body_ir_gain,omitempty"`
-		BodyDryMix                 float32              `json:"body_dry_mix,omitempty"`
-		RoomIRWavPath              string               `json:"room_ir_wav_path,omitempty"`
-		RoomWetMix                 float32              `json:"room_wet_mix,omitempty"`
-		RoomGain                   float32              `json:"room_gain,omitempty"`
-		ResonanceEnabled           bool                 `json:"resonance_enabled,omitempty"`
+		OutputGain    float32 `json:"output_gain,omitempty"`
+		MinNote       int     `json:"min_note"`
+		MaxNote       int     `json:"max_note"`
+		IRWavPath     string  `json:"ir_wav_path,omitempty"`
+		IRWetMix      float32 `json:"ir_wet_mix,omitempty"`
+		IRDryMix      float32 `json:"ir_dry_mix,omitempty"`
+		IRGain        float32 `json:"ir_gain,omitempty"`
+		BodyIRWavPath string  `json:"body_ir_wav_path,omitempty"`
+		BodyIRGain    float32 `json:"body_ir_gain,omitempty"`
+		BodyDryMix    float32 `json:"body_dry_mix,omitempty"`
+		RoomIRWavPath string  `json:"room_ir_wav_path,omitempty"`
+		RoomWetMix    float32 `json:"room_wet_mix,omitempty"`
+		RoomGain      float32 `json:"room_gain,omitempty"`
+		// No omitempty: a preset that deliberately disables resonance must say
+		// so, otherwise the key vanishes and reloading falls back to the
+		// piano.Params default rather than the value that was written.
+		ResonanceEnabled           bool                 `json:"resonance_enabled"`
 		ResonanceGain              float32              `json:"resonance_gain,omitempty"`
 		ResonancePerNoteFilter     bool                 `json:"resonance_per_note_filter,omitempty"`
 		HammerStiffnessScale       float32              `json:"hammer_stiffness_scale,omitempty"`
