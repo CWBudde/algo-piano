@@ -33,7 +33,7 @@ func TestTuningAccuracy(t *testing.T) {
 				samples[i] = str.Process()
 			}
 
-			measuredFreq := measureFundamentalFreq(samples, float32(sampleRate))
+			measuredFreq := float32(measureFundamentalNear(samples, sampleRate, float64(freq)))
 			diff := math.Abs(float64(measuredFreq - tt.expectedFreq))
 			if diff > float64(tt.tolerance) {
 				t.Errorf("Note %d: expected %.2f Hz, got %.2f Hz (diff: %.2f Hz, tolerance: %.2f Hz)",
@@ -87,9 +87,16 @@ func TestDispersionDetunesPartialsFromHarmonicSeries(t *testing.T) {
 		dispSamples[i] = disp.Process()
 	}
 
+	// 32768 samples, not 8192: findPeakNear reports raw bin centres, so the
+	// window length is the measurement resolution. At 8192 that is 5.86 Hz,
+	// which is coarser than the shift dispersion actually produces here - the
+	// test passed only because the base and dispersed peaks happened to fall on
+	// opposite sides of a bin boundary. At 32768 the resolution is 1.46 Hz and
+	// all four partials move by at least one full bin (measured 2026-08-21:
+	// -1.46, -1.46, -1.46 and -2.93 Hz for partials 2 to 5).
 	skip := 4096
-	baseAnalysis := baseSamples[skip : skip+8192]
-	dispAnalysis := dispSamples[skip : skip+8192]
+	baseAnalysis := baseSamples[skip : skip+32768]
+	dispAnalysis := dispSamples[skip : skip+32768]
 	fund := findPeakNear(baseAnalysis, sampleRate, f0, 20.0)
 	if fund <= 0 {
 		t.Fatalf("could not detect fundamental")

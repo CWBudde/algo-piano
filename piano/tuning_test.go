@@ -8,9 +8,7 @@ import (
 
 // measureWaveguideCents renders a bare string for two seconds and returns how
 // far its measured fundamental lands from the note's nominal frequency, in
-// cents. DC is blocked first: the waveguide loop has unity DC gain, so an
-// untreated signal can be dominated by a slowly decaying offset that suppresses
-// zero crossings entirely.
+// cents.
 func measureWaveguideCents(t *testing.T, note int) (measured float32, cents float64) {
 	t.Helper()
 	const sampleRate = 48000
@@ -24,7 +22,7 @@ func measureWaveguideCents(t *testing.T, note int) (measured float32, cents floa
 		samples[i] = str.Process()
 	}
 
-	measured = measureFundamentalFreq(removeDCOffset(samples), sampleRate)
+	measured = float32(measureFundamentalNear(samples, sampleRate, float64(nominal)))
 	if measured <= 0 {
 		return 0, math.Inf(-1)
 	}
@@ -35,12 +33,12 @@ func measureWaveguideCents(t *testing.T, note int) (measured float32, cents floa
 // mid-range notes of TestTuningAccuracy to every note from the bottom A0 up to
 // the top of the range where the DWG core still produces a measurable pitch.
 //
-// Tolerances are per register because the *measurement* gets worse towards the
-// bass, not because the model does. measureFundamentalFreq counts zero
-// crossings over a ~1.8 s window, so its resolution is a flat 0.28 Hz — which
-// is 17 cents at A0 (27.5 Hz) and 0.03 cents at E6 (1319 Hz). Every tolerance
-// below is set from the worst error measured over the whole register, with
-// roughly 40% headroom:
+// The tolerances below are the ones derived for the old zero-crossing
+// measurement, where resolution was a flat 0.28 Hz and therefore 17 cents at A0
+// (27.5 Hz) but 0.03 cents at E6 (1319 Hz). measureFundamentalNear is accurate
+// to +/-0.012 Hz at every pitch, so they are now far looser than they need to
+// be; they are re-derived together with the compass extension. Each is the
+// worst error measured over the register plus roughly 40% headroom:
 //
 //	bass    21-39   worst 17.58 cents (note 21, resolution-limited)  -> 25
 //	tenor   40-59   worst  6.40 cents (note 46, resolution-limited)  -> 10
