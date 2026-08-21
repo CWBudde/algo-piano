@@ -86,43 +86,50 @@ made every earlier modal benchmark unreliable.
 shape of a single audio callback. The realtime budget for that block at 48 kHz
 is **2.67 ms**.
 
-| IR length     | Room (stereo) | Body (mono) |
-| ------------- | ------------- | ----------- |
-| 128 (2.7 ms)  | 10 µs         | 10 µs       |
-| 1024 (21 ms)  | 86 µs         | 77 µs       |
-| 8192 (170 ms) | 0.69 ms       | 0.40 ms     |
-| 48000 (1 s)   | 5.3 ms        | 1.5 ms      |
-| 192000 (4 s)  | 61 ms         | 16 ms       |
+| IR length     | Room (stereo) | Body (mono) | Room, % of budget |
+| ------------- | ------------- | ----------- | ----------------- |
+| 128 (2.7 ms)  | 8.3 µs        | 3.7 µs      | 0.3%              |
+| 1024 (21 ms)  | 50 µs         | 24 µs       | 1.9%              |
+| 8192 (170 ms) | 0.32 ms       | 0.15 ms     | 12%               |
+| 48000 (1 s)   | 2.30 ms       | 0.80 ms     | **86%**           |
+| 192000 (4 s)  | 23.3 ms       | 13.8 ms     | **873%**          |
 
 Cost grows linearly with IR length, as uniform partitioning implies. The
-practical consequence: **the stereo room convolver already exceeds the whole
-128-frame realtime budget at a one-second IR** (5.3 ms against 2.67 ms), and a
-four-second room IR costs roughly 23x the budget. Long room IRs are not viable
-at `partSize = 128`.
+practical consequence: at the default `partSize = 128` a one-second stereo room
+IR eats 86% of the entire block budget before the string bank has been charged
+for anything, and a four-second room IR is 8.7x over budget on its own. Long room
+IRs are not viable at this partition size.
 
 `BenchmarkSoundboardConvolverPartitionSize` / `BenchmarkBodyConvolverPartitionSize`
 render a fixed 4096 frames per iteration so every partition size does the same
-acoustic work. Room IR is 1 s, body IR is 8192 taps. The right-hand columns
-normalize to one 128-frame block for comparison against the budget above.
+acoustic work. Room IR is 1 s, body IR is 8192 taps. The normalized columns
+divide by 32 to give the cost of one 128-frame block.
 
 | Partition | Room / 4096 fr | Room / 128 fr | Body / 4096 fr | Body / 128 fr |
 | --------- | -------------- | ------------- | -------------- | ------------- |
-| 64        | 229 ms         | 7.2 ms        | 86 ms          | 2.7 ms        |
-| 128       | 123 ms         | 3.9 ms        | 33 ms          | 1.0 ms        |
-| 256       | 42 ms          | 1.3 ms        | 14 ms          | 0.43 ms       |
-| 512       | 41 ms          | 1.3 ms        | 5.3 ms         | 0.16 ms       |
-| 1024      | 48 ms          | 1.5 ms        | 5.7 ms         | 0.18 ms       |
+| 64        | 203 ms         | 6.34 ms       | 10.4 ms        | 0.32 ms       |
+| 128       | 71.5 ms        | 2.24 ms       | 8.2 ms         | 0.26 ms       |
+| 256       | 21.9 ms        | 0.69 ms       | 4.7 ms         | 0.15 ms       |
+| 512       | 26.5 ms        | 0.83 ms       | 2.0 ms         | 0.061 ms      |
+| 1024      | 9.9 ms         | 0.31 ms       | 0.77 ms        | 0.024 ms      |
 
-Partition size, not IR length, is the lever that brings the room convolver back
-inside budget: moving from 128 to 256 cuts its cost by about 3x and is the
-difference between over and under the 2.67 ms line at a one-second IR. Returns
-flatten past 256 for the room path while the mono body path keeps improving to 512. The cost is latency — one partition of it.
+The room figure at partition 128 (2.24 ms) agrees with the 1 s row of the
+IR-length table (2.30 ms), which is a useful cross-check that the two benchmarks
+measure the same thing.
 
-**Caveat on absolute values.** These figures were taken on a machine carrying a
-load average of 15-25 from unrelated work, and repeat runs of the same case
-spread by up to 2x. The scaling shape (linear in IR length, sharply falling in
-partition size) reproduced across four runs; the absolute milliseconds should be
-re-measured on a quiet machine before being adopted as a budget. Reproduce with:
+Partition size, not IR length, is the lever: 128 -> 256 cuts the room convolver
+by about 3x, from 86% of the block budget to 26%, and 1024 gets it to 12%. The
+room path's 512 entry sits above its 256 entry, which is the FFT size crossing a
+radix boundary plus residual measurement noise rather than a real inversion. The
+mono body path improves monotonically all the way to 1024. What partitioning
+costs is latency — one partition of it.
+
+**Caveat on absolute values.** The measurement window overlapped unrelated work
+on this machine; load average ranged from 12 to 25 and repeat runs of the same
+case spread by up to 2x. The table above comes from the least-loaded run. The
+scaling shape (linear in IR length, sharply falling in partition size) reproduced
+across five runs and the two benchmarks cross-check each other, but re-measure on
+a quiet machine before adopting the absolute milliseconds as a budget:
 
 ```bash
 go test ./piano/ -run='^$' -bench='Convolver' -benchmem -benchtime=50x -count=5
@@ -133,17 +140,16 @@ go test ./piano/ -run='^$' -bench='Convolver' -benchmem -benchtime=50x -count=5
 `BenchmarkStringBankIdle`: the full persistent 88-key bank, physical coupling
 configured, nothing struck. This is PLAN.md 9.6's "idle full-string-bank cost".
 
-| Core  | Pedal up | Pedal down |
-| ----- | -------- | ---------- |
-| DWG   | 245 ns   | 182 ns     |
-| Modal | 128 ns   | 199 ns     |
+Measured between **74 ns and 1.1 µs** per 128-frame block across runs, with zero
+allocations — at worst 0.04% of the 2.67 ms budget. The spread is noise, not
+signal: `StringBank.Process` short-circuits on an empty active set, so DWG and
+modal execute the identical code path and neither the core nor the pedal state
+can matter. A held sustain pedal lifts every damper but does not by itself put
+groups into the active set.
 
-Roughly 0.1-0.25 µs per 128-frame block against a 2.67 ms budget, i.e. about
-0.01% of realtime, with zero allocations. Owning the whole bank costs nothing
-when nothing is sounding: `StringBank.Process` short-circuits on an empty active
-set, and a held sustain pedal does not by itself put groups into that set. The
-pedal state therefore does not matter here, and the small differences in the
-table are noise.
+The answer the benchmark exists to give is therefore: **owning the whole 88-key
+persistent bank costs nothing measurable when nothing is sounding.** Any future
+regression here would mean the empty-active-set short circuit stopped working.
 
 ## Polyphony scaling
 
