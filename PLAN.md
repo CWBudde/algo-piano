@@ -112,7 +112,7 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
       the profile that describes the aspect — `attack-v1`, `decay-v1`,
       `inharmonicity-v1`. `--profile` overrides that and works with `--pass none`
       too; the profile is recorded as `score_profile` in the report. `just
-    fit-c4-passes` runs all three and ends with `legacy-v1` distance reports,
+  fit-c4-passes` runs all three and ends with `legacy-v1` distance reports,
       the only numbers comparable across passes; its final artifact chains
       `attack` → `inharmonicity` and leaves the regressing `sustain` pass out.
       Measurements below.)
@@ -271,8 +271,13 @@ This phase is split into execution subphases to make progress and ownership expl
         (`piano/sympathetic_test.go`, DWG and modal cores)
   - [x] hammer contact ends while ringing continues
         (`piano/hammer_ringing_test.go`, both asserted in one render)
-  - [ ] `coupling_mode` transitions (`off/static/physical`) behave as expected
-  - [ ] detune and distance penalties measurably reduce coupling according to model
+  - [x] `coupling_mode` transitions (`off/static/physical`) behave as expected
+        (`piano/coupling_behaviour_test.go`, measured target energy per mode plus a
+        mid-render `SetCouplingMode` switch, DWG and modal cores)
+  - [x] detune and distance penalties measurably reduce coupling according to model
+        (`piano/coupling_behaviour_test.go`, monotone sweeps of
+        `CouplingDetuneSigmaCents`, `CouplingDistanceExponent` and
+        `CouplingMaxNeighbors`)
 - [ ] Add regression tests for API compatibility and long-render stability (no NaN/Inf).
 - [ ] Add benchmarks:
   - [x] idle full-string-bank cost (`BenchmarkStringBankIdle`)
