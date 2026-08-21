@@ -62,6 +62,18 @@ func TestModalShapeVectorUsesClampedPositionAsCacheKey(t *testing.T) {
 		t.Fatalf("cache key = %v, want the clamped 0.01", g.hammerShapePos)
 	}
 
+	// A second, different below-minimum input clamps to the same 0.01, so this
+	// call must hit the slot filled above instead of refilling it.
+	filled := &g.shapeHammer[0]
+	got = g.shapeVector(clampStrikePos(-0.5))
+	assertShapeVector(t, g, got, 0.01, "clamped low again")
+	if g.hammerShapePos != 0.01 {
+		t.Fatalf("cache key = %v, want the clamped 0.01", g.hammerShapePos)
+	}
+	if &got[0] != filled {
+		t.Fatalf("second below-minimum position did not reuse the cached slot")
+	}
+
 	got = g.shapeVector(clampStrikePos(3))
 	assertShapeVector(t, g, got, 0.99, "clamped high")
 	if g.hammerShapePos != 0.99 {
@@ -97,23 +109,105 @@ func TestModalShapeVectorInvalidatesOnPositionChange(t *testing.T) {
 }
 
 // TestModalShapeVectorsSurviveArenaBinding guards the layering: the shape
-// vectors are group-owned and must not be repointed at the modal arena, whose
-// restoreOwnSlices only rebuilds the evolving mode state.
+// vectors are group-owned and must not be repointed at the modal arena, which
+// compacts only the evolving mode state. It binds real groups through
+// modalArena.acquire and checks that the shape slices still point into each
+// group's own soaBuf while the mode state aliases the arena, and again after
+// release.
 func TestModalShapeVectorsSurviveArenaBinding(t *testing.T) {
-	g := newShapeTestGroup(t)
-	_ = g.shapeVector(0.13)
+	withModalArena(t)
 
-	before := append([]float32(nil), g.shapeRes...)
-	g.restoreOwnSlices()
+	params := NewDefaultParams()
+	params.StringModel = StringModelModal
+	sb := NewStringBank(48000, params)
+	h := NewHammerExciter(48000, params)
 
-	assertShapeVector(t, g, g.shapeRes, modalResonanceStrikePos, "resonance slot after restore")
-	assertShapeVector(t, g, g.shapeCoup, modalCouplingStrikePos, "coupling slot after restore")
-	assertShapeVector(t, g, g.shapeHammer, 0.13, "hammer slot after restore")
-	for i := range before {
-		if g.shapeRes[i] != before[i] {
-			t.Fatalf("restoreOwnSlices clobbered shapeRes[%d]", i)
+	notes := []int{48, 60, 72}
+	for _, note := range notes {
+		sb.SetKeyDown(note, true)
+		h.Trigger(note, 100)
+	}
+	// One block activates the groups, so acquire below has something to compact.
+	_ = sb.Process(128, h)
+
+	a := sb.modalArena
+	if a == nil {
+		t.Fatalf("expected a modal arena for the modal core")
+	}
+	if a.bound {
+		t.Fatalf("arena still bound after Process returned")
+	}
+
+	// Prime the hammer slot so all three shape vectors carry real content.
+	const hammerPos = float32(0.13)
+	before := make(map[int][]float32, len(notes))
+	for _, note := range notes {
+		g := sb.ModalGroup(note)
+		if g == nil {
+			t.Fatalf("expected modal group for note %d", note)
+		}
+		_ = g.shapeVector(hammerPos)
+		before[note] = append([]float32(nil), g.shapeRes...)
+	}
+
+	checkShapesGroupOwned := func(stage string) {
+		t.Helper()
+		for _, note := range notes {
+			g := sb.ModalGroup(note)
+			n := len(g.order)
+			if &g.shapeRes[0] != &g.soaBuf[9*n] ||
+				&g.shapeCoup[0] != &g.soaBuf[10*n] ||
+				&g.shapeHammer[0] != &g.soaBuf[11*n] {
+				t.Fatalf("note %d: shape vectors no longer point into the group's own buffer %s",
+					note, stage)
+			}
+			assertShapeVector(t, g, g.shapeRes, modalResonanceStrikePos, "resonance slot "+stage)
+			assertShapeVector(t, g, g.shapeCoup, modalCouplingStrikePos, "coupling slot "+stage)
+			assertShapeVector(t, g, g.shapeHammer, hammerPos, "hammer slot "+stage)
+			for i, want := range before[note] {
+				if g.shapeRes[i] != want {
+					t.Fatalf("note %d: shapeRes[%d] changed %s", note, i, stage)
+				}
+			}
 		}
 	}
+
+	checkShapesGroupOwned("before binding")
+
+	if !a.acquire(sb, notes) {
+		t.Fatalf("arena compacted nothing; the binding path was never exercised")
+	}
+	if !a.bound {
+		t.Fatalf("arena reports itself unbound after acquire")
+	}
+
+	// While bound the mode state must alias the arena, and the shape vectors
+	// must not have moved with it.
+	for i, note := range a.notes {
+		g := sb.ModalGroup(note)
+		lo := int(a.offsets[i])
+		if &g.re[0] != &a.re[lo] || &g.im[0] != &a.im[lo] {
+			t.Fatalf("note %d: mode state was not repointed at the arena", note)
+		}
+		if !a.boundNote[note] {
+			t.Fatalf("note %d: not marked as bound", note)
+		}
+	}
+	checkShapesGroupOwned("while bound")
+
+	a.release(sb)
+
+	if a.bound {
+		t.Fatalf("arena still bound after release")
+	}
+	for _, note := range notes {
+		g := sb.ModalGroup(note)
+		n := len(g.order)
+		if &g.re[0] != &g.soaBuf[0] || &g.im[0] != &g.soaBuf[n] {
+			t.Fatalf("note %d: mode state not restored to the group's own buffer", note)
+		}
+	}
+	checkShapesGroupOwned("after release")
 }
 
 // TestModalInjectMatchesDirectShapeMath pins the injection arithmetic to the

@@ -115,8 +115,8 @@ inline computation cost — and it only occurs while two strikes with different
 positions overlap on the same note.
 
 At block level, `BenchmarkModalResonanceInjection` (8 keys, sustain held, all 128
-groups undamped targets, physical coupling), the same 12-run interleaved
-comparison:
+groups undamped targets, physical coupling), the same interleaved comparison
+over 10 runs:
 
 | Config                    | Before  | After   | Change                     |
 | ------------------------- | ------- | ------- | -------------------------- |
