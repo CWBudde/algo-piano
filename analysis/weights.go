@@ -209,11 +209,18 @@ func Components(m Metrics, w Weights) []Component {
 		{ComponentEnvelope, m.EnvelopeRMSEDB, NormEnvelope, w.Envelope, math.NaN(), true},
 		{ComponentSpectral, m.SpectralRMSEDB, NormSpectral, w.Spectral, math.NaN(), true},
 		{ComponentDecay, m.DecayDiffDBPerS, NormDecay, w.Decay, math.NaN(), true},
-		{ComponentPartialLevel, m.PartialLevelRMSEDB, NormPartialLevel, w.PartialLevel, math.NaN(), true},
-		{ComponentPartialFreq, m.PartialFreqRMSECents, NormPartialFreq, w.PartialFreq, math.NaN(), true},
-		{ComponentTristimulus, m.TristimulusDistance, NormTristimulus, w.Tristimulus, math.NaN(), true},
-		{ComponentAttack, m.AttackRiseDiffMS, NormAttackRise, w.Attack, attackNorm, m.AttackAvailable},
-		{ComponentDecaySegment, m.DecaySegmentRMSEDBPerS, NormDecaySegment, w.DecaySegment, math.NaN(), true},
+		// The extended components report their own availability through the
+		// finiteness of their raw metric. Partial analysis needs a full
+		// partialWindowSize of post-attack signal and segmented decay needs
+		// enough tail to fit a slope in each segment; on a short comparison
+		// window neither can be measured and the raw value stays NaN. Marking
+		// those available anyway multiplied a positive profile weight by NaN
+		// and turned the whole score into NaN instead of dropping the term.
+		{ComponentPartialLevel, m.PartialLevelRMSEDB, NormPartialLevel, w.PartialLevel, math.NaN(), isFinite(m.PartialLevelRMSEDB)},
+		{ComponentPartialFreq, m.PartialFreqRMSECents, NormPartialFreq, w.PartialFreq, math.NaN(), isFinite(m.PartialFreqRMSECents)},
+		{ComponentTristimulus, m.TristimulusDistance, NormTristimulus, w.Tristimulus, math.NaN(), isFinite(m.TristimulusDistance)},
+		{ComponentAttack, m.AttackRiseDiffMS, NormAttackRise, w.Attack, attackNorm, m.AttackAvailable && isFinite(attackNorm)},
+		{ComponentDecaySegment, m.DecaySegmentRMSEDBPerS, NormDecaySegment, w.DecaySegment, math.NaN(), isFinite(m.DecaySegmentRMSEDBPerS)},
 	}
 
 	out := make([]Component, 0, len(raw))

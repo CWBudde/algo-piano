@@ -215,8 +215,14 @@ func CompareWithOptions(reference []float64, candidate []float64, sampleRate int
 	// Renormalize only when something was actually dropped. A profile whose
 	// weights are all present must reproduce its score bit for bit, and
 	// dividing by a weightTotal that is 1.0 only to within rounding would not.
-	if dropped && weightTotal > 0 {
+	switch {
+	case dropped && weightTotal > 0:
 		sum /= weightTotal
+	case dropped:
+		// Every weighted term was unmeasurable. Leaving sum at 0 would report
+		// a perfect match, so say undefined instead; Metrics.Sanitized turns
+		// that into the worst-case score for JSON consumers.
+		sum = math.NaN()
 	}
 	m.Score = clamp01(sum)
 	m.Similarity = clamp01(math.Exp(-4.0 * m.Score))
