@@ -342,12 +342,12 @@ func analyzeAttack(ref []float64, cand []float64, sampleRate int) attackResult {
 // [0,1] contribution, or NaN when the attack is not measurable. The halves
 // carry equal weight: rise time and onset colour are independent failure modes
 // and neither should be able to hide the other.
-func attackNormOf(m Metrics) float64 {
+func attackNormOf(m Metrics, n Norms) float64 {
 	if !m.AttackAvailable {
 		return math.NaN()
 	}
-	rise := clamp01(m.AttackRiseDiffMS / NormAttackRise)
-	cent := clamp01(m.AttackCentroidRMSEOct / NormAttackCentroid)
+	rise := clamp01(m.AttackRiseDiffMS / n.AttackRise)
+	cent := clamp01(m.AttackCentroidRMSEOct / n.AttackCentroid)
 	if !isFinite(rise) || !isFinite(cent) {
 		return math.NaN()
 	}

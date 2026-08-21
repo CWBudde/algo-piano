@@ -28,6 +28,11 @@ type Weights struct {
 	PartialLevel, PartialFreq, Tristimulus float64
 
 	Attack, DecaySegment float64
+
+	// Norms is the normalization scale each component is measured against.
+	// The zero value, and any field left at zero, resolves to LegacyNorms, so
+	// a profile only names the scales it deliberately recalibrates.
+	Norms Norms
 }
 
 // Norm calibration note for non-legacy profiles.
@@ -52,6 +57,13 @@ type Weights struct {
 // sitting pinned. A saturated component is an invisible component. Metrics
 // carries per-component Saturated flags precisely so this stays visible; when
 // they fire across a preset population, the norm is wrong, not the presets.
+//
+// Weights.Norms is the mechanism for exactly that: a profile names the scales
+// it recalibrates and inherits the rest, so a calibrated profile and the frozen
+// legacy one can coexist. No registered profile sets it yet - picking the new
+// values needs a measurement pass over the tracked preset population, which is
+// a separate change - so today every profile still resolves to LegacyNorms and
+// scores exactly as before.
 //
 // Profile names.
 const (
@@ -195,7 +207,8 @@ func Components(m Metrics, w Weights) []Component {
 	// The attack term is a composite of two sub-metrics rather than a single
 	// raw/scale pair, so its norm is computed up front and its Raw carries the
 	// rise-time difference purely for reporting.
-	attackNorm := attackNormOf(m)
+	norms := w.Norms.resolve()
+	attackNorm := attackNormOf(m, norms)
 
 	raw := []struct {
 		name      string
@@ -205,10 +218,10 @@ func Components(m Metrics, w Weights) []Component {
 		normOver  float64 // when finite, used instead of raw/scale
 		available bool
 	}{
-		{ComponentTime, m.TimeRMSE, NormTime, w.Time, math.NaN(), true},
-		{ComponentEnvelope, m.EnvelopeRMSEDB, NormEnvelope, w.Envelope, math.NaN(), true},
-		{ComponentSpectral, m.SpectralRMSEDB, NormSpectral, w.Spectral, math.NaN(), true},
-		{ComponentDecay, m.DecayDiffDBPerS, NormDecay, w.Decay, math.NaN(), true},
+		{ComponentTime, m.TimeRMSE, norms.Time, w.Time, math.NaN(), true},
+		{ComponentEnvelope, m.EnvelopeRMSEDB, norms.Envelope, w.Envelope, math.NaN(), true},
+		{ComponentSpectral, m.SpectralRMSEDB, norms.Spectral, w.Spectral, math.NaN(), true},
+		{ComponentDecay, m.DecayDiffDBPerS, norms.Decay, w.Decay, math.NaN(), true},
 		// The extended components report their own availability through the
 		// finiteness of their raw metric. Partial analysis needs a full
 		// partialWindowSize of post-attack signal and segmented decay needs
@@ -216,11 +229,11 @@ func Components(m Metrics, w Weights) []Component {
 		// window neither can be measured and the raw value stays NaN. Marking
 		// those available anyway multiplied a positive profile weight by NaN
 		// and turned the whole score into NaN instead of dropping the term.
-		{ComponentPartialLevel, m.PartialLevelRMSEDB, NormPartialLevel, w.PartialLevel, math.NaN(), isFinite(m.PartialLevelRMSEDB)},
-		{ComponentPartialFreq, m.PartialFreqRMSECents, NormPartialFreq, w.PartialFreq, math.NaN(), isFinite(m.PartialFreqRMSECents)},
-		{ComponentTristimulus, m.TristimulusDistance, NormTristimulus, w.Tristimulus, math.NaN(), isFinite(m.TristimulusDistance)},
-		{ComponentAttack, m.AttackRiseDiffMS, NormAttackRise, w.Attack, attackNorm, m.AttackAvailable && isFinite(attackNorm)},
-		{ComponentDecaySegment, m.DecaySegmentRMSEDBPerS, NormDecaySegment, w.DecaySegment, math.NaN(), isFinite(m.DecaySegmentRMSEDBPerS)},
+		{ComponentPartialLevel, m.PartialLevelRMSEDB, norms.PartialLevel, w.PartialLevel, math.NaN(), isFinite(m.PartialLevelRMSEDB)},
+		{ComponentPartialFreq, m.PartialFreqRMSECents, norms.PartialFreq, w.PartialFreq, math.NaN(), isFinite(m.PartialFreqRMSECents)},
+		{ComponentTristimulus, m.TristimulusDistance, norms.Tristimulus, w.Tristimulus, math.NaN(), isFinite(m.TristimulusDistance)},
+		{ComponentAttack, m.AttackRiseDiffMS, norms.AttackRise, w.Attack, attackNorm, m.AttackAvailable && isFinite(attackNorm)},
+		{ComponentDecaySegment, m.DecaySegmentRMSEDBPerS, norms.DecaySegment, w.DecaySegment, math.NaN(), isFinite(m.DecaySegmentRMSEDBPerS)},
 	}
 
 	out := make([]Component, 0, len(raw))
