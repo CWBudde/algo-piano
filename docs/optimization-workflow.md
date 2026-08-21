@@ -328,9 +328,11 @@ The `sustain` pass deliberately gets **no** window: `decay-v1` weights the
 segmented decay metric at 0.55 and its late segment measures out to 5 s, so
 cutting the tail off would remove the very thing the pass is fitting.
 
-`just fit-c4-passes` runs all three in order and finishes with a `legacy-v1`
-distance report on the result, which is the only number comparable to anything
-else. The individual runs are:
+`just fit-c4-passes` runs all three and finishes with `legacy-v1` distance
+reports, the only numbers comparable to anything else. Its final artifact is
+`attack` → `inharmonicity`; the `sustain` pass is measured but deliberately not
+chained into it, for the reason in "Measured results" below. The individual
+runs are:
 
 ```bash
 # 1. Attack pass on the first 350 ms

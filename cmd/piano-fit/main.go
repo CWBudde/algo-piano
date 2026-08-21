@@ -373,7 +373,6 @@ func main() {
 		perNote:           result.bestNotes,
 		aggregate:         aggregate,
 		pass:              passSpecification.Name,
-		scoreProfile:      passSpecification.profileName(),
 		passWindow:        passWindow,
 		rendersPerEval:    len(targets),
 		polish:            result.polish,

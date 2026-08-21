@@ -96,7 +96,6 @@ type outputRequest struct {
 	perNote           []noteReport
 	aggregate         string
 	pass              string
-	scoreProfile      string
 	passWindow        *windowSpec
 	rendersPerEval    int
 	polish            *polishSummary
@@ -152,9 +151,14 @@ func writeOutputs(req outputRequest) error {
 	if pass == passNone {
 		pass = ""
 	}
+	// The profile is derived from the metrics rather than passed in, so that
+	// checkpoint writes cannot forget it: an interrupted attack-v1 run must not
+	// leave behind a report that reads as legacy-v1. CompareWithOptions always
+	// stamps ScoreProfile, so every scored candidate carries its own label.
+	//
 	// A legacy-v1 report is what every existing report already is, so leaving
 	// the field out keeps new reports byte-comparable with old ones.
-	scoreProfile := req.scoreProfile
+	scoreProfile := req.bestMetrics.ScoreProfile
 	if scoreProfile == analysis.ProfileLegacyV1 {
 		scoreProfile = ""
 	}

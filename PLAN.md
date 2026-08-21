@@ -112,8 +112,10 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
       the profile that describes the aspect — `attack-v1`, `decay-v1`,
       `inharmonicity-v1`. `--profile` overrides that and works with `--pass none`
       too; the profile is recorded as `score_profile` in the report. `just
-    fit-c4-passes` runs all three and ends with a `legacy-v1` distance report,
-      the only number comparable across passes. Measurements below.)
+    fit-c4-passes` runs all three and ends with `legacy-v1` distance reports,
+      the only numbers comparable across passes; its final artifact chains
+      `attack` → `inharmonicity` and leaves the regressing `sustain` pass out.
+      Measurements below.)
   - [x] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
         (180 s from `fitted-c4-mayfly.json`, `--pass-window 0:0.35`: legacy score
         `0.5194` → `0.5117`, attack centroid error `0.440` → `0.084` octaves. The
