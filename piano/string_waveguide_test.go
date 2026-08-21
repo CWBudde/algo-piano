@@ -220,3 +220,48 @@ func TestUnisonDetuneProducesBeating(t *testing.T) {
 		t.Fatalf("expected larger peak separation for detuned unison: unison=%.2fHz reference=%.2fHz", uSep, rSep)
 	}
 }
+
+// TestInjectionOffsetResolvesStrikePositionInTopRegister guards the top of the
+// compass against a strike position that no longer does anything.
+//
+// Only the slots in [delayHeadroom, len-1] are ever read before the write
+// pointer overwrites them, and in the treble that window is most of the buffer:
+// MIDI 108 is 15 slots long. Mapping the raw buffer length and then clamping
+// would fold every position below delayHeadroom/len onto the first observable
+// slot - below 0.27 for MIDI 108 - so the soft pedal's strike movement and the
+// fitted strike_position parameter would produce bit-identical excitation over
+// most of the range the fitter is allowed to explore (knobs.go bounds
+// strike_position to [0.08, 0.45]).
+func TestInjectionOffsetResolvesStrikePositionInTopRegister(t *testing.T) {
+	const sampleRate = 48000
+
+	// MIDI 103, 106 and 108 - the shortest delay lines in the compass.
+	for _, f0 := range []float32{1975.53, 2349.32, 4186.01} {
+		s := NewStringWaveguide(sampleRate, f0)
+
+		// Every offset must land where a tap can still read it.
+		seen := map[int]bool{}
+		for _, pos := range []float32{0.08, 0.18, 0.22, 0.30, 0.45} {
+			off := s.injectionOffset(pos)
+			if off < delayHeadroom || off > len(s.delayLine)-1 {
+				t.Fatalf("f0=%.2f pos=%.2f: offset %d outside observable [%d,%d]",
+					f0, pos, off, delayHeadroom, len(s.delayLine)-1)
+			}
+			seen[off] = true
+		}
+		if len(seen) < 3 {
+			t.Fatalf("f0=%.2f (%d slots): five strike positions collapsed onto %d distinct offsets, want at least 3",
+				f0, len(s.delayLine), len(seen))
+		}
+
+		// And the mapping must stay monotonic across the whole range.
+		prev := -1
+		for pos := float32(0.0); pos <= 1.0; pos += 0.01 {
+			off := s.injectionOffset(pos)
+			if off < prev {
+				t.Fatalf("f0=%.2f: offset not monotonic at pos=%.2f (%d after %d)", f0, pos, off, prev)
+			}
+			prev = off
+		}
+	}
+}

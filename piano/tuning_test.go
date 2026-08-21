@@ -117,7 +117,7 @@ func TestTuningAccuracyAcrossCompass(t *testing.T) {
 //     before any tap reads it. Those three notes have 16, 16 and 15 slot delay
 //     lines, and the default strike position of 0.18 lands on offset 2. All of
 //     the hammer energy was discarded. StringWaveguide.injectionOffset now
-//     clamps every injection into the observable range.
+//     maps the whole strike-position range onto the observable slots.
 //
 //  2. DC runaway. From roughly MIDI 96 up the output was essentially pure DC and
 //     the offset grew with pitch and with time: note 100 +5.3, note 103 +13.0,

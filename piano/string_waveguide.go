@@ -120,13 +120,12 @@ func (s *StringWaveguide) dcBlockPhaseDelay() float32 {
 }
 
 // injectionOffset maps a fractional string position [0,1] onto a delay-line
-// offset measured forward from the write pointer, clamped to the range that is
-// actually observable.
+// offset measured forward from the write pointer.
 //
 // The buffer is delayHeadroom slots longer than the integer delay, so the two
 // interpolating taps of readDelayFractional sit at writePos+delayHeadroom and
 // writePos+delayHeadroom-1 (modulo the buffer length). Energy written at offset
-// k is therefore first read delayHeadroom-k samples later and destroyed by the
+// k is therefore first read k-delayHeadroom samples later and destroyed by the
 // write pointer k samples later. At k == delayHeadroom-1 only the fractional
 // tap ever sees it, so the string receives a frac-weighted fraction of the
 // force; at k <= delayHeadroom-2 it is overwritten before either tap reads it
@@ -134,8 +133,16 @@ func (s *StringWaveguide) dcBlockPhaseDelay() float32 {
 // the bit-exact silence at MIDI 106-108, whose delay lines are only 16, 16 and
 // 15 slots long: a strike position of 0.18 lands on offset 2.
 //
-// Clamping into [delayHeadroom, len-1] leaves every offset that was already
-// observable bit-identical and only moves the ones that were being thrown away.
+// The observable slots are exactly [delayHeadroom, len-1], and there are
+// len-delayHeadroom of them - one full loop round trip. So the strike position
+// is mapped affinely onto that window rather than onto the raw buffer length:
+// the whole of [0,1] stays resolvable, at every pitch, and a position near 0
+// still means "close to the near end of the round trip". Clamping instead would
+// fold every position below delayHeadroom/len onto the first observable slot,
+// which in the top register is most of the useful range - a 15-slot MIDI 108
+// string would render every position below 0.27 bit-identically, so the soft
+// pedal's strike movement and the fitted strike_position would stop doing
+// anything up there.
 func (s *StringWaveguide) injectionOffset(strikePos float32) int {
 	if strikePos < 0.01 {
 		strikePos = 0.01
@@ -143,10 +150,8 @@ func (s *StringWaveguide) injectionOffset(strikePos float32) int {
 	if strikePos > 0.99 {
 		strikePos = 0.99
 	}
-	off := int(float32(len(s.delayLine)) * strikePos)
-	if off < delayHeadroom {
-		off = delayHeadroom
-	}
+	span := len(s.delayLine) - delayHeadroom
+	off := delayHeadroom + int(float32(span)*strikePos)
 	if off > len(s.delayLine)-1 {
 		off = len(s.delayLine) - 1
 	}

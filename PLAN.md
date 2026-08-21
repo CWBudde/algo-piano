@@ -553,8 +553,12 @@ MIDI 92 turned up two independent defects in the DWG core. Both are fixed;
 Two things found on the way that contradict the earlier reading of this finding:
 
 - The DC was not what made the DWG-vs-modal distance bad (see 12.4).
-- The C4 regression gate was calibrated against a render whose dominant
-  component was that DC: mean +0.606 against an AC RMS of 0.376. Removing it
+- The C4 regression gate was calibrated against a render carrying that DC as a
+  first-order component. At the source — raw string-bank output, before
+  `output_gain` and the body IR — the offset was mean +0.606 against an AC RMS
+  of 0.376, a ratio of 1.61; on the rendered candidate that `analysis.Compare`
+  actually scores it was +0.0325 against 0.0652, a ratio of 0.50 and 44.6% of
+  total RMS, against 0.15% in the reference. Removing it
   improves `time_rmse` and `spectral_rmse_db` and worsens `envelope_rmse_db` and
   `decay_diff_db_per_s`, because a non-decaying offset had been propping the
   envelope up. `assets/thresholds/c4.json` records the whole before/after and
