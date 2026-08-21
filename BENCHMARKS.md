@@ -124,9 +124,25 @@ comparison:
 | `flatDrive`               | 5.77 ms | 1.48 ms | **−74.4%** (p=0.000, n=10) |
 
 With resonance **disabled** the change is not measurable above this machine's
-noise: `BenchmarkModalKernels` trends −20% to −29% but only reaches p≈0.05,
-and `BenchmarkModalPolyphonyScaling` and `BenchmarkStringBankCouplingModes` all
-report `~`. That is expected — coupling injection runs once per edge rather than
+noise. `BenchmarkModalPolyphonyScaling` (all 10 sub-benchmarks) and
+`BenchmarkStringBankCouplingModes` (all 30) report `~`.
+
+`BenchmarkModalKernels` should be read as **no result**, not as a small win. Two
+independent paired runs disagree with each other about which variant moved:
+
+| Variant           | Run 1 (loaded) | Run 2 (quiet)    |
+| ----------------- | -------------- | ---------------- |
+| `arena`           | ~ (p=0.052)    | ~ (p=0.219)      |
+| `pergroup_scalar` | ~ (p=0.052)    | ~ (p=0.977)      |
+| `pergroup_accum`  | ~ (p=0.219)    | −21.2% (p=0.045) |
+| `pergroup_rotate` | ~ (p=0.068)    | −47.4% (p=0.002) |
+
+Run-to-run spreads are ±31–69%, and a −47% swing in `pergroup_rotate` is not
+physically plausible for a change that only touches the excitation path. These
+are sampling artefacts of a noisy machine, and the p-values that cross 0.05 are
+not evidence of anything. Do not quote them.
+
+The flat result is expected: coupling injection runs once per edge rather than
 once per note per sample, and `BenchmarkStringBankCouplingModes` uses the DWG
 core, which never touches this code. Resonance is where the cost was.
 
@@ -145,6 +161,13 @@ then all of the other. The machine was under heavy concurrent load, and a
 straight before-then-after run produced obvious artefacts — including a −49%
 "improvement" in a DWG benchmark this change cannot touch. Interleaving cancels
 the drift; the per-run spread stays wide, but the paired comparison is sound.
+
+The whole comparison was then repeated once the machine went quiet. The
+microbenchmark reproduced closely (−86.3%, −87.5%, −85.5%, and `~` for the
+alternating case), which is what makes those figures trustworthy.
+`BenchmarkModalKernels` did _not_ reproduce — see above. Repeating a paired run
+end to end, and requiring it to agree with itself, is worth more here than any
+single p-value.
 
 ## Polyphony scaling
 
