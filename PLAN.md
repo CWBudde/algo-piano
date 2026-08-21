@@ -111,9 +111,9 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
       optionally windows the compare via `--pass-window`, **and** now scores with
       the profile that describes the aspect — `attack-v1`, `decay-v1`,
       `inharmonicity-v1`. `--profile` overrides that and works with `--pass none`
-      too; the profile is recorded as `score_profile` in the report. `just
-    fit-c4-passes` runs all three and ends with `legacy-v1` distance reports,
-      the only numbers comparable across passes; its final artifact chains
+      too; the profile is recorded as `score_profile` in the report.
+      `just fit-c4-passes` runs all three and ends with `legacy-v1` distance
+      reports, the only numbers comparable across passes; its final artifact chains
       `attack` → `inharmonicity` and leaves the regressing `sustain` pass out.
       Measurements below.)
   - [x] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
