@@ -16,7 +16,7 @@ func ReadWAVMono(path string) ([]float64, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	dec := wav.NewDecoder(file)
 	if !dec.IsValidFile() {
 		return nil, 0, fmt.Errorf("invalid wav file: %s", path)
@@ -76,9 +76,9 @@ func WriteStereoInterleavedWAV(path string, samples []float32, sampleRate int) e
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	enc := wav.NewEncoder(file, sampleRate, 16, 2, 1)
-	defer enc.Close()
+	defer func() { _ = enc.Close() }()
 
 	buf := &audio.Float32Buffer{
 		Format: &audio.Format{
@@ -99,9 +99,9 @@ func WriteMonoWAV(path string, data []float32, sampleRate int) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	enc := wav.NewEncoder(file, sampleRate, 16, 1, 1)
-	defer enc.Close()
+	defer func() { _ = enc.Close() }()
 
 	buf := &audio.Float32Buffer{
 		Format: &audio.Format{

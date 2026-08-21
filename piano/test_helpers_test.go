@@ -221,7 +221,7 @@ func writeTempIRWav(t *testing.T, left []float32, right []float32, sampleRate in
 	if err != nil {
 		t.Fatalf("CreateTemp: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	numCh := 1
 	data := make([]float32, len(left))

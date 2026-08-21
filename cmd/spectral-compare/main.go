@@ -180,8 +180,8 @@ func main() {
 				bufRef[i] = ref[pos+i] * hann[i]
 				bufCand[i] = cand[pos+i] * hann[i]
 			}
-			plan.Forward(specRef, bufRef)
-			plan.Forward(specCand, bufCand)
+			_ = plan.Forward(specRef, bufRef)
+			_ = plan.Forward(specCand, bufCand)
 			for k := 1; k < nBins; k++ {
 				avgRef[k] += cmplx.Abs(specRef[k])
 				avgCand[k] += cmplx.Abs(specCand[k])
@@ -197,8 +197,8 @@ func main() {
 				bufRef[i] = ref[startSamp+i] * hann[i]
 				bufCand[i] = cand[startSamp+i] * hann[i]
 			}
-			plan.Forward(specRef, bufRef)
-			plan.Forward(specCand, bufCand)
+			_ = plan.Forward(specRef, bufRef)
+			_ = plan.Forward(specCand, bufCand)
 			for k := 1; k < nBins; k++ {
 				avgRef[k] = cmplx.Abs(specRef[k])
 				avgCand[k] = cmplx.Abs(specCand[k])
@@ -354,15 +354,15 @@ func estimateLagXCorr(ref, cand []float64, maxLag int) int {
 
 	specA := make([]complex128, nfft/2+1)
 	specB := make([]complex128, nfft/2+1)
-	plan.Forward(specA, inA)
-	plan.Forward(specB, inB)
+	_ = plan.Forward(specA, inA)
+	_ = plan.Forward(specB, inB)
 
 	for i := range specA {
 		specA[i] *= cmplx.Conj(specB[i])
 	}
 
 	corr := make([]float64, nfft)
-	plan.Inverse(corr, specA)
+	_ = plan.Inverse(corr, specA)
 
 	bestLag := 0
 	best := math.Inf(-1)

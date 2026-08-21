@@ -58,7 +58,9 @@ func main() {
 		if err != nil {
 			die("cpuprofile: %v", err)
 		}
-		pprof.StartCPUProfile(file)
+		if err := pprof.StartCPUProfile(file); err != nil {
+			die("cpuprofile: %v", err)
+		}
 		defer pprof.StopCPUProfile()
 	}
 
