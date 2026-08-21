@@ -329,8 +329,11 @@ fit-c4-stages time_budget="600":
 # legacy-v1 distance reports, which are the numbers that stay comparable.
 #
 # The final artifact is attack -> inharmonicity. The sustain pass runs and is
-# measured, but is deliberately NOT chained into it: it regresses the
-# comparable score until NormSpectral is recalibrated.
+# measured, but is deliberately NOT chained into it: it regressed the
+# comparable score when last measured. The norm saturation that caused that has
+# since been fixed for the non-legacy profiles (analysis.CalibratedNorms), and
+# the recorded pass numbers all predate the DWG treble-collapse fix, so the
+# whole set needs re-measuring before this decision is revisited.
 
 # Per-aspect C4 fitting passes (final artifact is attack -> inharmonicity)
 fit-c4-passes time_budget="180" preset="assets/presets/fitted-c4-mayfly.json":
@@ -363,10 +366,11 @@ fit-c4-passes time_budget="180" preset="assets/presets/fitted-c4-mayfly.json":
         "time_budget=$time_budget" \
         "resume=false" \
         "extra=--pass sustain"
-    # Chained from the ATTACK preset, not the sustain one. The sustain pass
-    # regresses the comparable score until NormSpectral is recalibrated (see
+    # Chained from the ATTACK preset, not the sustain one: the sustain pass
+    # regressed the comparable score when last measured (see
     # docs/optimization-workflow.md), so it is measured above and then left out
-    # of the line that produces the final artifact.
+    # of the line that produces the final artifact. Pending a re-run on the
+    # current renderer under the calibrated norms.
     echo "=== Pass 3/3: inharmonicity (dispersion + strike position, profile inharmonicity-v1) ==="
     just fit-c4 \
         "preset=$out_dir/attack.json" \

@@ -215,18 +215,26 @@ are a _fence_, not a target: tighten them whenever a fit genuinely improves.
 
 > **Caveat on `spectral_rmse_db`.** The gate checks the _raw dB_ value, which is
 > a real regression signal. The _normalised_ spectral component is not: at
-> ~58 dB against `analysis.NormSpectral = 30.0` it saturates, `clamp01` pins it
+> ~52.9 dB against `analysis.NormSpectral = 30.0` it saturates, `clamp01` pins it
 > at 1.0, and it therefore contributes a constant to `score` with **no gradient
 > for the optimizer**. Every preset in the repo saturates it (measured
-> population range 51.5-63.7 dB). Re-calibrating `NormSpectral` to roughly 70-80
-> is the fix, but it rewrites every recorded score and so belongs in a separate,
-> deliberately re-baselined change.
+> population range 47.8-68.6 dB on 2026-08-21).
+>
+> This is deliberate for `legacy-v1` and only for `legacy-v1`: the frozen norms
+> are what make every recorded number comparable. The profiles that actually
+> steer the optimizer — `balanced-v2`, `attack-v1`, `decay-v1`,
+> `inharmonicity-v1` — use `analysis.CalibratedNorms()` instead, which raises
+> `Spectral` to 80.0 along with `Decay`, `PartialLevel`, `PartialFreq`,
+> `AttackRise` and `AttackCentroid`. So the gate saturates and the search does
+> not.
 
-> **Recorded scores from before 2026-08 are not comparable.**
+> **Recorded scores are comparable only within a renderer/metric generation.**
 > `analysis/distance.go` changed six times between 2026-02-14 and 2026-08-16
 > (phase detection, normalisation), so numbers written into older
 > `*.report.json` files were produced by a different metric implementation.
-> Re-measure rather than compare across that boundary.
+> Separately, the DWG treble-collapse fix (#14) changed every render, so any
+> Phase 8B number measured before it describes a different synthesizer.
+> Re-measure rather than compare across either boundary.
 
 ### Per-stage manual check
 
@@ -361,6 +369,13 @@ Two caveats that will bite otherwise:
 
 ### Measured results (2026-08-21, 180 s per pass, from `fitted-c4-mayfly.json`)
 
+> **Superseded — measured on the pre-#14 renderer.** Every number in this
+> section was produced before the DWG treble-collapse fix, which changed every
+> render (the baseline alone moved 0.5194 → 0.5330). The relative story below
+> still reads correctly, but do not quote these figures as current. Re-running
+> the three passes on the current renderer, under the calibrated norms, is the
+> open follow-up.
+
 Judged the only honest way — by re-running the full `legacy-v1` compare on each
 pass's output preset:
 
@@ -376,14 +391,17 @@ metric their profile weights and pay for it elsewhere — the `sustain` pass buy
 1.7 dB/s of segmented-decay accuracy with 9 dB of spectral RMSE (58.0 → 66.9)
 and 13 dB of partial-level RMSE (14.0 → 27.4).
 
-That is not a flaw in the pass machinery, it is `NormSpectral = 30.0` being
-saturated. At 58 dB and at 67 dB the spectral component normalises to exactly
-1.0, so it contributes a _constant_ to `decay-v1` and supplies no restoring
+That was not a flaw in the pass machinery, it was `NormSpectral = 30.0` being
+saturated. At 58 dB and at 67 dB the spectral component normalised to exactly
+1.0, so it contributed a _constant_ to `decay-v1` and supplied no restoring
 force at all against a spectral degradation of that size. Partial level carries
-weight 0 in `decay-v1`, so nothing objects there either. **Do not chain the
-`sustain` pass into a shipping preset until `NormSpectral` is recalibrated**
-(see the note at the end of Phase 8B in `PLAN.md`); run it in isolation and
-check `just gate-c4` on the result.
+weight 0 in `decay-v1`, so nothing objected there either.
+
+`decay-v1` now uses `analysis.CalibratedNorms()`, where `Spectral = 80.0`, so
+that particular blind spot is gone — a 58 → 67 dB degradation now normalises
+0.73 → 0.84 and the profile can see it. **The pass has not been re-run since,
+so it is still not chained into a shipping preset**; run it in isolation and
+check `just gate-c4` on the result until a re-measurement says otherwise.
 
 Run `inharmonicity` from the attack-pass preset rather than the sustain-pass
 preset — done that way it is score-neutral (0.5117 → 0.5121) and nudges

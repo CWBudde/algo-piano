@@ -129,9 +129,10 @@ Every profile's weights are non-negative and sum to 1.0 (`Weights.Validate`).
   four-component score. The six new metrics carry **weight 0**, which is what
   makes `Compare` bit-identical to its pre-2026-08 behaviour. Use it for anything
   that must stay comparable with a recorded number.
-- **`balanced-v2`** — the intended successor: every component contributes.
-  **Not yet usable as a default**, because it inherits the frozen `NormSpectral`
-  (see §4) and would therefore spend 0.20 of its weight on a constant.
+- **`balanced-v2`** — the intended successor: every component contributes. It
+  now uses `analysis.CalibratedNorms()` (see §4), so none of its components sit
+  pinned. It is still **not** the default: making it one would silently change
+  every score in the repo.
 - **`attack-v1`** — for an attack-focused fitting pass. Concentrates on onset
   behaviour and early timbre; deliberately ignores decay entirely.
 - **`decay-v1`** — for a sustain/decay pass. Segment slopes dominate, with
@@ -153,26 +154,25 @@ Measured 2026-08-21 against `reference/c4.wav`, note 60, velocity 118,
 release-after 3.5 s, 48 kHz, across the tracked preset population in
 `assets/presets/`.
 
-| Constant             | Value      | Where         | Observed range                                                                       | Status                                                                                                                                                                                                                                    |
-| -------------------- | ---------- | ------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NormTime`           | 0.25       | `distance.go` | ~0.11 (44% of norm)                                                                  | **OK.** Frozen (legacy). Comfortably unsaturated.                                                                                                                                                                                         |
-| `NormEnvelope`       | 30.0 dB    | `distance.go` | ~9.0 dB (30%)                                                                        | **OK.** Frozen (legacy). Arguably generous, but it varies.                                                                                                                                                                                |
-| `NormSpectral`       | 30.0 dB    | `distance.go` | 51.5–63.7 dB across real presets (172 dB for the degenerate `modal-calibrated.json`) | **BROKEN — saturated for every preset in the repo.** See below.                                                                                                                                                                           |
-| `NormDecay`          | 40.0 dB/s  | `distance.go` | ~3.2 dB/s (8%)                                                                       | **Too large.** Not saturated, but the component barely moves; effectively contributes ~0.01 of the 0.15 weight it is given.                                                                                                               |
-| `NormPartialLevel`   | 12.0 dB    | `features.go` | 10.6 dB (88%); `default.json` saturates at 13.3 dB                                   | **Marginal.** Right order of magnitude, saturates on the worse half of the population. Candidate for ~20 dB.                                                                                                                              |
-| `NormPartialFreq`    | 50.0 cents | `features.go` | 34.8 cents (70%)                                                                     | **OK.**                                                                                                                                                                                                                                   |
-| `NormTristimulus`    | 0.5        | `features.go` | 0.277 (55%)                                                                          | **OK.**                                                                                                                                                                                                                                   |
-| `NormDecaySegment`   | 30.0 dB/s  | `features.go` | 15.3 dB/s (51%)                                                                      | **OK.**                                                                                                                                                                                                                                   |
-| `NormAttackRise`     | 20.0 ms    | `attack.go`   | 24.5 ms — **rise half saturated**                                                    | **Too small.** A 25 ms rise-time miss is ordinary for an un-fitted attack, so `clamp01` pins the rise half of the composite at 1.0; roughly 50 ms would leave headroom. The composite still varies (0.94) because the centroid half does. |
-| `NormAttackCentroid` | 0.5 oct    | `attack.go`   | 0.44 oct (88%)                                                                       | **Marginal.** Close to saturation on real material.                                                                                                                                                                                       |
+| Constant             | Value      | Where         | Observed range                                                   | Status                                                                                                                                                                                                        |
+| -------------------- | ---------- | ------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NormTime`           | 0.25       | `distance.go` | 0.096-0.151 (38-60% of norm)                                     | **OK.** Frozen; also inherited unchanged by `CalibratedNorms`.                                                                                                                                                |
+| `NormEnvelope`       | 30.0 dB    | `distance.go` | 10.1-27.9 dB (34-93%)                                            | **OK.** Frozen; inherited unchanged. Generous, but it varies.                                                                                                                                                 |
+| `NormSpectral`       | 30.0 dB    | `distance.go` | 47.8-68.6 dB (172 dB for the degenerate `modal-calibrated.json`) | **Saturated for every preset in the repo.** Frozen at 30.0 for `legacy-v1`; `CalibratedNorms` raises it to **80.0**.                                                                                          |
+| `NormDecay`          | 40.0 dB/s  | `distance.go` | 0.62-17.1 dB/s (2-43%)                                           | **Too large.** Not saturated, but most of the range is unused; `CalibratedNorms` lowers it to **20.0**.                                                                                                       |
+| `NormPartialLevel`   | 12.0 dB    | `features.go` | 10.9-25.4 dB                                                     | **Saturated on the worse half.** `CalibratedNorms` raises it to **35.0**.                                                                                                                                     |
+| `NormPartialFreq`    | 50.0 cents | `features.go` | 36.6-50.0 cents                                                  | **Saturates at the top of the population.** `CalibratedNorms` raises it to **70.0**.                                                                                                                          |
+| `NormTristimulus`    | 0.5        | `features.go` | 0.15-0.41 (30-82%)                                               | **OK.** Inherited unchanged.                                                                                                                                                                                  |
+| `NormDecaySegment`   | 30.0 dB/s  | `features.go` | 7.5-21.4 dB/s (25-71%)                                           | **OK.** Inherited unchanged.                                                                                                                                                                                  |
+| `NormAttackRise`     | 20.0 ms    | `attack.go`   | 24.2-24.5 ms — **saturated**                                     | **Too small**, and the metric is near-constant anyway: every candidate rises in ~1 ms against the reference's 25.5 ms. `CalibratedNorms` raises it to **50.0**, which unpins it without inventing a gradient. |
+| `NormAttackCentroid` | 0.5 oct    | `attack.go`   | 0.12-1.64 oct — **saturated**                                    | **Too small.** `CalibratedNorms` raises it to **2.0**.                                                                                                                                                        |
 
 The `attack` component averages the two halves (`0.5·rise + 0.5·centroid`), so
 `attack_saturated` fires only when _both_ halves saturate. One saturated half is
 already half a lost gradient and is not flagged — check the raw sub-metrics.
 
-Note also that the `NormAttackRise` doc comment claims "the tracked C4 reference
-rises in roughly 58 ms"; the measured `ref_rise_time_ms` is **25.5 ms**. The
-comment is stale and should be corrected alongside the re-calibration.
+The `NormAttackRise` doc comment used to claim "the tracked C4 reference rises
+in roughly 58 ms"; the measured `ref_rise_time_ms` is **25.5 ms**. Corrected.
 
 ### The `NormSpectral` problem
 
@@ -184,15 +184,18 @@ are materially different renders that score _identically_ in the term the score
 leans on hardest. The optimizer has been flying blind on its own largest
 component.
 
-**Fix:** re-calibrate `NormSpectral` to roughly **70–80 dB**, so the observed
-51.5–63.7 dB population spans a real fraction of the range and the component
-produces a gradient again.
+**Resolved, without re-baselining anything.** Changing a `Norm*` constant would
+silently rewrite every recorded score, so the norms were not changed — they were
+made _per-profile_. `analysis.Norms` hangs off `Weights`; `legacy-v1` keeps
+`LegacyNorms()` and keeps saturating, so every tracked report and
+`assets/thresholds/c4.json` still means exactly what it says, while
+`balanced-v2`, `attack-v1`, `decay-v1` and `inharmonicity-v1` use
+`CalibratedNorms()` and get a gradient. `NormSpectral` becomes **80.0** there,
+against an observed 47.8–68.6 dB population.
 
-**Why it is not fixed here:** changing a `Norm*` constant silently rewrites
-every recorded score. It must land as its own change, with every tracked report
-and threshold re-baselined in the same commit, and clearly labelled as a
-metric-implementation change. The same applies to `NormAttackRise`,
-`NormPartialLevel` and `NormDecay`.
+`TestCalibratedNormsCoverObservedPopulation` replays the worst observed value of
+every metric and fails if any weighted component saturates, so the class of bug
+this section describes cannot come back silently.
 
 **Rule for any new profile:** a non-legacy profile must ship _re-calibrated_
 norms rather than inheriting the frozen ones. Pick a scale the observed
@@ -201,20 +204,26 @@ population, the norm is wrong — not the presets.
 
 ---
 
-## 5. Recorded scores are not comparable across 2026-08
+## 5. Recorded scores are not comparable across two boundaries
 
-`analysis/distance.go` changed **six times** between 2026-02-14 and 2026-08-16,
-including phase-detection and normalisation changes. Any score written into a
-report before that window was produced by a different metric implementation.
+**The metric.** `analysis/distance.go` changed **six times** between 2026-02-14
+and 2026-08-16, including phase-detection and normalisation changes. Any score
+written into a report before that window was produced by a different metric
+implementation.
 
 Concretely: `assets/presets/fitted-c4-mayfly.json.report.json` records
-`best_score 0.3839` / `spectral_rmse_db 20.77` from 2026-02-14. Re-measured
-today at the canonical settings, the same preset scores **`0.5194`** with
-`spectral_rmse_db 58.18`. Pristine HEAD and the working tree agree to the last
-digit (`0.5194351732385747`), so this is the current definition of the metric —
-not a regression introduced by the metric work.
+`best_score 0.3839` / `spectral_rmse_db 20.77` from 2026-02-14. Re-measured at
+the canonical settings on the metric work of 2026-08-21, the same preset scored
+**`0.5194`** with `spectral_rmse_db 58.18`.
 
-**Always re-measure. Never compare across that boundary.**
+**The renderer.** The DWG treble-collapse fix removed a DC pedestal that was
+44.6% of the rendered candidate's RMS, and moved that same preset to **`0.5330`**
+with `spectral_rmse_db 52.89` (exactly `0.5329500259948227`, which is what
+`just gate-c4` prints). Every Phase 8B measurement in this document predates it
+and describes a synthesizer that no longer exists. The `0.5194` figures above are
+kept as the record of the first boundary, not as current numbers.
+
+**Always re-measure. Never compare across either boundary.**
 
 ---
 
@@ -225,6 +234,6 @@ The current numbers are pinned by `assets/thresholds/c4.json` and checked by
 format, the `null`-means-unenforced convention, and the skip-on-missing-
 reference behaviour.
 
-The gate deliberately checks the **raw** `spectral_rmse_db`, which is still a
-real regression signal, even though the _normalised_ spectral component is
-saturated and contributes nothing to the score's gradient.
+The gate deliberately checks the **raw** `spectral_rmse_db`, which is a real
+regression signal, even though the _normalised_ spectral component is saturated
+under `legacy-v1` and contributes nothing to that profile's gradient.

@@ -41,29 +41,34 @@ type Weights struct {
 // NormDecay) are frozen: every score recorded in a tracked report was produced
 // with them, and changing one silently rewrites history. They are not,
 // however, all well calibrated. NormSpectral = 30.0 dB in particular is
-// saturated on real material — measured against reference/c4.wav at 48 kHz,
-// assets/presets/default.json yields a spectral RMSE of about 62 dB and
-// assets/presets/fitted-c4-mayfly.json about 58 dB, so clamp01 pins both at
-// 1.0. Two materially different presets are indistinguishable in the term that
-// is supposed to dominate the score, and the optimizer has been flying blind on
-// its own largest component. Across the tracked preset population the raw
-// value spans roughly 51 dB to 172 dB (note 60, velocity 118, release after
-// 3.5 s), every one of them at or above the 30 dB norm.
+// saturated on real material: measured against reference/c4.wav at 48 kHz the
+// tracked preset population spans 47.8 dB to 68.6 dB, every one of them at or
+// above the 30 dB norm, so clamp01 pins all of them at 1.0. Two materially
+// different presets are indistinguishable in the term that is supposed to
+// dominate the score. NormPartialLevel, NormPartialFreq, NormAttackRise and
+// NormAttackCentroid saturate on the same population.
 //
-// Any new (non-legacy) profile - a balanced-v2 successor, say - must therefore
-// ship a re-calibrated NormSpectral rather than inheriting the frozen one, and
-// the same check applies to every other norm it relies on: pick a scale the
-// observed population actually spans, so the component varies instead of
-// sitting pinned. A saturated component is an invisible component. Metrics
-// carries per-component Saturated flags precisely so this stays visible; when
-// they fire across a preset population, the norm is wrong, not the presets.
+// A saturated component is an invisible component. Metrics carries
+// per-component Saturated flags precisely so this stays visible; when they fire
+// across a preset population, the norm is wrong, not the presets.
 //
-// Weights.Norms is the mechanism for exactly that: a profile names the scales
-// it recalibrates and inherits the rest, so a calibrated profile and the frozen
-// legacy one can coexist. No registered profile sets it yet - picking the new
-// values needs a measurement pass over the tracked preset population, which is
-// a separate change - so today every profile still resolves to LegacyNorms and
-// scores exactly as before.
+// Weights.Norms is the mechanism for having both: a profile names the scales it
+// recalibrates and inherits the rest, so a calibrated profile and the frozen
+// legacy one can coexist. legacy-v1 uses LegacyNorms and keeps saturating,
+// deliberately, because every tracked report and assets/thresholds/c4.json was
+// produced with it. Every other registered profile uses CalibratedNorms, whose
+// values were picked from the measured spread of that population rather than
+// guessed. TestCalibratedNormsCoverObservedPopulation replays the worst
+// observed value of each metric and fails if any component a non-legacy profile
+// weights turns out to be saturated.
+//
+// Recalibrating a profile's norms redefines its score formula without changing
+// its name, which would make a report from before the change look comparable to
+// one from after it. Every scored Metrics therefore also carries ScoreNorms,
+// the norm generation the profile resolved to (see NormsGeneration): the pair
+// (ScoreProfile, ScoreNorms) is what makes two numbers comparable, not the
+// profile name on its own. Recalibrate again by adding a generation, never by
+// editing one.
 //
 // Profile names.
 const (
@@ -85,6 +90,7 @@ var profileRegistry = map[string]Weights{
 	},
 	ProfileBalancedV2: {
 		Name:         ProfileBalancedV2,
+		Norms:        CalibratedNorms(),
 		Time:         0.18,
 		Envelope:     0.16,
 		Spectral:     0.20,
@@ -97,6 +103,7 @@ var profileRegistry = map[string]Weights{
 	},
 	ProfileAttackV1: {
 		Name:         ProfileAttackV1,
+		Norms:        CalibratedNorms(),
 		Envelope:     0.05,
 		Spectral:     0.20,
 		PartialLevel: 0.10,
@@ -105,6 +112,7 @@ var profileRegistry = map[string]Weights{
 	},
 	ProfileDecayV1: {
 		Name:         ProfileDecayV1,
+		Norms:        CalibratedNorms(),
 		Envelope:     0.20,
 		Spectral:     0.10,
 		Decay:        0.15,
@@ -112,6 +120,7 @@ var profileRegistry = map[string]Weights{
 	},
 	ProfileInharmonicityV1: {
 		Name:         ProfileInharmonicityV1,
+		Norms:        CalibratedNorms(),
 		Spectral:     0.10,
 		PartialLevel: 0.10,
 		PartialFreq:  0.70,
