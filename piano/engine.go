@@ -175,8 +175,8 @@ func (p *Piano) SetRoomIR(left, right []float32) {
 func (p *Piano) Process(numFrames int) []float32 {
 	monoMix := p.ringing.Process(numFrames, p.hammerExciter)
 
-	if p.resonance != nil {
-		p.resonance.InjectFromBridge(monoMix, p.ringing.ResonanceTargets())
+	if p.resonance != nil && p.resonance.InjectFromBridge(monoMix, p.ringing.ResonanceTargets()) {
+		p.ringing.NotifyResonanceInjected()
 	}
 
 	// Signal flow: string bank → body convolver (mono→mono) → room convolver (mono→stereo)

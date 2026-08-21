@@ -45,6 +45,10 @@ type ModalStringGroup struct {
 	sustainAmount float32
 	active        bool
 	quietBlocks   int
+
+	// resonanceEnergized records that injectResonance deposited energy since
+	// the bank last looked. The bank clears it when it enrolls the note.
+	resonanceEnergized bool
 }
 
 func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringGroup {
@@ -339,7 +343,21 @@ func (g *ModalStringGroup) injectAtPosition(force float32, strikePos float32, mo
 }
 
 func (g *ModalStringGroup) injectResonance(energy float32) {
+	if energy == 0 {
+		return
+	}
 	g.injectAtPosition(energy, 0.82, 0.55)
+	g.resonanceEnergized = true
+}
+
+// takeResonanceEnergy reports whether sympathetic energy was injected since the
+// last call and clears the flag.
+func (g *ModalStringGroup) takeResonanceEnergy() bool {
+	if !g.resonanceEnergized {
+		return false
+	}
+	g.resonanceEnergized = false
+	return true
 }
 
 func (g *ModalStringGroup) injectHammerForce(force float32, strikePos float32) {
