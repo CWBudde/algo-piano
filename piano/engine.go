@@ -157,6 +157,38 @@ func (p *Piano) SetRoomIR(left, right []float32) {
 	p.roomConvolver.SetIR(left, right)
 }
 
+// SetBodyIRFromBytes loads the mono body impulse response from in-memory WAV
+// bytes, resampling to the engine sample rate if needed.
+func (p *Piano) SetBodyIRFromBytes(data []byte) error {
+	return p.bodyConvolver.SetIRFromBytes(data, p.sampleRate)
+}
+
+// SetRoomIRFromBytes loads the stereo room impulse response from in-memory WAV
+// bytes, resampling to the engine sample rate if needed.
+func (p *Piano) SetRoomIRFromBytes(data []byte) error {
+	return p.roomConvolver.SetIRFromBytes(data)
+}
+
+// SetIRMix sets the dual-IR mix parameters at runtime.
+// bodyGain and roomGain are only applied when strictly positive, matching the
+// defaults used by Process.
+func (p *Piano) SetIRMix(bodyDry, bodyGain, roomWet, roomGain float32) {
+	if p.params == nil {
+		p.params = NewDefaultParams()
+	}
+	p.params.BodyDryMix = bodyDry
+	p.params.BodyIRGain = bodyGain
+	p.params.RoomWetMix = roomWet
+	p.params.RoomGain = roomGain
+	// Keep the legacy remap in Process consistent: it overrides the dual-IR
+	// mix whenever only the deprecated IRWavPath is configured.
+	if p.params.RoomIRWavPath == "" && p.params.BodyIRWavPath == "" && p.params.IRWavPath != "" {
+		p.params.IRDryMix = bodyDry
+		p.params.IRWetMix = roomWet
+		p.params.IRGain = roomGain
+	}
+}
+
 // Process renders a block of audio samples (stereo interleaved).
 func (p *Piano) Process(numFrames int) []float32 {
 	monoMix := p.ringing.Process(numFrames, p.hammerExciter)

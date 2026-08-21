@@ -39,6 +39,7 @@ func main() {
 	js.Global().Set("wasmSetCouplingMode", js.FuncOf(wasmSetCouplingMode))
 	js.Global().Set("wasmSetStringModel", js.FuncOf(wasmSetStringModel))
 	js.Global().Set("wasmLoadIR", js.FuncOf(wasmLoadIR))
+	js.Global().Set("wasmSetIRMix", js.FuncOf(wasmSetIRMix))
 	js.Global().Set("wasmProcessBlock", js.FuncOf(wasmProcessBlock))
 	js.Global().Set("wasmGetMemoryBuffer", js.FuncOf(wasmGetMemoryBuffer))
 
@@ -124,12 +125,49 @@ func wasmSetStringModel(this js.Value, args []js.Value) interface{} {
 	return globalPiano.SetStringModel(model)
 }
 
+// wasmLoadIR applies an impulse response at runtime.
+//
+// Usage: wasmLoadIR(kind, buffer) with kind "body" or "room". The legacy
+// single-argument form wasmLoadIR(buffer) is still accepted and targets the
+// room slot. Returns true on success.
 func wasmLoadIR(this js.Value, args []js.Value) interface{} {
 	if len(args) < 1 || globalPiano == nil {
-		return nil
+		return false
 	}
 
+	kind := "room"
 	src := args[0]
+	if len(args) >= 2 {
+		kind = strings.TrimSpace(strings.ToLower(args[0].String()))
+		src = args[1]
+	}
+	if kind != "body" && kind != "room" {
+		println("unknown IR kind:", kind)
+		return false
+	}
+
+	irData, ok := irBytesFromJS(src)
+	if !ok {
+		return false
+	}
+
+	var err error
+	if kind == "body" {
+		err = globalPiano.SetBodyIRFromBytes(irData)
+	} else {
+		err = globalPiano.SetRoomIRFromBytes(irData)
+	}
+	if err != nil {
+		println("failed to apply", kind, "IR:", err.Error())
+		return false
+	}
+
+	println("applied", kind, "IR:", len(irData), "bytes")
+	return true
+}
+
+// irBytesFromJS copies an ArrayBuffer/Uint8Array into a Go byte slice.
+func irBytesFromJS(src js.Value) ([]byte, bool) {
 	uint8Array := js.Global().Get("Uint8Array")
 	arrayBuffer := js.Global().Get("ArrayBuffer")
 
@@ -138,26 +176,36 @@ func wasmLoadIR(this js.Value, args []js.Value) interface{} {
 	}
 	if !src.InstanceOf(uint8Array) {
 		println("IR data is not an ArrayBuffer/Uint8Array")
-		return nil
+		return nil, false
 	}
 
 	length := src.Get("byteLength").Int()
-
 	if length == 0 {
 		println("IR data is empty")
-		return nil
+		return nil, false
 	}
 
-	// Copy data from JS to Go
 	irData := make([]byte, length)
 	copied := js.CopyBytesToGo(irData, src)
 	if copied != length {
 		println("IR copy mismatch:", copied, "of", length)
+		return nil, false
 	}
+	return irData, true
+}
 
-	// TODO: Parse WAV from bytes and apply via SetRoomIR/SetBodyIR at runtime.
-	println("IR loaded:", copied, "bytes (runtime IR apply not implemented yet)")
-	return nil
+// wasmSetIRMix sets the dual-IR mix: (bodyDry, bodyGain, roomWet, roomGain).
+func wasmSetIRMix(this js.Value, args []js.Value) interface{} {
+	if len(args) < 4 || globalPiano == nil {
+		return false
+	}
+	globalPiano.SetIRMix(
+		float32(args[0].Float()),
+		float32(args[1].Float()),
+		float32(args[2].Float()),
+		float32(args[3].Float()),
+	)
+	return true
 }
 
 func wasmProcessBlock(this js.Value, args []js.Value) interface{} {

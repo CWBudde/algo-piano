@@ -770,6 +770,10 @@ function handleSustain(down) {
     }
 }
 
+// Dual-IR mix applied once a room IR is active.
+// (bodyDry, bodyGain, roomWet, roomGain)
+const IR_MIX_WITH_ROOM = [0.7, 1.0, 0.35, 1.0];
+
 async function loadIR() {
     try {
         const response = await fetch('dist/assets/ir/default_96k.wav');
@@ -779,9 +783,21 @@ async function loadIR() {
         }
 
         const arrayBuffer = await response.arrayBuffer();
-        wasmLoadIR(arrayBuffer);
+        if (typeof wasmLoadIR === 'undefined') {
+            console.warn('wasmLoadIR unavailable, continuing without convolution');
+            return;
+        }
 
-        console.log('IR loaded successfully');
+        if (wasmLoadIR('room', arrayBuffer) === false) {
+            console.warn('Room IR could not be applied, continuing without convolution');
+            return;
+        }
+
+        if (typeof wasmSetIRMix !== 'undefined') {
+            wasmSetIRMix(...IR_MIX_WITH_ROOM);
+        }
+
+        console.log('Room IR loaded and applied');
     } catch (error) {
         console.warn('Failed to load IR:', error);
     }
