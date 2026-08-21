@@ -312,6 +312,198 @@ to modal" rule should not be adopted on the assumption that modal is faster;
 decide it on measured numbers and on how far `modal_partials` can be reduced
 before quality suffers.
 
+## Coupling modes at active polyphony
+
+_Measured 2026-08-21, Go 1.26.5, same machine as above; median of three
+`-count=3` runs at default benchtime. **This machine was under heavy concurrent
+load** — load average 13 to 24 throughout — so read the columns against each
+other, not as absolute budget figures._
+
+`BenchmarkStringBankCouplingModes`, PLAN.md 9.6's "active polyphony with
+coupling off/static/physical". DWG core, one 128-frame block at 48 kHz, budget
+2.67 ms. Every case is allocation-free.
+
+| Case                    | Pedal | off      | static    | physical  |
+| ----------------------- | ----- | -------- | --------- | --------- |
+| poly1 mid (2 strings)   | up    | 7.4 µs   | 111 µs    | 280 µs    |
+| poly1 mid (2 strings)   | down  | 7.0 µs   | 350 µs    | 590 µs    |
+| poly8 low (9 strings)   | up    | 43 µs    | 255 µs    | 1.48 ms\* |
+| poly8 low (9 strings)   | down  | 238 µs\* | 3.03 ms\* | 866 µs\*  |
+| poly8 mid (16 strings)  | up    | 62 µs    | 573 µs    | 843 µs    |
+| poly8 mid (16 strings)  | down  | 58 µs    | 641 µs    | 701 µs    |
+| poly8 high (24 strings) | up    | 65 µs    | 479 µs    | 639 µs    |
+| poly8 high (24 strings) | down  | 66 µs    | 587 µs    | 713 µs    |
+| poly8 mixed (18 str.)   | up    | 53 µs    | 332 µs    | 596 µs    |
+| poly8 mixed (18 str.)   | down  | 58 µs    | 694 µs    | 694 µs    |
+
+\* The four `poly8_low` figures landed in the worst of the load spike and are
+not trustworthy: their three runs spread 608 µs to 2.30 ms (up/physical),
+1.79 ms to 4.04 ms (down/static) and 734 µs to 23.4 ms (down/physical). Every
+other row held within about ±15%. Re-measure that register on a quiet machine
+before drawing any conclusion from it.
+
+What the stable rows say:
+
+- **Coupling, not polyphony, is the dominant cost.** At poly8 mid, going from
+  `off` to `physical` is 58 µs to 701 µs — a 12x increase for the same eight
+  held keys. Compare the uncoupled sweep below, where getting from 16 to 130
+  voices costs only 8.6x.
+- The reason is the one the density section makes explicit: coupling recruits
+  voices. Eight struck keys become ~88 sounding groups, so the coupled cases are
+  really rendering the whole keyboard.
+- `static` is consistently cheaper than `physical` but not by much — roughly
+  0.7x to 0.9x on the stable rows — because both recruit the same way. Choosing
+  `static` for CPU reasons buys far less than the mode names suggest.
+- Holding the sustain pedal raises coupled cost (poly1 mid: 111 µs to 350 µs
+  static, 280 µs to 590 µs physical) and leaves uncoupled cost untouched, which
+  is the expected shape: undamped targets accept injected energy and then have
+  to be rendered.
+
+## Coupling graph density and top-K scaling
+
+_Measured 2026-08-21, Go 1.26.5, same machine as above; median of five
+`-count=5` runs at default benchtime. **This machine was under concurrent load
+for this sweep**, so every row here sits roughly 2x above what the same
+benchmark reports on a quiet machine. The whole section was re-measured in one
+back-to-back run when the production default (`coupling_max_neighbors = 10`)
+was added to the sweep, so the rows are comparable with each other but not with
+the absolute figures in other sections._
+
+`BenchmarkStringBankCouplingGraphDensity`, PLAN.md 9.6's "coupling graph
+density/top-K scaling vs CPU". The struck keys are held fixed at eight
+mid-register keys with the sustain pedal down and physical coupling on; the
+only thing that moves is how dense the precomputed sparse graph is. The number
+of _active_ notes is not fixed — that is the effect being measured. Each case
+reports the graph it ran on next to the timing: `edges` (directed edges in the
+whole 88-key graph), `active-edges` (edges leaving the active set) and `active`
+(notes in the active set), all sampled after the measured loop.
+
+Sweeping the `coupling_max_neighbors` top-K cap. 10 is the production default,
+in both `NewDefaultParams` and `assets/presets/default.json`:
+
+| maxNeighbors | edges | active | active-edges | sec/op | % of budget |
+| ------------ | ----- | ------ | ------------ | ------ | ----------- |
+| 1            | 88    | 8      | 8            | 48 µs  | 1.8%        |
+| 2            | 176   | 50-62  | 100-124      | 308 µs | 12%         |
+| 4            | 352   | 84     | 336          | 574 µs | 22%         |
+| 8            | 704   | 88     | 704          | 746 µs | 28%         |
+| 10 (default) | 880   | 88     | 880          | 680 µs | 26%         |
+| 16           | 1408  | 88     | 1408         | 686 µs | 26%         |
+| 32           | 2597  | 88     | 2597         | 719 µs | 27%         |
+| 64           | 2792  | 88     | 2792         | 736 µs | 28%         |
+| 87           | 2792  | 88     | 2792         | 843 µs | 32%         |
+
+64 and 87 build the identical graph: the compile-time weight floor
+`couplingPhysicalMinScore` already rejects everything past ~32 candidates per
+source on average, so no source has 64 survivors and the cap stops binding
+somewhere between 32 and 64. Their 736 µs against 843 µs is therefore a direct
+readout of this machine's run-to-run noise on this benchmark, not a density
+effect — as is the default (10) landing slightly _below_ 8. Treat differences
+below about 30% here as noise.
+
+Sweeping an edge-weight floor instead, at a fixed top-K of 32. The production
+floor is a compile-time constant, so the benchmark prunes the built graph:
+every edge carrying less than `minShare` of its source's total outgoing gain is
+dropped, without renormalising what survives.
+
+| minShare | edges | active | active-edges | sec/op | % of budget |
+| -------- | ----- | ------ | ------------ | ------ | ----------- |
+| 0.00     | 2597  | 88     | 2597         | 733 µs | 27%         |
+| 0.02     | 897   | 88     | 897          | 603 µs | 23%         |
+| 0.05     | 566   | 88     | 566          | 563 µs | 21%         |
+| 0.10     | 228   | 73-80  | 187-207      | 371 µs | 14%         |
+| 0.20     | 100   | 10     | 11           | 54 µs  | 2.0%        |
+
+**Edge count is not the CPU lever.** Cutting the graph from 2597 edges to 566 —
+a 4.6x reduction, and the `active-edges` column confirms the per-sample edge work
+fell by the same factor — moves the block cost from 733 µs to 563 µs, a 23%
+change against a noise band of about the same size, while the active set stays
+saturated at 88. The same holds on the top-K side: 8 to 87 neighbours is a 4x
+edge increase for roughly 13%, inside that band.
+
+What actually costs is the active-voice count the graph _recruits_.
+`InjectCouplingForce` enrols any target it drives into the active set, so a graph
+dense enough to reach the whole keyboard turns 8 struck keys into 88 sounding
+groups, and rendering those 88 groups dominates everything the coupling loop
+itself does. The two rows where cost collapses are exactly the two rows where
+recruitment fails: `maxNeighbors=1` (8 active, 48 µs) and `minShare=0.20`
+(10 active, 54 µs). Between them, the transition is abrupt — `maxNeighbors=2`
+already recruits 50 to 62 voices and costs 308 µs.
+
+Two consequences for tuning:
+
+- Lowering `coupling_max_neighbors` from its default of 10 to save CPU only
+  works if it drops far enough to stop the cascade, and that point (1 to 2
+  neighbours) is far below any setting that sounds like a piano. As a
+  performance knob it is close to useless; as a voicing knob it is nearly free.
+- Any future budget work on the coupled case should go at the cost of a
+  sounding group, or at capping how many groups coupling may recruit, not at
+  making the graph sparser.
+
+The `active` column for `maxNeighbors=2` (50 to 62) and `minShare=0.10` (73 to 80) varies between runs because recruitment is still in progress when the
+measured loop ends; it is sampled after the loop, so a longer run recruits more.
+The saturated rows (88) and the collapsed rows are stable.
+
+## Voice cost per block and polyphony sweep
+
+_Measured 2026-08-21, Go 1.26.5, same machine as above; median of five
+`-count=5` runs at default benchtime, at load average 8 to 13. Per-case spreads
+are ±10% to ±25%; the linearity below is the trustworthy part, the third digit
+is not._
+
+`BenchmarkStringBankVoiceCostPerBlock`, one 128-frame block at 48 kHz — the
+shape of a single audio callback, budget 2.67 ms. This closes both of PLAN.md
+13's remaining benchmark boxes: "Voice cost per block at 48k/128 frames" and
+"Polyphony sweep (16/32/64/128 voices)".
+
+A **voice is one sounding string**, not one key. The bank spans 88 keys, so 128
+simultaneous voices is unreachable if a voice is a key, and the per-string cost
+is what the DSP actually pays. The sweep holds contiguous key ranges starting at
+MIDI 36 and sized to land on each voice target; 128 lands on 130 because the top
+of that range is three-string territory and the count steps by three.
+
+Every range stops at or below **MIDI 91, deliberately**. The DWG core has a known
+defect from roughly MIDI 96 up — runaway DC that never converges, and bit-exact
+silence at MIDI 106-108 — documented under Phase 13 in PLAN.md and reproduced by
+the skipped `TestTrebleRegisterCollapsesInDWGCore`. A 128-voice sweep run over the
+natural range would spend its top third inside that defect, and the DWG column
+would then be measuring a broken filter loop rather than voice cost. Capping at
+91 keeps the two cores comparable.
+
+Coupling is **disabled**, matching `BenchmarkModalPolyphonyScaling` and for the
+same reason: with coupling on, the active set saturates at ~88 notes regardless
+of how many keys are held and the sweep stops measuring polyphony. The coupled
+case is the section above.
+
+| Voices | Keys  | DWG sec/op | DWG % budget | DWG ns/voice-block | Modal sec/op | Modal % budget | Modal ns/voice-block |
+| ------ | ----- | ---------- | ------------ | ------------------ | ------------ | -------------- | -------------------- |
+| 16     | 36-45 | 63.7 µs    | 2.4%         | 3980               | 72.0 µs      | 2.7%           | 4502                 |
+| 32     | 36-53 | 121 µs     | 4.5%         | 3785               | 133 µs       | 5.0%           | 4160                 |
+| 64     | 36-69 | 265 µs     | 9.9%         | 4138               | 330 µs       | 12.4%          | 5150                 |
+| 130    | 36-91 | 546 µs     | 20.5%        | 4199               | 614 µs       | 23.0%          | 4726                 |
+
+**Voice cost per block is flat at roughly 4 µs per voice**, 3.8 to 4.2 µs on
+DWG and 4.2 to 5.3 µs on modal, over an 8x range of polyphony. Both cores scale
+linearly in string count with no super-linear term: nothing in the uncoupled
+voice path is quadratic in polyphony.
+
+The headline budget figure: **130 uncoupled voices fit in about 20% of one
+48 kHz / 128-frame callback**, so the string bank alone leaves ample room. Note
+what that budget does _not_ include — a one-second stereo room IR is another 40%
+on its own (see "Convolver cost"), and turning coupling on costs far more than
+the voices do, because it recruits voices that were not struck.
+
+Modal is again not cheaper than DWG at the default 8 partials, consistent with
+the "Polyphony scaling" section above; it is 6% to 25% more expensive across
+this sweep. The `%budget` and `ns/voice-block` metrics are reported by the
+benchmark itself via `b.ReportMetric`, so they need no post-processing.
+
+Re-measure with:
+
+```bash
+go test ./piano/ -run='^$' -bench='VoiceCostPerBlock|CouplingGraphDensity' -benchmem -count=5
+```
+
 ## Reproducing the before/after comparison
 
 The pre-refactor numbers were taken from a worktree at the parent commit of the

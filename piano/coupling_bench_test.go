@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+// BenchmarkStringBankCouplingModes measures a 128-frame block at 48 kHz on the
+// DWG core across the full coupling matrix: poly-1 and poly-8 loads in the low,
+// mid, high and mixed registers, each with the sustain pedal up and down, each
+// with coupling off, static and physical. This is PLAN.md 9.6's "active
+// polyphony with coupling off/static/physical".
+//
+// Every note is re-struck every benchmarkRetriggerEvery iterations with the
+// timer stopped. Without that the bank rings down over a long run, and because
+// the testing package picks b.N from a timed pilot run, a benchmark that gets
+// cheaper the longer it runs has no fixed point: measured ns/op then depends on
+// which b.N the ramp happened to settle on rather than on the configuration
+// under test.
 func BenchmarkStringBankCouplingModes(b *testing.B) {
 	cases := benchmarkCases()
 
@@ -108,27 +120,39 @@ func benchmarkCasesFromEnv() []couplingBenchCase {
 	if end > 127 {
 		end = 127
 	}
+	up, ok := benchCaseForKeyRange(start, end, step, false)
+	if !ok {
+		return nil
+	}
+	down, _ := benchCaseForKeyRange(start, end, step, true)
+	return []couplingBenchCase{up, down}
+}
+
+// benchCaseForKeyRange builds one benchmark case holding every key in
+// [start, end] at the given stride. It is the shared machinery behind both the
+// env-driven cases above and the fixed polyphony sweep in
+// polyphony_bench_test.go, so both describe their load the same way.
+func benchCaseForKeyRange(start int, end int, step int, sustainDown bool) (couplingBenchCase, bool) {
+	if step <= 0 {
+		step = 1
+	}
 	notes := make([]int, 0, 128)
 	for n := start; n <= end; n += step {
 		notes = append(notes, n)
 	}
 	if len(notes) == 0 {
-		return nil
+		return couplingBenchCase{}, false
 	}
-	keys := len(notes)
-	strings := stringCountForNotes(notes)
-	return []couplingBenchCase{
-		{
-			name:        fmt.Sprintf("range_%d_%d_step%d_pedalUp_keys%d_strings%d", start, end, step, keys, strings),
-			sustainDown: false,
-			notes:       notes,
-		},
-		{
-			name:        fmt.Sprintf("range_%d_%d_step%d_pedalDown_keys%d_strings%d", start, end, step, keys, strings),
-			sustainDown: true,
-			notes:       notes,
-		},
+	pedal := "pedalUp"
+	if sustainDown {
+		pedal = "pedalDown"
 	}
+	return couplingBenchCase{
+		name: fmt.Sprintf("range_%d_%d_step%d_%s_keys%d_strings%d",
+			start, end, step, pedal, len(notes), stringCountForNotes(notes)),
+		sustainDown: sustainDown,
+		notes:       notes,
+	}, true
 }
 
 func lookupEnvInt(name string) (int, bool) {
@@ -153,21 +177,31 @@ func stringCountForNotes(notes []int) int {
 }
 
 func benchmarkStringBankCouplingMode(b *testing.B, mode CouplingMode, notes []int, sustainDown bool) {
-	sb, _ := setupBenchmarkStringBank(mode, notes, sustainDown)
+	sb, h := setupBenchmarkStringBank(mode, notes, sustainDown)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		if i > 0 && i%benchmarkRetriggerEvery == 0 {
+			b.StopTimer()
+			retriggerBenchmarkBank(sb, h, notes)
+			b.StartTimer()
+		}
 		_ = sb.Process(128, nil)
 	}
 }
 
 func benchmarkStringBankCouplingModeUndampedTargetsOnly(b *testing.B, notes []int, sustainDown bool) {
-	sb, _ := setupBenchmarkStringBank(CouplingModePhysical, notes, sustainDown)
+	sb, h := setupBenchmarkStringBank(CouplingModePhysical, notes, sustainDown)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		if i > 0 && i%benchmarkRetriggerEvery == 0 {
+			b.StopTimer()
+			retriggerBenchmarkBank(sb, h, notes)
+			b.StartTimer()
+		}
 		_ = sb.ProcessUndampedTargetCouplingOnly(128, nil)
 	}
 }

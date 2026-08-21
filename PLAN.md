@@ -276,8 +276,14 @@ This phase is split into execution subphases to make progress and ownership expl
 - [ ] Add regression tests for API compatibility and long-render stability (no NaN/Inf).
 - [ ] Add benchmarks:
   - [x] idle full-string-bank cost (`BenchmarkStringBankIdle`)
-  - [ ] active polyphony with coupling `off/static/physical`
-  - [ ] coupling graph density/top-K scaling vs CPU
+  - [x] active polyphony with coupling `off/static/physical`
+        (`BenchmarkStringBankCouplingModes`, poly-1 and poly-8 low/mid/high/mixed
+        registers x pedal up/down x all three modes)
+  - [x] coupling graph density/top-K scaling vs CPU
+        (`BenchmarkStringBankCouplingGraphDensity`; sweeps `maxNeighbors`
+        1..87 including the production default of 10, plus an edge-weight
+        floor. Edge count is not the CPU lever, the active-voice count the
+        graph recruits is — see BENCHMARKS.md)
 - [ ] Define calibration workflow for physical coupling knobs against multi-note recordings.
 
 **Done when:** one struck note with sustain down audibly excites non-struck related strings through the physical coupling model, coupling strength is controllable (`off` to strong) via general parameters, hammer/ringing remain decoupled, and body/room + web compatibility remain intact.
@@ -502,10 +508,14 @@ cut sustained-decay cost from 4.2 ms to 0.59 ms — a larger win than the SIMD w
         (`piano/integration_test.go` NaN/Inf, `piano/denormal_test.go` denormals)
 - [ ] Benchmarks
   - [x] Use `go test -bench=.` benchmarks
-  - [ ] Voice cost per block at 48k/128 frames
+  - [x] Voice cost per block at 48k/128 frames
+        (`BenchmarkStringBankVoiceCostPerBlock`, `ns/voice-block` metric)
   - [x] Convolution cost by IR length/partition size
         (`piano/convolver_bench_test.go`)
-  - [ ] Polyphony sweep (e.g. 16/32/64/128 voices)
+  - [x] Polyphony sweep (e.g. 16/32/64/128 voices)
+        (`BenchmarkStringBankVoiceCostPerBlock`; a voice is one sounding string,
+        and the sweep stops at MIDI 91 to stay clear of the DWG treble collapse
+        below, so the 128-voice case is 130 strings over keys 36-91)
 
 **Open finding — DWG treble collapse (2026-08-21).** Extending tuning coverage
 past MIDI 92 turned up two defects in the DWG core, documented and reproduced by
