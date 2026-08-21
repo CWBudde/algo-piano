@@ -10,8 +10,11 @@ type Piano struct {
 	bodyConvolver *BodyConvolver
 	roomConvolver *SoundboardConvolver
 	resonance     *ResonanceEngine
-	sustainPedal  bool
+	sustainAmount float32
 	softPedal     bool
+	// irMixExplicit records that SetIRMix was called, so Process must use the
+	// dual-IR mix verbatim instead of remapping the deprecated IR params.
+	irMixExplicit bool
 }
 
 // NewPiano creates a new piano engine.
@@ -74,9 +77,23 @@ func (p *Piano) NoteOff(note int) {
 }
 
 // SetSustainPedal sets sustain pedal state (true = down, false = up).
+// It is the fully-up / fully-down case of SetSustainPedalAmount.
 func (p *Piano) SetSustainPedal(down bool) {
-	p.sustainPedal = down
-	p.ringing.SetSustain(down)
+	if down {
+		p.SetSustainPedalAmount(1)
+		return
+	}
+	p.SetSustainPedalAmount(0)
+}
+
+// SetSustainPedalAmount sets continuous sustain pedal depth in [0,1]. The depth
+// maps directly onto the physical damper contact of every string in the bank:
+// 0 seats all dampers, 1 lifts them completely, and intermediate values model a
+// half-pedal where the dampers only rest partly on the strings.
+func (p *Piano) SetSustainPedalAmount(amount float32) {
+	amount = clampf(amount, 0, 1)
+	p.sustainAmount = amount
+	p.ringing.SetSustainAmount(amount)
 }
 
 // SetSoftPedal sets una corda / soft pedal state (true = down, false = up).
@@ -122,7 +139,7 @@ func (p *Piano) SetStringModel(model StringModel) bool {
 		held = p.keys.keyDown
 		velocity = p.keys.lastVelocity
 	}
-	sustain := p.sustainPedal
+	sustain := p.sustainAmount
 	soft := p.softPedal
 
 	p.params.StringModel = model
@@ -130,7 +147,7 @@ func (p *Piano) SetStringModel(model StringModel) bool {
 	p.hammerExciter = NewHammerExciter(p.sampleRate, p.params)
 	p.hammerExciter.SetSoftPedal(soft)
 	p.ringing = NewRingingState(p.sampleRate, p.params)
-	p.ringing.SetSustain(sustain)
+	p.ringing.SetSustainAmount(sustain)
 	for note := 0; note < 128; note++ {
 		if !held[note] {
 			continue
@@ -157,12 +174,44 @@ func (p *Piano) SetRoomIR(left, right []float32) {
 	p.roomConvolver.SetIR(left, right)
 }
 
+// SetBodyIRFromBytes loads the mono body impulse response from in-memory WAV
+// bytes, resampling to the engine sample rate if needed.
+func (p *Piano) SetBodyIRFromBytes(data []byte) error {
+	return p.bodyConvolver.SetIRFromBytes(data, p.sampleRate)
+}
+
+// SetRoomIRFromBytes loads the stereo room impulse response from in-memory WAV
+// bytes, resampling to the engine sample rate if needed.
+func (p *Piano) SetRoomIRFromBytes(data []byte) error {
+	return p.roomConvolver.SetIRFromBytes(data)
+}
+
+// SetIRMix sets the dual-IR mix parameters at runtime.
+// bodyGain and roomGain are only applied when strictly positive, matching the
+// defaults used by Process.
+func (p *Piano) SetIRMix(bodyDry, bodyGain, roomWet, roomGain float32) {
+	if p.params == nil {
+		p.params = NewDefaultParams()
+	}
+	p.params.BodyDryMix = bodyDry
+	p.params.BodyIRGain = bodyGain
+	p.params.RoomWetMix = roomWet
+	p.params.RoomGain = roomGain
+	// Mirror the mix onto the deprecated params so callers that still read them
+	// observe the same settings, and disable the legacy remap in Process: it
+	// cannot represent bodyGain and would otherwise reset it to 1.
+	p.params.IRDryMix = bodyDry
+	p.params.IRWetMix = roomWet
+	p.params.IRGain = roomGain
+	p.irMixExplicit = true
+}
+
 // Process renders a block of audio samples (stereo interleaved).
 func (p *Piano) Process(numFrames int) []float32 {
 	monoMix := p.ringing.Process(numFrames, p.hammerExciter)
 
-	if p.resonance != nil {
-		p.resonance.InjectFromBridge(monoMix, p.ringing.ResonanceTargets())
+	if p.resonance != nil && p.resonance.InjectFromBridge(monoMix, p.ringing.ResonanceTargets()) {
+		p.ringing.NotifyResonanceInjected()
 	}
 
 	// Signal flow: string bank → body convolver (mono→mono) → room convolver (mono→stereo)
@@ -195,8 +244,9 @@ func (p *Piano) Process(numFrames int) []float32 {
 			roomGain = p.params.RoomGain
 		}
 		// Legacy compat: if old IRWetMix/IRDryMix/IRGain are set and new ones aren't,
-		// map old params to new signal flow.
-		if p.params.RoomIRWavPath == "" && p.params.BodyIRWavPath == "" && p.params.IRWavPath != "" {
+		// map old params to new signal flow. Skipped once SetIRMix supplied an
+		// explicit dual-IR mix, which the legacy params cannot represent.
+		if !p.irMixExplicit && p.params.RoomIRWavPath == "" && p.params.BodyIRWavPath == "" && p.params.IRWavPath != "" {
 			bodyDry = p.params.IRDryMix
 			roomWet = p.params.IRWetMix
 			roomGain = p.params.IRGain

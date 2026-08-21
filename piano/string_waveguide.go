@@ -13,7 +13,7 @@ type StringWaveguide struct {
 	reflection       float32
 	baseReflection   float32
 	damperReflection float32
-	damperEngaged    bool
+	damperAmount     float32
 
 	lowpassCoeff float32
 	loopState    float32
@@ -33,7 +33,7 @@ func NewStringWaveguide(sampleRate int, f0 float32) *StringWaveguide {
 		reflection:       0.9999,
 		baseReflection:   0.9999,
 		damperReflection: 0.92,
-		damperEngaged:    false,
+		damperAmount:     0,
 		lowpassCoeff:     0.0,
 		dispersionCoeff:  0.0,
 	}
@@ -116,22 +116,48 @@ func (s *StringWaveguide) SetLoopLoss(gain float32, highFreqDamping float32) {
 	if highFreqDamping > 0.99 {
 		highFreqDamping = 0.99
 	}
-	s.reflection = gain
 	s.baseReflection = gain
-	if s.damperEngaged {
-		s.reflection = s.damperReflection
-	}
+	s.applyDamper()
 	s.lowpassCoeff = highFreqDamping
 }
 
 // SetDamper toggles aggressive damping for release behavior.
+// It is the fully-off / fully-on case of SetDamperAmount.
 func (s *StringWaveguide) SetDamper(engaged bool) {
-	s.damperEngaged = engaged
 	if engaged {
-		s.reflection = s.damperReflection
+		s.SetDamperAmount(1)
 		return
 	}
-	s.reflection = s.baseReflection
+	s.SetDamperAmount(0)
+}
+
+// SetDamperAmount sets continuous damper contact in [0,1], where 0 leaves the
+// string undamped and 1 is a fully seated damper. Intermediate values model a
+// half-pedalled damper resting partly on the string and interpolate the loop
+// reflection coefficient accordingly.
+func (s *StringWaveguide) SetDamperAmount(amount float32) {
+	if amount < 0 {
+		amount = 0
+	}
+	if amount > 1 {
+		amount = 1
+	}
+	s.damperAmount = amount
+	s.applyDamper()
+}
+
+// applyDamper recomputes the loop reflection from the current base reflection
+// and damper amount. It is called both when the damper moves and when loop loss
+// changes, so a partial damper survives a loss-parameter update.
+func (s *StringWaveguide) applyDamper() {
+	switch s.damperAmount {
+	case 0:
+		s.reflection = s.baseReflection
+	case 1:
+		s.reflection = s.damperReflection
+	default:
+		s.reflection = s.baseReflection + (s.damperReflection-s.baseReflection)*s.damperAmount
+	}
 }
 
 // SetDispersion maps a small inharmonicity amount [0,1] to allpass coefficient.

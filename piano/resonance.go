@@ -51,10 +51,14 @@ func (r *ResonanceEngine) bandLimit(x float32) float32 {
 	return lp
 }
 
-func (r *ResonanceEngine) InjectFromBridge(bridge []float32, targets []resonanceTarget) {
+// InjectFromBridge feeds the band-limited bridge signal into every undamped
+// target and reports whether any energy was actually deposited, so the caller
+// can tell the string bank to enroll the groups that started resonating.
+func (r *ResonanceEngine) InjectFromBridge(bridge []float32, targets []resonanceTarget) bool {
 	if r == nil || r.injectionGain <= 0 || len(bridge) == 0 || len(targets) == 0 {
-		return
+		return false
 	}
+	injected := false
 	for i := 0; i < len(bridge); i++ {
 		x := r.bandLimit(bridge[i])
 		if x > -1e-8 && x < 1e-8 {
@@ -70,8 +74,10 @@ func (r *ResonanceEngine) InjectFromBridge(bridge []float32, targets []resonance
 				vEnergy = t.filterResonanceDrive(x) * r.injectionGain
 			}
 			t.injectResonance(vEnergy)
+			injected = true
 		}
 	}
+	return injected
 }
 
 type noteResonator struct {

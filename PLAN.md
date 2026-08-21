@@ -339,32 +339,35 @@ This phase is split into execution subphases to make progress and ownership expl
 
 ### Phase 9.5 — Instrument Semantics + Radiation + Web Migration
 
-- [ ] Make sustain/damper semantics instrument-wide:
-  - [ ] Sustain pedal down undamps relevant strings in the persistent bank (not just recently struck notes).
-  - [ ] Note release with sustain down stops excitation only; ringing continues until damping changes.
-  - [ ] Sustain pedal up reapplies damping deterministically to non-held strings.
-  - [ ] If partial pedal is supported, map to physical damping coefficients (not timer-based release logic).
+- [x] Make sustain/damper semantics instrument-wide:
+  - [x] Sustain pedal down undamps relevant strings in the persistent bank (not just recently struck notes).
+  - [x] Note release with sustain down stops excitation only; ringing continues until damping changes.
+  - [x] Sustain pedal up reapplies damping deterministically to non-held strings.
+  - [x] If partial pedal is supported, map to physical damping coefficients (not timer-based release logic).
 - [ ] Lock linear radiation path around bank output:
   - [ ] enforce `string-bank bridge mix -> body IR -> room IR`
   - [ ] keep body/room separation first-class in params/presets
   - [ ] keep legacy single-IR path as fallback only
-  - [ ] complete WASM runtime IR apply (`wasmLoadIR`)
+  - [x] complete WASM runtime IR apply (`wasmLoadIR`)
 - [ ] Web/demo compatibility:
   - [ ] keep JS/WASM note + pedal API stable
-  - [ ] retire sustain timer release behavior in web layer once physical pedal semantics are active
+  - [x] retire sustain timer release behavior in web layer once physical pedal semantics are active
   - [ ] verify no UI/playability regressions
 
 ### Phase 9.6 — Validation, Calibration, and Performance
 
 - [ ] Add physics-behavior tests:
-  - [ ] pedal-down strike excites silent undamped related strings (octave + non-octave checks)
-  - [ ] pedal-up suppresses sympathetic buildup vs pedal-down
-  - [ ] hammer contact ends while ringing continues
+  - [x] pedal-down strike excites silent undamped related strings (octave + non-octave checks)
+        (`piano/ringing_test.go` octave, `piano/sympathetic_test.go` fifth)
+  - [x] pedal-up suppresses sympathetic buildup vs pedal-down
+        (`piano/sympathetic_test.go`, DWG and modal cores)
+  - [x] hammer contact ends while ringing continues
+        (`piano/hammer_ringing_test.go`, both asserted in one render)
   - [ ] `coupling_mode` transitions (`off/static/physical`) behave as expected
   - [ ] detune and distance penalties measurably reduce coupling according to model
 - [ ] Add regression tests for API compatibility and long-render stability (no NaN/Inf).
 - [ ] Add benchmarks:
-  - [ ] idle full-string-bank cost
+  - [x] idle full-string-bank cost (`BenchmarkStringBankIdle`)
   - [ ] active polyphony with coupling `off/static/physical`
   - [ ] coupling graph density/top-K scaling vs CPU
 - [ ] Define calibration workflow for physical coupling knobs against multi-note recordings.
@@ -538,7 +541,10 @@ Tooling:
 ### 12.4 — Validation + performance acceptance
 
 - [ ] Add A/B tests and metrics:
-  - [ ] DWG vs modal distance on selected notes/chords
+  - [x] DWG vs modal distance on selected single notes
+        (`piano/core_distance_test.go`. The measured scores are 0.71-0.85 — the
+        cores do **not** currently match, see the treble finding under Phase 13)
+  - [ ] DWG vs modal distance on chords
   - [ ] sustain pedal and coupling behavior parity checks
   - [ ] long-render stability (NaN/Inf free)
 - [ ] Add benchmarks:
@@ -629,13 +635,32 @@ cut sustained-decay cost from 4.2 ms to 0.59 ms — a larger win than the SIMD w
 
 - [ ] Unit tests
   - [ ] Tuning accuracy across a range of notes
+        (`piano/tuning_test.go` covers MIDI 21-92 with per-register tolerances.
+        Left unticked: MIDI 93-108 has no measurable pitch — see the finding
+        below.)
   - [ ] Convolver correctness bound
-  - [ ] Stability tests: long render without NaNs/denorm storms
+  - [x] Stability tests: long render without NaNs/denorm storms
+        (`piano/integration_test.go` NaN/Inf, `piano/denormal_test.go` denormals)
 - [ ] Benchmarks
-  - [ ] Use `go test -bench=.` benchmarks
+  - [x] Use `go test -bench=.` benchmarks
   - [ ] Voice cost per block at 48k/128 frames
-  - [ ] Convolution cost by IR length/partition size
+  - [x] Convolution cost by IR length/partition size
+        (`piano/convolver_bench_test.go`)
   - [ ] Polyphony sweep (e.g. 16/32/64/128 voices)
+
+**Open finding — DWG treble collapse (2026-08-21).** Extending tuning coverage
+past MIDI 92 turned up two defects in the DWG core, documented and reproduced by
+the skipped `TestTrebleRegisterCollapsesInDWGCore`:
+
+- from roughly MIDI 96 up, the bank output is essentially pure DC and the offset
+  grows without converging (note 96 held for 800 blocks goes from +4.8 to +59.2,
+  ~50x full scale); zeroing `UnisonCrossfeed` turns growth into decay, pointing
+  at the crossfeed path as a positive-feedback route for DC through a loop with
+  unity DC gain;
+- MIDI 106, 107 and 108 render bit-exact silence.
+
+The modal core shows neither symptom. This also dominates the DWG-vs-modal
+distance measured in 12.4, so that bound cannot be tightened until it is fixed.
 
 **Done when:** you have a baseline performance budget and regression alarms.
 
