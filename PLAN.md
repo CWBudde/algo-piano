@@ -111,9 +111,9 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
       optionally windows the compare via `--pass-window`, **and** now scores with
       the profile that describes the aspect — `attack-v1`, `decay-v1`,
       `inharmonicity-v1`. `--profile` overrides that and works with `--pass none`
-      too; the profile is recorded as `score_profile` in the report. `just
-  fit-c4-passes` runs all three and ends with `legacy-v1` distance reports,
-      the only numbers comparable across passes; its final artifact chains
+      too; the profile is recorded as `score_profile` in the report.
+      `just fit-c4-passes` runs all three and ends with `legacy-v1` distance
+      reports, the only numbers comparable across passes; its final artifact chains
       `attack` → `inharmonicity` and leaves the regressing `sustain` pass out.
       Measurements below.)
   - [x] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
@@ -280,8 +280,10 @@ This phase is split into execution subphases to make progress and ownership expl
         (`BenchmarkStringBankCouplingModes`, poly-1 and poly-8 low/mid/high/mixed
         registers x pedal up/down x all three modes)
   - [x] coupling graph density/top-K scaling vs CPU
-        (`BenchmarkStringBankCouplingGraphDensity`; edge count is not the CPU
-        lever, the active-voice count the graph recruits is — see BENCHMARKS.md)
+        (`BenchmarkStringBankCouplingGraphDensity`; sweeps `maxNeighbors`
+        1..87 including the production default of 10, plus an edge-weight
+        floor. Edge count is not the CPU lever, the active-voice count the
+        graph recruits is — see BENCHMARKS.md)
 - [ ] Define calibration workflow for physical coupling knobs against multi-note recordings.
 
 **Done when:** one struck note with sustain down audibly excites non-struck related strings through the physical coupling model, coupling strength is controllable (`off` to strong) via general parameters, hammer/ringing remain decoupled, and body/room + web compatibility remain intact.

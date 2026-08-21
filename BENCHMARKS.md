@@ -362,36 +362,44 @@ What the stable rows say:
 ## Coupling graph density and top-K scaling
 
 _Measured 2026-08-21, Go 1.26.5, same machine as above; median of five
-`-count=5` runs at default benchtime._
+`-count=5` runs at default benchtime. **This machine was under concurrent load
+for this sweep**, so every row here sits roughly 2x above what the same
+benchmark reports on a quiet machine. The whole section was re-measured in one
+back-to-back run when the production default (`coupling_max_neighbors = 10`)
+was added to the sweep, so the rows are comparable with each other but not with
+the absolute figures in other sections._
 
 `BenchmarkStringBankCouplingGraphDensity`, PLAN.md 9.6's "coupling graph
-density/top-K scaling vs CPU". Polyphony is held fixed at eight mid-register
-keys with the sustain pedal down and physical coupling on; the only thing that
-moves is how dense the precomputed sparse graph is. Each case reports the graph
-it ran on next to the timing: `edges` (directed edges in the whole 88-key
-graph), `active-edges` (edges leaving the active set) and `active` (notes in the
-active set), all sampled after the measured loop.
+density/top-K scaling vs CPU". The struck keys are held fixed at eight
+mid-register keys with the sustain pedal down and physical coupling on; the
+only thing that moves is how dense the precomputed sparse graph is. The number
+of _active_ notes is not fixed — that is the effect being measured. Each case
+reports the graph it ran on next to the timing: `edges` (directed edges in the
+whole 88-key graph), `active-edges` (edges leaving the active set) and `active`
+(notes in the active set), all sampled after the measured loop.
 
-Sweeping the `coupling_max_neighbors` top-K cap:
+Sweeping the `coupling_max_neighbors` top-K cap. 10 is the production default,
+in both `NewDefaultParams` and `assets/presets/default.json`:
 
 | maxNeighbors | edges | active | active-edges | sec/op | % of budget |
 | ------------ | ----- | ------ | ------------ | ------ | ----------- |
-| 1            | 88    | 8      | 8            | 25 µs  | 0.9%        |
-| 2            | 176   | 62     | 124          | 169 µs | 6.3%        |
-| 4            | 352   | 88     | 352          | 348 µs | 13%         |
-| 8 (default)  | 704   | 88     | 704          | 339 µs | 13%         |
-| 16           | 1408  | 88     | 1408         | 383 µs | 14%         |
-| 32           | 2597  | 88     | 2597         | 405 µs | 15%         |
-| 64           | 2792  | 88     | 2792         | 541 µs | 20%         |
-| 87           | 2792  | 88     | 2792         | 420 µs | 16%         |
+| 1            | 88    | 8      | 8            | 48 µs  | 1.8%        |
+| 2            | 176   | 50-62  | 100-124      | 308 µs | 12%         |
+| 4            | 352   | 84     | 336          | 574 µs | 22%         |
+| 8            | 704   | 88     | 704          | 746 µs | 28%         |
+| 10 (default) | 880   | 88     | 880          | 680 µs | 26%         |
+| 16           | 1408  | 88     | 1408         | 686 µs | 26%         |
+| 32           | 2597  | 88     | 2597         | 719 µs | 27%         |
+| 64           | 2792  | 88     | 2792         | 736 µs | 28%         |
+| 87           | 2792  | 88     | 2792         | 843 µs | 32%         |
 
 64 and 87 build the identical graph: the compile-time weight floor
 `couplingPhysicalMinScore` already rejects everything past ~32 candidates per
 source on average, so no source has 64 survivors and the cap stops binding
-somewhere between 32 and 64. Their 541 µs against 420 µs is therefore a direct
+somewhere between 32 and 64. Their 736 µs against 843 µs is therefore a direct
 readout of this machine's run-to-run noise on this benchmark, not a density
-effect. Treat
-differences below about 30% here as noise.
+effect — as is the default (10) landing slightly _below_ 8. Treat differences
+below about 30% here as noise.
 
 Sweeping an edge-weight floor instead, at a fixed top-K of 32. The production
 floor is a compile-time constant, so the benchmark prunes the built graph:
@@ -400,41 +408,41 @@ dropped, without renormalising what survives.
 
 | minShare | edges | active | active-edges | sec/op | % of budget |
 | -------- | ----- | ------ | ------------ | ------ | ----------- |
-| 0.00     | 2597  | 88     | 2597         | 416 µs | 16%         |
-| 0.02     | 897   | 88     | 897          | 378 µs | 14%         |
-| 0.05     | 566   | 88     | 566          | 419 µs | 16%         |
-| 0.10     | 228   | 62-80  | 160-207      | 415 µs | 16%         |
-| 0.20     | 100   | 10     | 11           | 70 µs  | 2.6%        |
+| 0.00     | 2597  | 88     | 2597         | 733 µs | 27%         |
+| 0.02     | 897   | 88     | 897          | 603 µs | 23%         |
+| 0.05     | 566   | 88     | 566          | 563 µs | 21%         |
+| 0.10     | 228   | 73-80  | 187-207      | 371 µs | 14%         |
+| 0.20     | 100   | 10     | 11           | 54 µs  | 2.0%        |
 
 **Edge count is not the CPU lever.** Cutting the graph from 2597 edges to 566 —
 a 4.6x reduction, and the `active-edges` column confirms the per-sample edge work
-fell by the same factor — moves the block cost from 416 µs to 419 µs, which is
-to say not at all. The same holds on the top-K side: 4 to 87 neighbours is an 8x
-edge increase for roughly 20%, inside the noise band above.
+fell by the same factor — moves the block cost from 733 µs to 563 µs, a 23%
+change against a noise band of about the same size, while the active set stays
+saturated at 88. The same holds on the top-K side: 8 to 87 neighbours is a 4x
+edge increase for roughly 13%, inside that band.
 
 What actually costs is the active-voice count the graph _recruits_.
 `InjectCouplingForce` enrols any target it drives into the active set, so a graph
 dense enough to reach the whole keyboard turns 8 struck keys into 88 sounding
 groups, and rendering those 88 groups dominates everything the coupling loop
 itself does. The two rows where cost collapses are exactly the two rows where
-recruitment fails: `maxNeighbors=1` (8 active, 25 µs) and `minShare=0.20`
-(10 active, 70 µs). Between them, the transition is abrupt — `maxNeighbors=2`
-already recruits 62 voices and costs 169 µs.
+recruitment fails: `maxNeighbors=1` (8 active, 48 µs) and `minShare=0.20`
+(10 active, 54 µs). Between them, the transition is abrupt — `maxNeighbors=2`
+already recruits 50 to 62 voices and costs 308 µs.
 
 Two consequences for tuning:
 
-- Lowering `coupling_max_neighbors` to save CPU only works if it drops far
-  enough to stop the cascade, and that point (1 to 2 neighbours) is far below
-  any setting that sounds like a piano. As a performance knob it is close to
-  useless; as a voicing knob it is nearly free.
+- Lowering `coupling_max_neighbors` from its default of 10 to save CPU only
+  works if it drops far enough to stop the cascade, and that point (1 to 2
+  neighbours) is far below any setting that sounds like a piano. As a
+  performance knob it is close to useless; as a voicing knob it is nearly free.
 - Any future budget work on the coupled case should go at the cost of a
   sounding group, or at capping how many groups coupling may recruit, not at
   making the graph sparser.
 
-The `active` column for `minShare=0.10` varies between runs (62 to 80) because
-recruitment is still in progress when the measured loop ends; it is sampled
-after the loop, so a longer run recruits more. The saturated rows (88) and the
-collapsed rows are stable.
+The `active` column for `maxNeighbors=2` (50 to 62) and `minShare=0.10` (73 to 80) varies between runs because recruitment is still in progress when the
+measured loop ends; it is sampled after the loop, so a longer run recruits more.
+The saturated rows (88) and the collapsed rows are stable.
 
 ## Voice cost per block and polyphony sweep
 

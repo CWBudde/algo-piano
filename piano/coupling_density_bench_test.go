@@ -6,9 +6,11 @@ import (
 )
 
 // couplingDensityNotes is the fixed load every density case runs under: eight
-// mid-register two-string keys with the sustain pedal held. Polyphony is held
-// constant on purpose — the only thing that moves between sub-benchmarks is how
-// dense the precomputed coupling graph is.
+// mid-register two-string keys with the sustain pedal held. The struck keys are
+// held constant on purpose — the only thing that moves between sub-benchmarks
+// is how dense the precomputed coupling graph is. The number of *active* notes
+// is not constant: a denser graph recruits more targets into the active set,
+// which is exactly the effect the benchmark is there to expose.
 var couplingDensityNotes = []int{40, 44, 48, 52, 56, 60, 64, 68}
 
 // BenchmarkStringBankCouplingGraphDensity measures how the cost of a 128-frame
@@ -16,7 +18,7 @@ var couplingDensityNotes = []int{40, 44, 48, 52, 56, 60, 64, 68}
 // PLAN.md 9.6's "coupling graph density/top-K scaling vs CPU".
 //
 // Two independent density knobs are swept, both against the same fixed
-// 8-key load:
+// 8-struck-key load:
 //
 //   - topK sweeps Params.CouplingMaxNeighbors, the top-K cap that
 //     initPhysicalCouplingGraph applies after ranking every candidate target by
@@ -41,7 +43,7 @@ var couplingDensityNotes = []int{40, 44, 48, 52, 56, 60, 64, 68}
 // so a denser graph both costs more per source and recruits more sources.
 func BenchmarkStringBankCouplingGraphDensity(b *testing.B) {
 	b.Run("topK", func(b *testing.B) {
-		for _, k := range []int{1, 2, 4, 8, 16, 32, 64, 87} {
+		for _, k := range []int{1, 2, 4, 8, 10, 16, 32, 64, 87} {
 			b.Run(fmt.Sprintf("maxNeighbors%d", k), func(b *testing.B) {
 				benchmarkCouplingGraphDensity(b, k, 0)
 			})
