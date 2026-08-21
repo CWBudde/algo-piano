@@ -52,8 +52,10 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # .golangci.yml is a v2 config, so this must install golangci-lint v2.
+      # Action v6 installs the latest v1, which is built with go1.24 and refuses
+      # a module targeting go 1.25.0.
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
-          args: --timeout=5m
+          version: v2.12.2
