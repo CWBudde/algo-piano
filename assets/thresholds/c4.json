@@ -12,12 +12,15 @@
     "a regression fence, not a quality target: tighten them whenever a fit genuinely improves.",
     "",
     "SPECTRAL CAVEAT: spectral_rmse_db is gated as a RAW dB value, which is a real regression",
-    "signal. The NORMALISED spectral component is a different matter - at 58.2 dB against",
-    "analysis.NormSpectral = 30.0 it is saturated, clamp01 pins it at 1.0, and it therefore",
-    "contributes a constant to `score` with no gradient for the optimizer. Every preset in",
-    "the repo saturates it (measured population range 51.5-63.7 dB). Re-calibrating",
-    "NormSpectral to roughly 70-80 is the fix, but it rewrites every recorded score and so",
-    "belongs in a separate, deliberately re-baselined change - not here."
+    "signal. The NORMALISED spectral component of the LEGACY score is a different matter - at",
+    "58.2 dB against analysis.NormSpectral = 30.0 it is saturated, clamp01 pins it at 1.0, and",
+    "it therefore contributes a constant to `score` with no gradient for the optimizer. Every",
+    "preset in the repo saturates it (measured population 51.5-71.3 dB).",
+    "",
+    "That is now deliberate, not unfixed. Norms are per-profile (analysis/norms.go): legacy-v1",
+    "keeps LegacyNorms() so this gate and every recorded score stay comparable, while every",
+    "other profile carries CalibratedNorms() and does not saturate. This file gates the legacy",
+    "score on purpose - it is the number the recorded measurements below were taken with."
   ],
 
   "max": {

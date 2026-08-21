@@ -329,8 +329,10 @@ fit-c4-stages time_budget="600":
 # legacy-v1 distance reports, which are the numbers that stay comparable.
 #
 # The final artifact is attack -> inharmonicity. The sustain pass runs and is
-# measured, but is deliberately NOT chained into it: it regresses the
-# comparable score until NormSpectral is recalibrated.
+# measured, but is deliberately NOT chained into it: it still regresses the
+# comparable score. Since the norm recalibration the cause is the decay-v1
+# weight vector (it weights `time` at 0, legacy weights it at 0.30), not the
+# saturated NormSpectral it used to be.
 
 # Per-aspect C4 fitting passes (final artifact is attack -> inharmonicity)
 fit-c4-passes time_budget="180" preset="assets/presets/fitted-c4-mayfly.json":
@@ -364,7 +366,8 @@ fit-c4-passes time_budget="180" preset="assets/presets/fitted-c4-mayfly.json":
         "resume=false" \
         "extra=--pass sustain"
     # Chained from the ATTACK preset, not the sustain one. The sustain pass
-    # regresses the comparable score until NormSpectral is recalibrated (see
+    # still regresses the comparable score (0.5194 -> 0.5327, entirely in the
+    # `time` component that decay-v1 does not weight - see
     # docs/optimization-workflow.md), so it is measured above and then left out
     # of the line that produces the final artifact.
     echo "=== Pass 3/3: inharmonicity (dispersion + strike position, profile inharmonicity-v1) ==="

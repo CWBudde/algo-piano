@@ -213,14 +213,20 @@ Currently enforced: `score`, `time_rmse`, `envelope_rmse_db`,
 Thresholds sit at roughly 8-10% above the values measured on 2026-08-21. They
 are a _fence_, not a target: tighten them whenever a fit genuinely improves.
 
-> **Caveat on `spectral_rmse_db`.** The gate checks the _raw dB_ value, which is
-> a real regression signal. The _normalised_ spectral component is not: at
-> ~58 dB against `analysis.NormSpectral = 30.0` it saturates, `clamp01` pins it
-> at 1.0, and it therefore contributes a constant to `score` with **no gradient
-> for the optimizer**. Every preset in the repo saturates it (measured
-> population range 51.5-63.7 dB). Re-calibrating `NormSpectral` to roughly 70-80
-> is the fix, but it rewrites every recorded score and so belongs in a separate,
-> deliberately re-baselined change.
+> **Caveat on `spectral_rmse_db` under `legacy-v1`.** The gate checks the _raw
+> dB_ value, which is a real regression signal. The _normalised_ spectral
+> component of the **legacy** score is not: at ~58 dB against
+> `analysis.NormSpectral = 30.0` it saturates, `clamp01` pins it at 1.0, and it
+> contributes a constant with **no gradient for the optimizer**. Every preset in
+> the repo saturates it (measured population 51.5-71.3 dB).
+>
+> That is now deliberate rather than unfixed. `legacy-v1` keeps the frozen
+> constants so recorded scores stay comparable; every other profile carries
+> `analysis.CalibratedNorms()` (spectral 80 dB, decay 15 dB/s, partial level
+> 35 dB, partial freq 70 cents, attack rise 50 ms, attack centroid 1.5 oct),
+> picked from the observed spread so nothing saturates. Prefer a calibrated
+> profile for any run whose purpose is to _steer_ the optimizer, and `legacy-v1`
+> for any number that has to be comparable with a recorded one.
 
 > **Recorded scores from before 2026-08 are not comparable.**
 > `analysis/distance.go` changed six times between 2026-02-14 and 2026-08-16
@@ -372,18 +378,38 @@ pass's output preset:
 | after `inharmonicity`     | 0.5691       | partial-frequency RMSE barely moved     |
 
 Only the `attack` pass is currently a net win. Both others improve exactly the
-metric their profile weights and pay for it elsewhere — the `sustain` pass buys
-1.7 dB/s of segmented-decay accuracy with 9 dB of spectral RMSE (58.0 → 66.9)
-and 13 dB of partial-level RMSE (14.0 → 27.4).
+metric their profile weights and pay for it elsewhere.
 
-That is not a flaw in the pass machinery, it is `NormSpectral = 30.0` being
-saturated. At 58 dB and at 67 dB the spectral component normalises to exactly
-1.0, so it contributes a _constant_ to `decay-v1` and supplies no restoring
-force at all against a spectral degradation of that size. Partial level carries
-weight 0 in `decay-v1`, so nothing objects there either. **Do not chain the
-`sustain` pass into a shipping preset until `NormSpectral` is recalibrated**
-(see the note at the end of Phase 8B in `PLAN.md`); run it in isolation and
-check `just gate-c4` on the result.
+### The sustain pass, before and after the norm recalibration
+
+The `sustain` row above was measured while `NormSpectral = 30.0` applied to every
+profile. At 58 dB and at 67 dB the spectral component normalises to exactly 1.0,
+so it contributed a _constant_ to `decay-v1` and supplied no restoring force at
+all — the pass bought 1.7 dB/s of segmented-decay accuracy with 9 dB of spectral
+RMSE and 13 dB of partial-level RMSE, and nothing in the objective could see it.
+
+`decay-v1` now carries `analysis.CalibratedNorms()`. Re-running the same pass:
+
+| metric                        | baseline | legacy norms | calibrated norms |
+| ----------------------------- | -------- | ------------ | ---------------- |
+| legacy score                  | 0.5194   | 0.5581       | **0.5327**       |
+| `spectral_rmse_db`            | 58.18    | 66.88        | **58.19**        |
+| `partial_level_rmse_db`       | 10.60    | 27.39        | **13.08**        |
+| `decay_segment_rmse_db_per_s` | 15.32    | 12.84        | 12.94            |
+| `time_rmse`                   | 0.1104   | 0.1388       | 0.1224           |
+
+The collateral damage is gone — spectral held to a hundredth of a dB — while the
+pass still captured essentially all of the decay improvement it was after.
+
+It still regresses the legacy score, for a **different and now visible** reason:
+the whole of the remaining `0.5194 → 0.5327` is the `time` component (+0.0144 of
++0.0132 net). `decay-v1` weights `time` at 0; `legacy-v1` weights it at 0.30. The
+pass is free to trade sample-wise waveform agreement away, and it does.
+
+**So: still do not chain the `sustain` pass into a shipping preset.** Run it in
+isolation and check `just gate-c4` on the result. The fix is now a `decay-v1`
+weight change (give `time` a non-zero weight), not a norm change — see §7 of
+`docs/plans/2026-08-21-phase8b-metrics.md`.
 
 Run `inharmonicity` from the attack-pass preset rather than the sustain-pass
 preset — done that way it is score-neutral (0.5117 → 0.5121) and nudges

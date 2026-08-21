@@ -121,15 +121,18 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         `0.5194` → `0.5117`, attack centroid error `0.440` → `0.084` octaves. The
         one pass that is a net win today.)
   - [ ] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
-        (**runs and converges, but regresses the comparable score — do not chain
-        it into a shipping preset yet.** It improves exactly what `decay-v1`
-        weights, segmented decay RMSE `14.58` → `12.84` dB/s, and pays with
-        spectral RMSE `58.0` → `66.9` dB and partial-level RMSE `14.0` → `27.4` dB,
-        for a legacy score of `0.5581`. Cause is the saturated `NormSpectral`
-        below, not the pass machinery: at both 58 dB and 67 dB the spectral term
-        normalises to exactly 1.0, so it is a constant in `decay-v1` and exerts no
-        restoring force, while partial level carries weight 0 there. Blocked on
-        the `NormSpectral` recalibration.)
+        (**runs and converges, but still regresses the comparable score — do not
+        chain it into a shipping preset yet.** The `NormSpectral` blocker is
+        gone: with `decay-v1` on `CalibratedNorms()` the same 180 s pass now
+        holds spectral RMSE at `58.18` → `58.19` dB (was `66.9`) and
+        partial-level at `10.6` → `13.1` dB (was `27.4`), while still capturing
+        the decay improvement it is after, `15.32` → `12.94` dB/s. Legacy score
+        `0.5194` → `0.5327`, down from `0.5581`.
+        The remaining regression is **entirely the `time` component**
+        (`+0.0144` of the `+0.0132` net): `decay-v1` weights `time` at 0,
+        `legacy-v1` weights it at 0.30, so the pass trades sample-wise waveform
+        agreement away freely. Next step is a `decay-v1` weight change, not a
+        norm change — see §7 of `docs/plans/2026-08-21-phase8b-metrics.md`.)
   - [ ] Inharmonicity pass: fit dispersion/inharmonicity via partial-frequency error
         (runs; score-neutral from the attack-pass preset, `0.5117` → `0.5121`,
         partial-frequency RMSE `34.9` → `34.5` cents. Its three knobs have too
@@ -183,17 +186,23 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
 
 **Done when:** C4 distance and sub-metrics improve materially and remain stable across changes.
 
-**Not yet calibrated:** `NormSpectral = 30.0` is saturated for every preset in
-the repo (measured 51.5-63.7 dB, plus a degenerate 172 dB outlier), so the
-largest-weight component of `legacy-v1` provides the optimizer no gradient at
-all. The gate checks the raw dB value, which is still a real regression signal.
-Re-calibrating `NormSpectral` to ~70-80 rewrites every recorded score and so
-belongs in a separate, deliberately re-baselined change.
+**Norm calibration — resolved.** `NormSpectral = 30.0` was saturated for every
+preset in the repo (measured 51.5-71.3 dB, plus a degenerate 172 dB outlier), so
+the largest-weight component of `legacy-v1` gave the optimizer no gradient at
+all. Editing the constant was not available: it would have silently rewritten
+every recorded score.
 
-This is no longer only a missed opportunity: the sustain pass above degraded
-spectral RMSE by 9 dB and neither its own profile nor the legacy gate could see
-it, because a saturated component is a constant. **Recalibrating `NormSpectral`
-is now a prerequisite for the sustain pass, not a nice-to-have.**
+Norms are now **per-profile** (`analysis/norms.go`). `legacy-v1` keeps
+`LegacyNorms()` — still saturated, still scoring `0.5194351732385747`, so every
+recorded number and the C4 gate stay comparable — while `balanced-v2`,
+`attack-v1`, `decay-v1` and `inharmonicity-v1` carry `CalibratedNorms()`, whose
+values were picked from the measured spread of the tracked preset population
+rather than guessed. `TestCalibratedNormsCoverObservedPopulation` fails if any
+weighted component of a non-legacy profile saturates, so the next metric added
+cannot repeat the mistake. Nothing was re-baselined.
+
+`balanced-v2` is consequently usable now, but `DefaultWeights()` deliberately
+stays `legacy-v1` for comparability.
 
 ---
 

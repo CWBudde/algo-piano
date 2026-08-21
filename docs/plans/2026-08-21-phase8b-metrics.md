@@ -130,8 +130,9 @@ Every profile's weights are non-negative and sum to 1.0 (`Weights.Validate`).
   makes `Compare` bit-identical to its pre-2026-08 behaviour. Use it for anything
   that must stay comparable with a recorded number.
 - **`balanced-v2`** — the intended successor: every component contributes.
-  **Not yet usable as a default**, because it inherits the frozen `NormSpectral`
-  (see §4) and would therefore spend 0.20 of its weight on a constant.
+  It now carries `CalibratedNorms()` (§7), so its 0.20 spectral weight buys a
+  real gradient rather than a constant. Still not the _default_: `DefaultWeights()`
+  must stay `legacy-v1` for score comparability.
 - **`attack-v1`** — for an attack-focused fitting pass. Concentrates on onset
   behaviour and early timbre; deliberately ignores decay entirely.
 - **`decay-v1`** — for a sustain/decay pass. Segment slopes dominate, with
@@ -140,10 +141,10 @@ Every profile's weights are non-negative and sum to 1.0 (`Weights.Validate`).
   error dominates; the rest is present only to stop the optimizer trading
   everything else away for a cents match.
 
-The per-aspect profiles are **defined but not yet wired into `--pass`**:
-`passScorer` in `cmd/piano-fit/pass.go` still calls `analysis.Compare`, and
-swapping in `CompareWithWeights` there is a deliberate one-line seam left for a
-separate change.
+The per-aspect profiles **are** wired into `--pass`: `passScorer` in
+`cmd/piano-fit/pass.go` resolves the pass's profile and calls
+`analysis.CompareWithOptions`. `--profile` overrides it and works with
+`--pass none` too.
 
 ---
 
@@ -184,15 +185,10 @@ are materially different renders that score _identically_ in the term the score
 leans on hardest. The optimizer has been flying blind on its own largest
 component.
 
-**Fix:** re-calibrate `NormSpectral` to roughly **70–80 dB**, so the observed
-51.5–63.7 dB population spans a real fraction of the range and the component
-produces a gradient again.
-
-**Why it is not fixed here:** changing a `Norm*` constant silently rewrites
-every recorded score. It must land as its own change, with every tracked report
-and threshold re-baselined in the same commit, and clearly labelled as a
-metric-implementation change. The same applies to `NormAttackRise`,
-`NormPartialLevel` and `NormDecay`.
+**Resolved (see §7).** The norms are now **per-profile** rather than global, so
+the frozen legacy scale and a calibrated one coexist: `legacy-v1` keeps
+`LegacyNorms()` and keeps saturating, every other profile carries
+`CalibratedNorms()`. Nothing was re-baselined, because nothing had to be.
 
 **Rule for any new profile:** a non-legacy profile must ship _re-calibrated_
 norms rather than inheriting the frozen ones. Pick a scale the observed
@@ -228,3 +224,91 @@ reference behaviour.
 The gate deliberately checks the **raw** `spectral_rmse_db`, which is still a
 real regression signal, even though the _normalised_ spectral component is
 saturated and contributes nothing to the score's gradient.
+
+---
+
+## 7. Per-profile norms (2026-08-21)
+
+The saturation problem in §4 had two requirements that look contradictory:
+`legacy-v1` must keep reproducing the numbers recorded in every tracked
+`*.report.json` and in `assets/thresholds/c4.json`, and a profile that steers an
+optimizer must use a scale the observed population actually spans. They are only
+contradictory while there is a single global scale.
+
+`Weights.Norms` (`analysis/norms.go`) makes the scales per-profile. A profile
+names the scales it recalibrates and inherits the rest; zero, negative and
+non-finite fields count as unset and fall back to `LegacyNorms()`, so there is
+no way to divide by zero.
+
+- `legacy-v1` → `LegacyNorms()`. Unchanged, still saturated on spectral, still
+  scoring `0.5194351732385747` on the tracked C4 render.
+- every other profile → `CalibratedNorms()`.
+
+### Measured population
+
+Note 60, velocity 118, release-after 3.5 s, 48 kHz, against `reference/c4.wav`.
+Seven real presets from `assets/presets` plus the three pass outputs in
+`out/passes`. `modal-calibrated.json` is excluded as degenerate (172 dB spectral,
+883 dB/s decay, 204 dB envelope — a broken preset, not a point on the
+distribution).
+
+| component         | observed          | legacy | calibrated | normalized span |
+| ----------------- | ----------------- | ------ | ---------- | --------------- |
+| `spectral`        | 51.5 – 71.3 dB    | 30.0   | **80.0**   | 0.64 – 0.89     |
+| `decay`           | 0.13 – 14.7 dB/s  | 40.0   | **15.0**   | 0.01 – 0.98     |
+| `partial_level`   | 10.6 – 27.4 dB    | 12.0   | **35.0**   | 0.30 – 0.78     |
+| `partial_freq`    | 34.8 – 48.9 cents | 50.0   | **70.0**   | 0.50 – 0.70     |
+| `attack_rise`     | 24.1 – 24.5 ms    | 20.0   | **50.0**   | ~0.49           |
+| `attack_centroid` | 0.08 – 1.40 oct   | 0.5    | **1.5**    | 0.06 – 0.93     |
+| `time`            | 0.11 – 0.17       | 0.25   | 0.25       | 0.43 – 0.67     |
+| `envelope`        | 8.4 – 24.3 dB     | 30.0   | 30.0       | 0.28 – 0.81     |
+| `tristimulus`     | 0.15 – 0.40       | 0.5    | 0.5        | 0.30 – 0.80     |
+| `decay_segment`   | 12.8 – 23.2 dB/s  | 30.0   | 30.0       | 0.43 – 0.77     |
+
+`TestCalibratedNormsCoverObservedPopulation` replays the worst observed value of
+every metric and fails if any weighted component of any non-legacy profile
+saturates, so the next metric added cannot quietly repeat the mistake.
+
+### What it bought, measured
+
+The `sustain` pass re-run from `fitted-c4-mayfly.json`, 180 s, `decay-v1`, judged
+by re-running the full `legacy-v1` compare on its output preset:
+
+| metric                        | baseline | sustain, legacy norms | sustain, calibrated norms |
+| ----------------------------- | -------- | --------------------- | ------------------------- |
+| legacy score                  | 0.5194   | 0.5581                | **0.5327**                |
+| `spectral_rmse_db`            | 58.18    | 66.88                 | **58.19**                 |
+| `partial_level_rmse_db`       | 10.60    | 27.39                 | **13.08**                 |
+| `decay_segment_rmse_db_per_s` | 15.32    | 12.84                 | 12.94                     |
+| `decay_diff_db_per_s`         | 3.18     | 4.47                  | 3.62                      |
+| `envelope_rmse_db`            | 9.01     | 8.97                  | 8.67                      |
+| `time_rmse`                   | 0.1104   | 0.1388                | 0.1224                    |
+
+The predicted effect is confirmed exactly. The 9 dB spectral degradation is gone
+— 58.18 dB in, 58.19 dB out, held to a hundredth of a dB — and the 13 dB
+partial-level degradation shrank to 2.5 dB, while the pass still captured
+essentially all of the segmented-decay improvement it was after (15.32 → 12.94,
+against 12.84 before).
+
+### The sustain pass still regresses, for a different reason
+
+`0.5194 → 0.5327`. Decomposing the legacy score:
+
+| component  | baseline | after  | delta       |
+| ---------- | -------- | ------ | ----------- |
+| `time`     | 0.1325   | 0.1469 | **+0.0144** |
+| `envelope` | 0.0751   | 0.0722 | −0.0028     |
+| `spectral` | 0.3000   | 0.3000 | 0.0000      |
+| `decay`    | 0.0119   | 0.0136 | +0.0017     |
+
+The entire remaining regression is the `time` component. `decay-v1` weights
+`time` at **0**, while `legacy-v1` weights it at **0.30** — its largest single
+term after spectral. The pass is free to trade sample-wise waveform agreement
+away, and it does.
+
+So `NormSpectral` is no longer what blocks the sustain pass; the `decay-v1`
+weight vector is. The next step is to give `decay-v1` a non-zero `time` weight
+(or an explicit anti-regression term) and re-measure — a weight change, which by
+the rule in §4 is a separate, measured change. This is progress of the useful
+kind: the failure moved from an invisible saturated constant to a visible,
+attributable weight.
