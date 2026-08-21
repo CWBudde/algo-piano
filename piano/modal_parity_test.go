@@ -302,6 +302,8 @@ func TestModalSoAOffsetsAreConsistent(t *testing.T) {
 				"decay": len(g.decay), "decayUndamped": len(g.decayUndamped),
 				"decayDamped": len(g.decayDamped), "gain": len(g.gain),
 				"acc": len(g.acc), "order": len(g.order),
+				"shapeRes": len(g.shapeRes), "shapeCoup": len(g.shapeCoup),
+				"shapeHammer": len(g.shapeHammer),
 			}
 			for name, l := range lens {
 				if l != n {

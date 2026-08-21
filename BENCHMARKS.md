@@ -79,6 +79,73 @@ a sustained group never deactivates, so they stall there indefinitely.
 Cost was previously a function of how long the run had been going, which also
 made every earlier modal benchmark unreliable.
 
+## Excitation shape cache
+
+_Measured 2026-08-21, Go 1.26.5, same machine as above._
+
+`injectAtPosition` evaluated `math.Sin` once per mode per call to get the mode
+shape at the strike position. Every excitation path went through it: the hammer
+during contact, each coupling edge, and — by far the heaviest — sympathetic
+resonance, which with the sustain pedal down drives all 128 groups once per
+sample.
+
+The shape vector depends only on `(order[], strikePos)`, and `order` is fixed at
+construction, so it is now cached per group: one precomputed slot for each of the
+two compile-time strike positions (resonance 0.82, coupling 0.9) plus a
+one-entry cache for the hammer position, keyed on the _clamped_ value. Steady
+state evaluates no transcendental at all. The vectors are carved out of the
+group's existing `soaBuf`, so the path stays allocation-free, and they are
+deliberately group-owned rather than arena-backed: they are static, and the arena
+only compacts state that evolves.
+
+`BenchmarkModalInjectAtPosition`, one mid-register group (~24 modes), one
+excitation call per iteration, `benchstat` over 12 interleaved runs:
+
+| Path                    | Before | After   | Change                     |
+| ----------------------- | ------ | ------- | -------------------------- |
+| `resonance` (pos 0.82)  | 303 ns | 47.1 ns | **−84.5%** (p=0.000, n=12) |
+| `coupling` (pos 0.9)    | 337 ns | 42.4 ns | **−87.4%** (p=0.000, n=12) |
+| `hammer_fixedPos`       | 344 ns | 41.5 ns | **−87.9%** (p=0.000, n=12) |
+| `hammer_alternatingPos` | 360 ns | 304 ns  | ~ (p=0.219, n=12)          |
+
+`hammer_alternatingPos` is the worst case for the single hammer slot: a normal
+and a soft-pedal-shifted strike position in strict alternation, so the cache
+refills on every call. It is not a regression — the refill costs what the old
+inline computation cost — and it only occurs while two strikes with different
+positions overlap on the same note.
+
+At block level, `BenchmarkModalResonanceInjection` (8 keys, sustain held, all 128
+groups undamped targets, physical coupling), the same 12-run interleaved
+comparison:
+
+| Config                    | Before  | After   | Change                     |
+| ------------------------- | ------- | ------- | -------------------------- |
+| `perNoteFilter` (default) | 6.12 ms | 1.78 ms | **−70.9%** (p=0.000, n=10) |
+| `flatDrive`               | 5.77 ms | 1.48 ms | **−74.4%** (p=0.000, n=10) |
+
+With resonance **disabled** the change is not measurable above this machine's
+noise: `BenchmarkModalKernels` trends −20% to −29% but only reaches p≈0.05,
+and `BenchmarkModalPolyphonyScaling` and `BenchmarkStringBankCouplingModes` all
+report `~`. That is expected — coupling injection runs once per edge rather than
+once per note per sample, and `BenchmarkStringBankCouplingModes` uses the DWG
+core, which never touches this code. Resonance is where the cost was.
+
+Output is **bit-exact** against the previous implementation, verified by hashing
+full renders (three configurations × scalar and arena kernels) before and after.
+The division by the partial order is deliberately _not_ folded into the table:
+folding it reassociates `force*sg*modeScale*shape/order` and was measured to
+change the float32 rounding of the render. Only the `math.Sin` and the
+inaudible-mode branch move into the table.
+
+### A note on measuring this
+
+The figures above were taken by building two test binaries (baseline and
+change), then alternating them round by round rather than running all of one and
+then all of the other. The machine was under heavy concurrent load, and a
+straight before-then-after run produced obvious artefacts — including a −49%
+"improvement" in a DWG benchmark this change cannot touch. Interleaving cancels
+the drift; the per-run spread stays wide, but the paired comparison is sound.
+
 ## Polyphony scaling
 
 `BenchmarkModalPolyphonyScaling`, sustain held, **coupling disabled**. Coupling
