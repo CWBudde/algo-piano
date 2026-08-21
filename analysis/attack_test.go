@@ -273,24 +273,24 @@ func TestAttackNormCombinesRiseAndCentroid(t *testing.T) {
 		AttackRiseDiffMS:      NormAttackRise, // saturates its half
 		AttackCentroidRMSEOct: 0,              // contributes nothing
 	}
-	if got := attackNormOf(m); math.Abs(got-0.5) > 1e-12 {
+	if got := attackNormOf(m, LegacyNorms()); math.Abs(got-0.5) > 1e-12 {
 		t.Fatalf("expected a saturated rise alone to give 0.500000, got %f", got)
 	}
 
 	m.AttackRiseDiffMS = 0
 	m.AttackCentroidRMSEOct = NormAttackCentroid
-	if got := attackNormOf(m); math.Abs(got-0.5) > 1e-12 {
+	if got := attackNormOf(m, LegacyNorms()); math.Abs(got-0.5) > 1e-12 {
 		t.Fatalf("expected a saturated centroid alone to give 0.500000, got %f", got)
 	}
 
 	m.AttackRiseDiffMS = NormAttackRise / 2
 	m.AttackCentroidRMSEOct = NormAttackCentroid / 2
-	if got := attackNormOf(m); math.Abs(got-0.5) > 1e-12 {
+	if got := attackNormOf(m, LegacyNorms()); math.Abs(got-0.5) > 1e-12 {
 		t.Fatalf("expected two half-scale errors to give 0.500000, got %f", got)
 	}
 
 	m.AttackAvailable = false
-	if got := attackNormOf(m); !math.IsNaN(got) {
+	if got := attackNormOf(m, LegacyNorms()); !math.IsNaN(got) {
 		t.Fatalf("expected NaN when the attack is unavailable, got %f", got)
 	}
 }
