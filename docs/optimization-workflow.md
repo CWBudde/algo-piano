@@ -159,25 +159,87 @@ go run --tags asm ./cmd/piano-fit \
 
 ## Preventing Regressions
 
-### Principle: Each stage must not regress the previous best score
+### The automatic gate: `just gate-c4`
 
-Currently there is no automatic regression check. To verify manually:
+`cmd/piano-distance --thresholds <file>` compares a rendered candidate against
+the reference and checks the resulting metrics against a calibrated threshold
+file. It exits `0` on pass and `2` on breach, so it works as a CI/pre-commit
+gate. `just gate-c4` wraps it with the canonical C4 render settings:
 
 ```bash
-# Render each stage's preset and compute distance
-for stage in stage1 stage2 stage3 stage4 final; do
-    go run --tags asm ./cmd/piano-render \
-        --preset "out/stages/${stage}.json" \
-        --output "out/stages/${stage}.wav" \
-        --note 60 --velocity 118 --duration 5.0
+just gate-c4
+# gate: PASS 5 enforced metrics within thresholds
+# gate: worst headroom decay_diff_db_per_s 3.18/3.45 (92% of budget used)
+```
 
-    go run --tags asm ./cmd/piano-distance \
-        --reference reference/c4.wav \
-        --candidate "out/stages/${stage}.wav"
+On a breach it names the metric and the overshoot on stderr:
+
+```
+gate: FAIL time_rmse=0.13 > max 0.12 (+8.9%)
+gate: 1 of 5 enforced metrics breached
+```
+
+`gate-c4` is part of the `ci` recipe. It is deliberately **not** part of
+`.github/workflows/ci.yml`: `reference/c4.wav` is gitignored (`.gitignore` has a
+blanket `*.wav` with only `!assets/ir/*.wav`), so CI has no reference to gate
+against. For the same reason the recipe **skips with exit 0** when the reference
+file is missing, which keeps `just ci` green on a fresh clone.
+
+The headroom line is the part that earns its keep on a _passing_ run: a metric
+drifting from 70% to 97% of budget is a regression in progress, and you want to
+see it before it trips.
+
+### The threshold file
+
+`assets/thresholds/c4.json` holds the caps under a `max` block plus a `recorded`
+block documenting when, against what, and with which render settings the values
+were measured.
+
+- A **number** is enforced.
+- **`null`** means _not yet calibrated_: the metric is listed so its existence is
+  visible, but it is not enforced. Calibrating one later is a one-line diff, not
+  a new file.
+- An **unknown key is an error**. The gate resolves metric names by reflecting
+  over the JSON tags of `analysis.Metrics`, so any new `float64` metric becomes
+  gateable with no code change — and a typo cannot silently disable a cap.
+  `TestMetricsByJSONTagCoversAllFloatFields` keeps that mapping complete.
+
+Currently enforced: `score`, `time_rmse`, `envelope_rmse_db`,
+`spectral_rmse_db`, `decay_diff_db_per_s`. The six newer metrics
+(`partial_level_rmse_db`, `partial_freq_rmse_cents`, `tristimulus_distance`,
+`attack_rise_diff_ms`, `attack_centroid_rmse_oct`,
+`decay_segment_rmse_db_per_s`) are present as `null` pending calibration.
+
+Thresholds sit at roughly 8-10% above the values measured on 2026-08-21. They
+are a _fence_, not a target: tighten them whenever a fit genuinely improves.
+
+> **Caveat on `spectral_rmse_db`.** The gate checks the _raw dB_ value, which is
+> a real regression signal. The _normalised_ spectral component is not: at
+> ~58 dB against `analysis.NormSpectral = 30.0` it saturates, `clamp01` pins it
+> at 1.0, and it therefore contributes a constant to `score` with **no gradient
+> for the optimizer**. Every preset in the repo saturates it (measured
+> population range 51.5-63.7 dB). Re-calibrating `NormSpectral` to roughly 70-80
+> is the fix, but it rewrites every recorded score and so belongs in a separate,
+> deliberately re-baselined change.
+
+> **Recorded scores from before 2026-08 are not comparable.**
+> `analysis/distance.go` changed six times between 2026-02-14 and 2026-08-16
+> (phase detection, normalisation), so numbers written into older
+> `*.report.json` files were produced by a different metric implementation.
+> Re-measure rather than compare across that boundary.
+
+### Per-stage manual check
+
+To compare stages against each other by hand:
+
+```bash
+for stage in stage1 stage2 stage3 stage4 final; do
+    just gate-c4 "preset=out/stages/${stage}.json"
 done
 ```
 
-If a stage regresses, discard it and re-run with different seed or longer budget. The previous stage's output is always intact.
+If a stage regresses, discard it and re-run with a different seed or a longer
+budget. The previous stage's output is always intact.
 
 ### Why regressions can happen
 
@@ -186,6 +248,136 @@ If a stage regresses, discard it and re-run with different seed or longer budget
 2. **Joint optimization (all groups):** Joint optimization has 30 dimensions. With limited budget, it may not find solutions as good as the separated stages. Use longer budgets for joint runs.
 
 3. **Different mix knob semantics:** Legacy (`ir_wet_mix`) vs dual-IR (`body_dry`, `room_wet`) use different mix logic. A preset switching between formats can produce different audio even with "equivalent" values.
+
+## The Polish Stage
+
+`--polish` runs a deterministic coordinate-descent sweep after the Mayfly
+search. `--polish-only` skips the search entirely and runs only the sweep;
+paired with `--resume` it is the standard **finishing move** on an existing
+best:
+
+```bash
+go run -tags asm ./cmd/piano-fit \
+    --reference reference/c4.wav \
+    --preset out/stages/final.json \
+    --output-preset out/stages/final.json \
+    --polish-only --resume \
+    --polish-evals 200
+```
+
+Properties worth relying on:
+
+- **It cannot regress.** A coordinate step is accepted only when it improves the
+  score, so the output is never worse than the input.
+- **It is deterministic.** Same input, same knobs, same result — unlike the
+  seeded-but-stochastic Mayfly rounds.
+- **It has a hard eval budget** (`--polish-evals`, default 200), so it costs a
+  bounded amount of wall time.
+
+Tuning knobs: `--polish-knobs` (default
+`render.velocity,render.release_after,hammer_initial_velocity_scale`),
+`--polish-rounds`, `--polish-step`, `--polish-shrink`, `--polish-min-step`. When
+none of the default polish knobs are active for the current `--optimize`/`--pass`
+selection, polish disables itself with a message rather than erroring.
+
+`output_gain` is deliberately absent from the default polish knobs — see below.
+
+### Output gain is solved, not searched
+
+`analysis.Compare` RMS-normalises both signals before scoring, which makes
+`output_gain` provably **score-invariant**: searching it burns budget on a
+perfectly flat dimension. `--match-output-gain` (default on) therefore drops the
+knob from the searched dimensions entirely and solves it in closed form after
+the search, so the written preset lands at the right absolute level without ever
+having been optimized for it. Because it is no longer a knob, the match is also
+free of the `[0.01, 5.0]` search bounds and can reach whatever level the
+reference actually needs.
+
+Pass `--match-output-gain=false` to get the old behaviour: `output_gain` returns
+to the knob set and is searched like any other dimension. Reports written in
+either mode resume into the other, since resume matches knobs by name.
+
+## Per-Aspect Passes
+
+`--pass none|attack|sustain|inharmonicity` restricts which knobs may move, on
+top of whatever `--optimize` selected. Everything else keeps its value from the
+input preset. `--pass-window start:end` (seconds) additionally narrows the
+comparison to a time window.
+
+| Pass            | Knobs it may move                                                                                           | Typical window          |
+| --------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------- |
+| `attack`        | `hammer_*_scale`, `attack_noise_level`, `attack_noise_duration_ms`, `attack_noise_color`, `render.velocity` | `--pass-window 0:0.25`  |
+| `sustain`       | `per_note.*.loss`, `high_freq_damping`, `unison_detune_scale`, `unison_crossfeed`, `render.release_after`   | `--pass-window 0.5:3.0` |
+| `inharmonicity` | `per_note.*.inharmonicity`, `per_note.*.strike_position`, `unison_detune_scale`                             | whole signal            |
+
+```bash
+# 1. Attack pass on the first 250 ms
+go run -tags asm ./cmd/piano-fit \
+    --preset out/stages/final.json --output-preset out/pass/attack.json \
+    --pass attack --pass-window 0:0.25 --time-budget 300
+
+# 2. Sustain pass, chained from the attack pass OUTPUT PRESET
+go run -tags asm ./cmd/piano-fit \
+    --preset out/pass/attack.json --output-preset out/pass/sustain.json \
+    --pass sustain --pass-window 0.5:3.0 --time-budget 300 --resume=false
+```
+
+Two caveats that will bite otherwise:
+
+- **Windowed pass scores are NOT comparable to full scores.** The window slices
+  _both_ signals before `Compare`, so `trimLeadingSilence`, `normalizeRMS` and
+  lag estimation all re-run inside the window. A pass score of 0.31 and a full
+  score of 0.52 are measurements of different things. Judge a pass by re-running
+  the full compare (`just gate-c4`) on its output preset, never by its own
+  reported score.
+- **Chain passes via `--preset`, not via `--resume`.** A pass run's report
+  contains only _that pass's_ knobs under `best_knobs`. Resuming a later stage
+  from a pass report alone would seed it with a partial knob set; feed the
+  previous stage's **output preset** forward instead (and pass `--resume=false`).
+
+Note that a pass currently only restricts knobs and (optionally) the compare
+window — it still scores with the default `legacy-v1` weighting.
+`passScorer` in `cmd/piano-fit/pass.go` is the single seam where swapping in
+`analysis.CompareWithWeights` and a named profile (`attack-v1`, `decay-v1`,
+`inharmonicity-v1`) would be a one-line change.
+
+## Multi-Note Fitting
+
+`--notes` fits several notes jointly against one shared parameter set:
+
+```bash
+go run -tags asm ./cmd/piano-fit \
+    --notes 48,60 \
+    --reference-map "48=reference/c3.wav,60=reference/c4.wav" \
+    --aggregate mean \
+    --preset assets/presets/default.json \
+    --output-preset out/multi/c3c4.json \
+    --time-budget 900
+```
+
+- `--reference-map "note=path,..."` supplies a per-note reference and wins over
+  `--reference`.
+- `--aggregate mean|max|mean-max` combines per-note scores. `max` optimizes the
+  worst note; `mean-max` blends the mean with the spread.
+- `--note-weights "48=1,60=2"` biases the aggregate (empty means uniform).
+
+**Budget:** every evaluation renders every note, so an N-note run costs N times
+the wall time of a single-note run at the same eval count. The report records
+this as `renders_per_eval` — check it before choosing `--time-budget`.
+
+**Which notes to pick.** `defaultUnisonForNote` (`piano/utils.go:22-31`) buckets
+notes by string count:
+
+| Note range | Strings | Detune            |
+| ---------- | ------- | ----------------- |
+| `< 40`     | 1       | none              |
+| `40..69`   | 2       | -1.8 / +1.8 cents |
+| `>= 70`    | 3       | -3 / 0 / +3 cents |
+
+C3 (48) and C4 (60) share a bucket; C5 (72) does not. A single shared
+`unison_detune_scale` across all three therefore settles on a compromise that is
+optimal for neither bucket. **Start with `--notes 48,60`** and only add C5 once
+the unison knobs are made per-bucket.
 
 ## File Layout
 

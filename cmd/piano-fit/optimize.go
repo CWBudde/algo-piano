@@ -27,13 +27,20 @@ type topCandidate struct {
 	Knobs      map[string]float64 `json:"knobs"`
 }
 
+// candidateEvaluator renders and scores one candidate. It exists so follow-up
+// stages can be unit-tested without rendering audio.
+type candidateEvaluator func(cand candidate, scratchPath string, settings evalSettings) (optimizationEval, error)
+
+// scorer compares a reference against a rendered candidate. A nil scorer falls
+// back to analysis.Compare.
+type scorer func(reference, candidate []float64, sampleRate int) analysis.Metrics
+
 type optimizationConfig struct {
-	reference        []float64
-	finalReference   []float64
+	targets          []noteTarget
+	aggregate        string
 	baseParams       *piano.Params
 	defs             []knobDef
 	initCandidate    candidate
-	note             int
 	baseVelocity     int
 	baseReleaseAfter float64
 	sampleRate       int
@@ -63,10 +70,41 @@ type optimizationConfig struct {
 	reportPath       string
 	referencePath    string
 	presetPath       string
+	// scorer overrides the metric comparison; nil means analysis.Compare.
+	scorer scorer
+
+	// Deterministic polish stage (see polish.go).
+	polish            bool
+	polishOnly        bool
+	polishKnobIndices []int
+	polishEvals       int
+	polishRounds      int
+	polishStep        float64
+	polishShrink      float64
+	polishMinStep     float64
+
+	// matchOutputGain enables the closed-form output-gain match applied to the
+	// winning candidate before the preset is written.
+	matchOutputGain bool
+
+	// pass is the per-aspect pass name recorded in the report ("" or "none"
+	// for an unrestricted run).
+	pass string
+}
+
+// score compares reference and candidate audio using cfg.scorer, defaulting to
+// analysis.Compare when no scorer is configured.
+func (cfg *optimizationConfig) score(reference, cand []float64, sampleRate int) analysis.Metrics {
+	if cfg.scorer != nil {
+		return cfg.scorer(reference, cand, sampleRate)
+	}
+	return analysis.Compare(reference, cand, sampleRate)
 }
 
 type evalSettings struct {
-	reference       []float64
+	// final selects the final-pass reference rendition of every target
+	// instead of the (possibly downsampled) optimization-loop one.
+	final           bool
 	sampleRate      int
 	minDuration     float64
 	maxDuration     float64
@@ -76,6 +114,11 @@ type evalSettings struct {
 }
 
 type optimizationEval struct {
+	// aggregate is the value the optimizer minimises. For a single note it is
+	// exactly metrics.Score.
+	aggregate float64
+	// notes carries the per-note breakdown; metrics mirrors notes[0].Metrics.
+	notes        []noteReport
 	metrics      analysis.Metrics
 	params       *piano.Params
 	bodyIR       []float32 // mono body IR
@@ -87,6 +130,8 @@ type optimizationEval struct {
 
 type optimizationResult struct {
 	best             candidate
+	bestScore        float64
+	bestNotes        []noteReport
 	bestMetrics      analysis.Metrics
 	bestParams       *piano.Params
 	bestBodyIR       []float32
@@ -98,6 +143,8 @@ type optimizationResult struct {
 	evals            int
 	elapsed          float64
 	checkpoints      int
+	polish           *polishSummary
+	outputGainRatio  float64
 }
 
 type optimizationState struct {
@@ -117,7 +164,6 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	deadline := start.Add(time.Duration(cfg.timeBudget * float64(time.Second)))
 	variant := strings.ToLower(cfg.mayflyVariant)
 	optEvalSettings := evalSettings{
-		reference:       cfg.reference,
 		sampleRate:      cfg.sampleRate,
 		minDuration:     cfg.minDuration,
 		maxDuration:     cfg.maxDuration,
@@ -126,7 +172,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		renderBlockSize: cfg.renderBlockSize,
 	}
 	finalEvalSettings := evalSettings{
-		reference:       cfg.finalReference,
+		final:           true,
 		sampleRate:      cfg.finalSampleRate,
 		minDuration:     cfg.finalMinDuration,
 		maxDuration:     cfg.finalMaxDuration,
@@ -135,44 +181,62 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		renderBlockSize: cfg.renderBlockSize,
 	}
 
+	eval := candidateEvaluator(func(c candidate, scratchPath string, settings evalSettings) (optimizationEval, error) {
+		return evaluateCandidate(cfg, c, scratchPath, settings)
+	})
+
+	// --polish-only skips the stochastic search entirely: the incoming
+	// candidate is scored once at final settings and handed straight to the
+	// deterministic polish stage, so the whole run is reproducible.
+	initialSettings := optEvalSettings
+	if cfg.polishOnly {
+		initialSettings = finalEvalSettings
+	}
+
 	initialScratch := filepath.Join(cfg.workDir, "candidate_ir_init.wav")
 	best := cloneCandidate(cfg.initCandidate)
-	initialEval, err := evaluateCandidate(cfg, best, initialScratch, optEvalSettings)
+	initialEval, err := eval(best, initialScratch, initialSettings)
 	if err != nil {
 		return nil, fmt.Errorf("initial evaluation failed: %w", err)
 	}
-	fmt.Printf("Start score=%.4f similarity=%.2f%% [%s]\n", initialEval.metrics.Score, initialEval.metrics.Similarity*100.0, formatDominant(initialEval.metrics))
+	fmt.Printf("Start score=%.4f similarity=%.2f%% [%s]\n", initialEval.aggregate, initialEval.metrics.Similarity*100.0, formatDominant(initialEval.metrics))
 
 	state := &optimizationState{
 		best:     best,
 		bestEval: cloneOptimizationEval(initialEval),
-		top:      updateTopCandidates(nil, cfg.topK, 1, initialEval.metrics, cfg.defs, best),
+		top:      updateTopCandidates(nil, cfg.topK, 1, initialEval.aggregate, initialEval.metrics, cfg.defs, best),
 	}
 
 	if _, err := os.Stat(cfg.outputPreset); err != nil && errors.Is(err, os.ErrNotExist) {
-		if err := writeOutputs(
-			cfg.outputIR,
-			cfg.outputPreset,
-			cfg.reportPath,
-			cfg.referencePath,
-			cfg.presetPath,
-			optEvalSettings.sampleRate,
-			cfg.note,
-			initialEval.velocity,
-			initialEval.releaseAfter,
-			time.Since(start).Seconds(),
-			1,
-			variant,
-			cfg.defs,
-			best,
-			initialEval.metrics,
-			initialEval.params,
-			initialEval.bodyIR,
-			initialEval.roomIRL,
-			initialEval.roomIRR,
-			0,
-			state.top,
-		); err != nil {
+		if err := writeOutputs(outputRequest{
+			outputIR:       cfg.outputIR,
+			outputPreset:   cfg.outputPreset,
+			reportPath:     cfg.reportPath,
+			referencePath:  cfg.referencePath,
+			presetPath:     cfg.presetPath,
+			sampleRate:     initialSettings.sampleRate,
+			note:           cfg.targets[0].note,
+			velocity:       initialEval.velocity,
+			releaseAfter:   initialEval.releaseAfter,
+			elapsed:        time.Since(start).Seconds(),
+			evals:          1,
+			variant:        variant,
+			defs:           cfg.defs,
+			best:           best,
+			bestScore:      initialEval.aggregate,
+			bestMetrics:    initialEval.metrics,
+			bestParams:     initialEval.params,
+			bestBodyIR:     initialEval.bodyIR,
+			bestRoomIRL:    initialEval.roomIRL,
+			bestRoomIRR:    initialEval.roomIRR,
+			checkpoints:    0,
+			top:            state.top,
+			notes:          targetNotes(cfg.targets),
+			perNote:        initialEval.notes,
+			aggregate:      cfg.aggregate,
+			pass:           cfg.pass,
+			rendersPerEval: len(cfg.targets),
+		}); err != nil {
 			fmt.Fprintf(os.Stderr, "initial write failed: %v\n", err)
 		}
 	}
@@ -192,7 +256,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
+	for i := 0; !cfg.polishOnly && i < workers; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
@@ -229,7 +293,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 					}
 
 					cand := fromNormalized(pos, cfg.defs)
-					evalRes, err := evaluateCandidate(cfg, cand, workerScratch, optEvalSettings)
+					evalRes, err := eval(cand, workerScratch, optEvalSettings)
 					if err != nil {
 						return currentBestScore(state) + 0.8
 					}
@@ -243,8 +307,8 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 					bestScore := 0.0
 
 					state.mu.Lock()
-					state.top = updateTopCandidates(state.top, cfg.topK, int(evalNum), evalRes.metrics, cfg.defs, cand)
-					if evalRes.metrics.Score < state.bestEval.metrics.Score {
+					state.top = updateTopCandidates(state.top, cfg.topK, int(evalNum), evalRes.aggregate, evalRes.metrics, cfg.defs, cand)
+					if evalRes.aggregate < state.bestEval.aggregate {
 						state.best = cloneCandidate(cand)
 						state.bestEval = cloneOptimizationEval(evalRes)
 						improved = true
@@ -256,11 +320,11 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 						bestEvalSnapshot = cloneOptimizationEval(state.bestEval)
 						topSnapshot = cloneTopCandidates(state.top)
 					}
-					bestScore = state.bestEval.metrics.Score
+					bestScore = state.bestEval.aggregate
 					state.mu.Unlock()
 
 					if improved {
-						fmt.Printf("Improved #%d eval=%d score=%.4f sim=%.2f%% [%s]\n", improveNum, evalNum, bestEvalSnapshot.metrics.Score, bestEvalSnapshot.metrics.Similarity*100.0, formatDominant(bestEvalSnapshot.metrics))
+						fmt.Printf("Improved #%d eval=%d score=%.4f sim=%.2f%% [%s]\n", improveNum, evalNum, bestEvalSnapshot.aggregate, bestEvalSnapshot.metrics.Similarity*100.0, formatDominant(bestEvalSnapshot.metrics))
 						outputMu.Lock()
 						if improveNum > latestPersistedImprove {
 							latestPersistedImprove = improveNum
@@ -268,29 +332,35 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 								state.mu.Lock()
 								checkpointNum := state.checkpoints + 1
 								state.mu.Unlock()
-								if err := writeOutputs(
-									cfg.outputIR,
-									cfg.outputPreset,
-									cfg.reportPath,
-									cfg.referencePath,
-									cfg.presetPath,
-									optEvalSettings.sampleRate,
-									cfg.note,
-									bestEvalSnapshot.velocity,
-									bestEvalSnapshot.releaseAfter,
-									time.Since(start).Seconds(),
-									int(atomic.LoadInt64(&evals)),
-									variant,
-									cfg.defs,
-									bestSnapshot,
-									bestEvalSnapshot.metrics,
-									bestEvalSnapshot.params,
-									bestEvalSnapshot.bodyIR,
-									bestEvalSnapshot.roomIRL,
-									bestEvalSnapshot.roomIRR,
-									checkpointNum,
-									topSnapshot,
-								); err != nil {
+								if err := writeOutputs(outputRequest{
+									outputIR:       cfg.outputIR,
+									outputPreset:   cfg.outputPreset,
+									reportPath:     cfg.reportPath,
+									referencePath:  cfg.referencePath,
+									presetPath:     cfg.presetPath,
+									sampleRate:     optEvalSettings.sampleRate,
+									note:           cfg.targets[0].note,
+									velocity:       bestEvalSnapshot.velocity,
+									releaseAfter:   bestEvalSnapshot.releaseAfter,
+									elapsed:        time.Since(start).Seconds(),
+									evals:          int(atomic.LoadInt64(&evals)),
+									variant:        variant,
+									defs:           cfg.defs,
+									best:           bestSnapshot,
+									bestScore:      bestEvalSnapshot.aggregate,
+									bestMetrics:    bestEvalSnapshot.metrics,
+									bestParams:     bestEvalSnapshot.params,
+									bestBodyIR:     bestEvalSnapshot.bodyIR,
+									bestRoomIRL:    bestEvalSnapshot.roomIRL,
+									bestRoomIRR:    bestEvalSnapshot.roomIRR,
+									checkpoints:    checkpointNum,
+									top:            topSnapshot,
+									notes:          targetNotes(cfg.targets),
+									perNote:        bestEvalSnapshot.notes,
+									aggregate:      cfg.aggregate,
+									pass:           cfg.pass,
+									rendersPerEval: len(cfg.targets),
+								}); err != nil {
 									fmt.Fprintf(os.Stderr, "checkpoint write failed: %v\n", err)
 								} else {
 									state.mu.Lock()
@@ -307,7 +377,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 					if cfg.reportEvery > 0 && evalNum%int64(cfg.reportEvery) == 0 {
 						fmt.Printf("Progress eval=%d/%d elapsed=%.1fs best=%.4f\n", evalNum, cfg.maxEvals, time.Since(start).Seconds(), bestScore)
 					}
-					return evalRes.metrics.Score
+					return evalRes.aggregate
 				}
 
 				if _, err := runMayfly(mayflyConfig); err != nil {
@@ -355,14 +425,17 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	var refinedEval optimizationEval
 	hasRefinedBest := false
 	for i, cand := range candidates {
+		if cfg.polishOnly {
+			break
+		}
 		scratchPath := filepath.Join(cfg.workDir, fmt.Sprintf("candidate_ir_refine_%d.wav", i+1))
-		evalRes, err := evaluateCandidate(cfg, cand, scratchPath, finalEvalSettings)
+		evalRes, err := eval(cand, scratchPath, finalEvalSettings)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "refine eval %d failed: %v\n", i+1, err)
 			continue
 		}
-		refinedTop = updateTopCandidates(refinedTop, cfg.topK, i+1, evalRes.metrics, cfg.defs, cand)
-		if !hasRefinedBest || evalRes.metrics.Score < refinedEval.metrics.Score {
+		refinedTop = updateTopCandidates(refinedTop, cfg.topK, i+1, evalRes.aggregate, evalRes.metrics, cfg.defs, cand)
+		if !hasRefinedBest || evalRes.aggregate < refinedEval.aggregate {
 			refinedBest = cloneCandidate(cand)
 			refinedEval = cloneOptimizationEval(evalRes)
 			hasRefinedBest = true
@@ -376,8 +449,104 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		}
 	}
 
+	// Deterministic polish stage. Every worker goroutine has returned at
+	// wg.Wait() above, so from here on the state is single-threaded and no
+	// mutex is required.
+	var polishResult *polishSummary
+	if cfg.polish || cfg.polishOnly {
+		if !hasRefinedBest && !cfg.polishOnly {
+			// The refine pass produced nothing, so there is no score at final
+			// settings yet. Spend one evaluation establishing the baseline the
+			// polish stage (and the report) will be compared against.
+			baselinePath := filepath.Join(cfg.workDir, "candidate_ir_polish_base.wav")
+			if evalRes, err := eval(finalBest, baselinePath, finalEvalSettings); err != nil {
+				fmt.Fprintf(os.Stderr, "polish baseline eval failed: %v\n", err)
+			} else {
+				finalEval = cloneOptimizationEval(evalRes)
+				atomic.AddInt64(&evals, 1)
+			}
+		}
+
+		polishImproves := 0
+		pcfg := polishConfig{
+			knobIndices: cfg.polishKnobIndices,
+			maxEvals:    cfg.polishEvals,
+			rounds:      cfg.polishRounds,
+			initialStep: cfg.polishStep,
+			shrink:      cfg.polishShrink,
+			minStep:     cfg.polishMinStep,
+			settings:    finalEvalSettings,
+			scratchPath: filepath.Join(cfg.workDir, "candidate_ir_polish.wav"),
+		}
+		pcfg.onImprove = func(cand candidate, ev optimizationEval, evalNum int) {
+			polishImproves++
+			fmt.Printf("Polish improved #%d eval=%d score=%.4f sim=%.2f%%\n", polishImproves, evalNum, ev.aggregate, ev.metrics.Similarity*100.0)
+			if cfg.checkpointEvery <= 0 || polishImproves%cfg.checkpointEvery != 0 {
+				return
+			}
+			finalCheckpoints++
+			if err := writeOutputs(outputRequest{
+				outputIR:       cfg.outputIR,
+				outputPreset:   cfg.outputPreset,
+				reportPath:     cfg.reportPath,
+				referencePath:  cfg.referencePath,
+				presetPath:     cfg.presetPath,
+				sampleRate:     finalEvalSettings.sampleRate,
+				note:           cfg.targets[0].note,
+				velocity:       ev.velocity,
+				releaseAfter:   ev.releaseAfter,
+				elapsed:        time.Since(start).Seconds(),
+				evals:          int(atomic.LoadInt64(&evals)) + evalNum,
+				variant:        variant,
+				defs:           cfg.defs,
+				best:           cand,
+				bestScore:      ev.aggregate,
+				bestMetrics:    ev.metrics,
+				bestParams:     ev.params,
+				bestBodyIR:     ev.bodyIR,
+				bestRoomIRL:    ev.roomIRL,
+				bestRoomIRR:    ev.roomIRR,
+				checkpoints:    finalCheckpoints,
+				top:            finalTop,
+				notes:          targetNotes(cfg.targets),
+				perNote:        ev.notes,
+				aggregate:      cfg.aggregate,
+				pass:           cfg.pass,
+				rendersPerEval: len(cfg.targets),
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "polish checkpoint write failed: %v\n", err)
+			}
+		}
+
+		polishedBest, polishedEval, summary := polishCandidate(cfg.defs, eval, pcfg, finalBest, finalEval)
+		finalBest = polishedBest
+		finalEval = polishedEval
+		atomic.AddInt64(&evals, int64(summary.Evals))
+		finalTop = updateTopCandidates(finalTop, cfg.topK, int(atomic.LoadInt64(&evals)), finalEval.aggregate, finalEval.metrics, cfg.defs, finalBest)
+		polishResult = &summary
+		fmt.Printf("Polish evals=%d improvements=%d score %.6f -> %.6f final_step=%.4f converged=%v\n",
+			summary.Evals, summary.Improvements, summary.ScoreBefore, summary.ScoreAfter, summary.FinalStep, summary.Converged)
+	}
+
+	// Analytic output-gain match. analysis.Compare RMS-normalises both signals
+	// before computing any metric, so output_gain is score-invariant and can
+	// only be solved in closed form, never searched.
+	outputGainRatio := 0.0
+	if cfg.matchOutputGain && finalEval.params != nil {
+		ratio, err := matchOutputGain(cfg, finalBest, finalEvalSettings)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "output-gain match skipped: %v\n", err)
+		} else {
+			outputGainRatio = ratio
+			finalEval.params.OutputGain *= float32(ratio)
+			fmt.Printf("Matched output_gain x%.4f -> %.4f\n", ratio, finalEval.params.OutputGain)
+		}
+	}
+
 	return &optimizationResult{
 		best:             finalBest,
+		bestScore:        finalEval.aggregate,
+		bestNotes:        finalEval.notes,
 		bestMetrics:      finalEval.metrics,
 		bestParams:       finalEval.params,
 		bestBodyIR:       finalEval.bodyIR,
@@ -389,91 +558,158 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		evals:            int(atomic.LoadInt64(&evals)),
 		elapsed:          time.Since(start).Seconds(),
 		checkpoints:      finalCheckpoints,
+		polish:           polishResult,
+		outputGainRatio:  outputGainRatio,
 	}, nil
 }
 
+// synthesizeIRs generates the body/room impulse responses for a candidate when
+// the IR groups are active. They do not depend on the note, so they are built
+// once per evaluation and shared across every note target.
+func synthesizeIRs(cfg *optimizationConfig, irCfgs irConfigs) (bodyIR, roomL, roomR []float32, err error) {
+	if cfg.groups["body-ir"] {
+		ir, gerr := irsynth.GenerateBody(irCfgs.body)
+		if gerr != nil {
+			return nil, nil, nil, fmt.Errorf("body IR: %w", gerr)
+		}
+		bodyIR = ir
+	}
+	if cfg.groups["room-ir"] {
+		l, r, gerr := irsynth.GenerateRoom(irCfgs.room)
+		if gerr != nil {
+			return nil, nil, nil, fmt.Errorf("room IR: %w", gerr)
+		}
+		roomL, roomR = l, r
+	}
+	return bodyIR, roomL, roomR, nil
+}
+
+// renderTarget renders one note for an already-applied candidate.
+func renderTarget(
+	cfg *optimizationConfig,
+	params *piano.Params,
+	bodyIR, roomL, roomR []float32,
+	note int,
+	velocity int,
+	releaseAfter float64,
+	settings evalSettings,
+) ([]float64, error) {
+	if needsIRSynthesis(cfg.groups) {
+		mono, _, err := renderCandidateWithDualIR(
+			params, bodyIR, roomL, roomR,
+			note, velocity, settings.sampleRate,
+			settings.decayDBFS, settings.decayHoldBlocks,
+			settings.minDuration, settings.maxDuration,
+			settings.renderBlockSize, releaseAfter,
+		)
+		return mono, err
+	}
+	mono, _, err := renderCandidateFromParams(
+		params, note, velocity, settings.sampleRate,
+		settings.decayDBFS, settings.decayHoldBlocks,
+		settings.minDuration, settings.maxDuration,
+		settings.renderBlockSize, releaseAfter,
+	)
+	return mono, err
+}
+
+// referenceFor picks the optimization-rate or final-rate reference rendition.
+func referenceFor(t noteTarget, settings evalSettings) []float64 {
+	if settings.final {
+		return t.finalRef
+	}
+	return t.optRef
+}
+
+// evaluateCandidate renders and scores every note target.
+//
+// The targets are rendered SEQUENTIALLY on purpose: the optimizer already
+// parallelises at the evaluation level, so rendering notes concurrently would
+// oversubscribe the machine and make timing (and therefore the time-budget
+// stop) non-reproducible.
 func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchPath string, settings evalSettings) (optimizationEval, error) {
 	irCfgs, params, evalVelocity, evalReleaseAfter := applyCandidate(
 		cfg.baseParams,
 		settings.sampleRate,
-		cfg.note,
 		cfg.baseVelocity,
 		cfg.baseReleaseAfter,
 		cfg.defs,
 		cand,
 	)
 
+	var bodyIR, roomL, roomR []float32
 	if needsIRSynthesis(cfg.groups) {
-		// IR synthesis mode: generate body/room IR, render with dual IR buffers.
-		var bodyIR []float32
-		var roomL, roomR []float32
-		if cfg.groups["body-ir"] {
-			ir, err := irsynth.GenerateBody(irCfgs.body)
-			if err != nil {
-				return optimizationEval{}, fmt.Errorf("body IR: %w", err)
-			}
-			bodyIR = ir
-		}
-		if cfg.groups["room-ir"] {
-			l, r, err := irsynth.GenerateRoom(irCfgs.room)
-			if err != nil {
-				return optimizationEval{}, fmt.Errorf("room IR: %w", err)
-			}
-			roomL, roomR = l, r
+		var err error
+		bodyIR, roomL, roomR, err = synthesizeIRs(cfg, irCfgs)
+		if err != nil {
+			return optimizationEval{}, err
 		}
 		// Clear IR paths so NewPiano won't load from disk; we set buffers directly.
 		params.IRWavPath = ""
 		params.BodyIRWavPath = ""
 		params.RoomIRWavPath = ""
-		mono, _, err := renderCandidateWithDualIR(
-			params,
-			bodyIR, roomL, roomR,
-			cfg.note,
-			evalVelocity,
-			settings.sampleRate,
-			settings.decayDBFS,
-			settings.decayHoldBlocks,
-			settings.minDuration,
-			settings.maxDuration,
-			settings.renderBlockSize,
-			evalReleaseAfter,
-		)
+	}
+
+	reports := make([]noteReport, 0, len(cfg.targets))
+	for _, t := range cfg.targets {
+		mono, err := renderTarget(cfg, params, bodyIR, roomL, roomR, t.note, evalVelocity, evalReleaseAfter, settings)
 		if err != nil {
 			return optimizationEval{}, err
 		}
-		return optimizationEval{
-			metrics:      analysis.Compare(settings.reference, mono, settings.sampleRate),
-			params:       params,
-			bodyIR:       bodyIR,
-			roomIRL:      roomL,
-			roomIRR:      roomR,
-			velocity:     evalVelocity,
-			releaseAfter: evalReleaseAfter,
-		}, nil
+		m := cfg.score(referenceFor(t, settings), mono, settings.sampleRate)
+		reports = append(reports, noteReport{
+			Note:          t.note,
+			ReferencePath: t.referencePath,
+			Score:         m.Score,
+			Similarity:    m.Similarity,
+			Metrics:       m,
+		})
+	}
+	if len(reports) == 0 {
+		return optimizationEval{}, errors.New("no note targets configured")
 	}
 
-	// Non-IR mode: load IR from disk via renderCandidateFromParams.
-	mono, _, err := renderCandidateFromParams(
-		params,
-		cfg.note,
-		evalVelocity,
-		settings.sampleRate,
-		settings.decayDBFS,
-		settings.decayHoldBlocks,
-		settings.minDuration,
-		settings.maxDuration,
-		settings.renderBlockSize,
-		evalReleaseAfter,
-	)
-	if err != nil {
-		return optimizationEval{}, err
-	}
 	return optimizationEval{
-		metrics:      analysis.Compare(settings.reference, mono, settings.sampleRate),
+		aggregate:    aggregateScores(reports, targetWeights(cfg.targets), cfg.aggregate),
+		notes:        reports,
+		metrics:      reports[0].Metrics,
 		params:       params,
+		bodyIR:       bodyIR,
+		roomIRL:      roomL,
+		roomIRR:      roomR,
 		velocity:     evalVelocity,
 		releaseAfter: evalReleaseAfter,
 	}, nil
+}
+
+// matchOutputGain renders the winning candidate once per note at final
+// settings and returns the closed-form gain ratio that puts the rendering at
+// the reference level.
+func matchOutputGain(cfg *optimizationConfig, cand candidate, settings evalSettings) (float64, error) {
+	irCfgs, params, velocity, releaseAfter := applyCandidate(
+		cfg.baseParams, settings.sampleRate, cfg.baseVelocity, cfg.baseReleaseAfter, cfg.defs, cand,
+	)
+	var bodyIR, roomL, roomR []float32
+	if needsIRSynthesis(cfg.groups) {
+		var err error
+		bodyIR, roomL, roomR, err = synthesizeIRs(cfg, irCfgs)
+		if err != nil {
+			return 1.0, err
+		}
+		params.IRWavPath = ""
+		params.BodyIRWavPath = ""
+		params.RoomIRWavPath = ""
+	}
+
+	pairs := make([]gainPair, 0, len(cfg.targets))
+	for _, t := range cfg.targets {
+		mono, err := renderTarget(cfg, params, bodyIR, roomL, roomR, t.note, velocity, releaseAfter, settings)
+		if err != nil {
+			return 1.0, err
+		}
+		pairs = append(pairs, gainPair{reference: referenceFor(t, settings), candidate: mono, weight: t.weight})
+	}
+	return matchOutputGainRatio(pairs), nil
 }
 
 func renderCandidateWithDualIR(
@@ -602,6 +838,8 @@ func cloneCandidate(c candidate) candidate {
 
 func cloneOptimizationEval(in optimizationEval) optimizationEval {
 	out := optimizationEval{
+		aggregate:    in.aggregate,
+		notes:        append([]noteReport(nil), in.notes...),
 		metrics:      in.metrics,
 		params:       cloneParams(in.params),
 		velocity:     in.velocity,
@@ -715,15 +953,17 @@ func reserveEval(evals *int64, maxEvals int) (int64, bool) {
 
 func currentBestScore(state *optimizationState) float64 {
 	state.mu.Lock()
-	score := state.bestEval.metrics.Score
+	score := state.bestEval.aggregate
 	state.mu.Unlock()
 	return score
 }
 
-func updateTopCandidates(top []topCandidate, topK int, eval int, metrics analysis.Metrics, defs []knobDef, cand candidate) []topCandidate {
+// updateTopCandidates records a candidate under its aggregate score. For a
+// single note the aggregate is exactly metrics.Score.
+func updateTopCandidates(top []topCandidate, topK int, eval int, score float64, metrics analysis.Metrics, defs []knobDef, cand candidate) []topCandidate {
 	entry := topCandidate{
 		Eval:       eval,
-		Score:      metrics.Score,
+		Score:      score,
 		Similarity: metrics.Similarity,
 		Knobs:      make(map[string]float64, len(defs)),
 	}

@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cwbudde/algo-piano/piano"
+	"github.com/cwbudde/algo-piano/preset"
 )
 
 func TestPresetIRPathRelativizesFromPresetDir(t *testing.T) {
@@ -122,5 +125,62 @@ func TestLoadCandidateFromReportMissingFile(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected ok=false for missing file")
+	}
+}
+
+func TestWritePresetJSONPreservesStringModel(t *testing.T) {
+	p := piano.NewDefaultParams()
+	p.StringModel = piano.StringModelModal
+	p.ModalPartials = 21
+	p.ModalGainExponent = 1.37
+	p.ModalExcitation = 0.42
+	p.ModalUndampedLoss = 1.23
+	p.ModalDampedLoss = 0.77
+	p.CouplingEnabled = false
+	p.CouplingOctaveGain = 0.00031
+	p.CouplingFifthGain = 0.00017
+	p.CouplingMaxForce = 0.00062
+	p.CouplingMode = piano.CouplingModePhysical
+	p.CouplingAmount = 0.66
+	p.CouplingHarmonicFalloff = 1.71
+	p.CouplingDetuneSigmaCents = 33.5
+	p.CouplingDistanceExponent = 1.44
+	p.CouplingMaxNeighbors = 7
+
+	path := filepath.Join(t.TempDir(), "preset.json")
+	if err := writePresetJSON(path, p); err != nil {
+		t.Fatalf("writePresetJSON: %v", err)
+	}
+
+	got, err := preset.LoadJSON(path)
+	if err != nil {
+		t.Fatalf("preset.LoadJSON: %v", err)
+	}
+
+	checks := []struct {
+		name      string
+		got, want any
+	}{
+		{"StringModel", got.StringModel, p.StringModel},
+		{"ModalPartials", got.ModalPartials, p.ModalPartials},
+		{"ModalGainExponent", got.ModalGainExponent, p.ModalGainExponent},
+		{"ModalExcitation", got.ModalExcitation, p.ModalExcitation},
+		{"ModalUndampedLoss", got.ModalUndampedLoss, p.ModalUndampedLoss},
+		{"ModalDampedLoss", got.ModalDampedLoss, p.ModalDampedLoss},
+		{"CouplingEnabled", got.CouplingEnabled, p.CouplingEnabled},
+		{"CouplingOctaveGain", got.CouplingOctaveGain, p.CouplingOctaveGain},
+		{"CouplingFifthGain", got.CouplingFifthGain, p.CouplingFifthGain},
+		{"CouplingMaxForce", got.CouplingMaxForce, p.CouplingMaxForce},
+		{"CouplingMode", got.CouplingMode, p.CouplingMode},
+		{"CouplingAmount", got.CouplingAmount, p.CouplingAmount},
+		{"CouplingHarmonicFalloff", got.CouplingHarmonicFalloff, p.CouplingHarmonicFalloff},
+		{"CouplingDetuneSigmaCents", got.CouplingDetuneSigmaCents, p.CouplingDetuneSigmaCents},
+		{"CouplingDistanceExponent", got.CouplingDistanceExponent, p.CouplingDistanceExponent},
+		{"CouplingMaxNeighbors", got.CouplingMaxNeighbors, p.CouplingMaxNeighbors},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Fatalf("%s = %v, want %v", c.name, c.got, c.want)
+		}
 	}
 }

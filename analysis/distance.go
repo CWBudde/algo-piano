@@ -46,54 +46,48 @@ const (
 	NormDecay    = 40.0
 )
 
-// Metrics contains distance and similarity measurements between two audio signals.
-type Metrics struct {
-	SampleRate int `json:"sample_rate"`
-
-	ReferenceFrames int `json:"reference_frames"`
-	CandidateFrames int `json:"candidate_frames"`
-	AlignedFrames   int `json:"aligned_frames"`
-	LagSamples      int `json:"lag_samples"`
-
-	TimeRMSE        float64 `json:"time_rmse"`
-	EnvelopeRMSEDB  float64 `json:"envelope_rmse_db"`
-	SpectralRMSEDB  float64 `json:"spectral_rmse_db"`
-	RefDecayDBPerS  float64 `json:"ref_decay_db_per_s"`
-	CandDecayDBPerS float64 `json:"cand_decay_db_per_s"`
-	DecayDiffDBPerS float64 `json:"decay_diff_db_per_s"`
-
-	// Per-position spectral detail (evenly spaced across signal).
-	SpectralPositions []SpectralPosition `json:"spectral_positions,omitempty"`
-
-	// Per-band spectral RMSE breakdown for diagnostics.
-	SpectralLowRMSEDB  float64 `json:"spectral_low_rmse_db"`  // 0-500 Hz
-	SpectralMidRMSEDB  float64 `json:"spectral_mid_rmse_db"`  // 500-2000 Hz
-	SpectralHighRMSEDB float64 `json:"spectral_high_rmse_db"` // 2000+ Hz
-
-	// Normalized component contributions (0-1 each, weighted sum = Score).
-	TimeNorm     float64 `json:"time_norm"`
-	EnvelopeNorm float64 `json:"envelope_norm"`
-	SpectralNorm float64 `json:"spectral_norm"`
-	DecayNorm    float64 `json:"decay_norm"`
-	Dominant     string  `json:"dominant"` // name of the highest-contributing component
-
-	Score      float64 `json:"score"`
-	Similarity float64 `json:"similarity"`
+// Options configures a comparison run.
+type Options struct {
+	// Weights selects the scoring profile. The zero value means DefaultWeights.
+	Weights Weights
+	// F0Hz pins the fundamental used for partial analysis. When 0 the value is
+	// derived from MIDINote, and failing that estimated from the reference.
+	F0Hz float64
+	// MIDINote is the note being compared, or 0 when unknown.
+	MIDINote int
+	// SkipPartials disables partial, inharmonicity and tristimulus analysis.
+	SkipPartials bool
+	// SkipAttack disables the attack-transient metric.
+	SkipAttack bool
 }
 
-// SpectralPosition records spectral RMSE at a specific time offset.
-type SpectralPosition struct {
-	OffsetSec float64 `json:"offset_sec"`
-	RMSEDB    float64 `json:"rmse_db"`
-}
-
-// Compare returns objective distance metrics and a combined score in [0,1].
+// Compare returns objective distance metrics and a combined score in [0,1]
+// using the default (legacy-v1) weighting profile.
 func Compare(reference []float64, candidate []float64, sampleRate int) Metrics {
+	return CompareWithOptions(reference, candidate, sampleRate, Options{})
+}
+
+// CompareWithWeights compares two signals using an explicit weighting profile.
+func CompareWithWeights(reference []float64, candidate []float64, sampleRate int, w Weights) Metrics {
+	return CompareWithOptions(reference, candidate, sampleRate, Options{Weights: w})
+}
+
+// CompareWithOptions returns objective distance metrics and a combined score
+// in [0,1] under the supplied options.
+func CompareWithOptions(reference []float64, candidate []float64, sampleRate int, opt Options) Metrics {
+	w := opt.Weights
+	if w.isZero() {
+		w = DefaultWeights()
+	}
+
 	m := Metrics{
 		SampleRate:      sampleRate,
 		ReferenceFrames: len(reference),
 		CandidateFrames: len(candidate),
+		ScoreProfile:    w.Name,
 	}
+	m.markExtendedUndefined()
+
 	if sampleRate <= 0 || len(reference) == 0 || len(candidate) == 0 {
 		m.Score = 1.0
 		m.Similarity = 0.0
@@ -177,34 +171,196 @@ func Compare(reference []float64, candidate []float64, sampleRate int) Metrics {
 		m.DecayDiffDBPerS = math.Abs(m.RefDecayDBPerS - m.CandDecayDBPerS)
 	}
 
+	if !opt.SkipAttack {
+		// Deliberately the raw inputs, not the aligned or silence-trimmed
+		// ones. Rise time and centroid trajectory are properties of each
+		// signal's own onset: lag alignment trims exactly that onset off
+		// whichever side starts later, and the 1e-6 silence trim used for
+		// alignment cuts the first millisecond off a synthesised note that
+		// ramps in from below it. analyzeAttack does its own, far gentler
+		// trimming.
+		m.applyAttackMetrics(reference, candidate, sampleRate)
+	}
+	m.DecaySegmentRMSEDBPerS = decaySegmentRMSEDBPerS(refEnv, candEnv, hopSec)
+
+	if !opt.SkipPartials {
+		f0, hint := resolveF0(opt)
+		m.applyPartialMetrics(refA, candA, sampleRate, f0, hint)
+	}
+
 	// Normalize sub-metrics and combine.
-	m.TimeNorm = clamp01(m.TimeRMSE / NormTime)
-	m.EnvelopeNorm = clamp01(m.EnvelopeRMSEDB / NormEnvelope)
-	m.SpectralNorm = clamp01(m.SpectralRMSEDB / NormSpectral)
-	m.DecayNorm = clamp01(m.DecayDiffDBPerS / NormDecay)
-	m.Score = clamp01(WeightTime*m.TimeNorm + WeightEnvelope*m.EnvelopeNorm + WeightSpectral*m.SpectralNorm + WeightDecay*m.DecayNorm)
+	components := Components(m, w)
+	m.applyNorms(components)
+
+	var sum, weightTotal float64
+	dropped := false
+	for _, c := range components {
+		// Zero-weight terms are skipped rather than added: x + 0.0 == x
+		// exactly, but 0.0 * NaN == NaN, and the extended metrics are
+		// legitimately undefined on short windows.
+		if c.Weight == 0 {
+			continue
+		}
+		if !c.Available {
+			// The component could not be measured at all (a decay-only
+			// window has no onset to compare). Folding in a placeholder
+			// would calibrate against a number that means nothing, so the
+			// term is dropped and the surviving weights renormalized.
+			dropped = true
+			continue
+		}
+		sum += c.Weight * c.Norm
+		weightTotal += c.Weight
+	}
+	// Renormalize only when something was actually dropped. A profile whose
+	// weights are all present must reproduce its score bit for bit, and
+	// dividing by a weightTotal that is 1.0 only to within rounding would not.
+	switch {
+	case dropped && weightTotal > 0:
+		sum /= weightTotal
+	case dropped:
+		// Every weighted term was unmeasurable. Leaving sum at 0 would report
+		// a perfect match, so say undefined instead; Metrics.Sanitized turns
+		// that into the worst-case score for JSON consumers.
+		sum = math.NaN()
+	}
+	m.Score = clamp01(sum)
 	m.Similarity = clamp01(math.Exp(-4.0 * m.Score))
 
 	// Identify dominant component (highest weighted contribution).
-	type comp struct {
-		name string
-		val  float64
-	}
-	comps := []comp{
-		{"time", WeightTime * m.TimeNorm},
-		{"envelope", WeightEnvelope * m.EnvelopeNorm},
-		{"spectral", WeightSpectral * m.SpectralNorm},
-		{"decay", WeightDecay * m.DecayNorm},
-	}
-	best := comps[0]
-	for _, c := range comps[1:] {
-		if c.val > best.val {
-			best = c
-		}
-	}
-	m.Dominant = best.name
+	m.Dominant = dominantComponent(components)
 
 	return m
+}
+
+// resolveF0 derives the fundamental to use for partial analysis from the
+// options. It returns 0 for "estimate it from the reference", and hint=true
+// when the value is a nominal pitch that should be refined against the actual
+// spectrum rather than trusted outright: a MIDI note says which key was
+// struck, not how the instrument was tuned. Options.F0Hz, by contrast, is an
+// explicit pin and is used verbatim.
+func resolveF0(opt Options) (float64, bool) {
+	if opt.F0Hz > 0 {
+		return opt.F0Hz, false
+	}
+	if opt.MIDINote > 0 {
+		return MIDIToHz(opt.MIDINote), true
+	}
+	return 0, false
+}
+
+// markExtendedUndefined sets the extended metrics to NaN. They stay NaN unless
+// the corresponding analysis actually produced a value.
+func (m *Metrics) markExtendedUndefined() {
+	nan := math.NaN()
+	m.PartialLevelRMSEDB = nan
+	m.PartialFreqRMSECents = nan
+	m.TristimulusDistance = nan
+	m.DecaySegmentRMSEDBPerS = nan
+	m.RefRiseTimeMS = nan
+	m.CandRiseTimeMS = nan
+	m.AttackRiseDiffMS = nan
+	m.RefAttackCentroidHz = nan
+	m.CandAttackCentroidHz = nan
+	m.AttackCentroidRMSEOct = nan
+	m.AttackAvailable = false
+}
+
+// applyAttackMetrics fills the attack-transient metrics. AttackAvailable stays
+// false when the aligned window carries no rising onset, and the score loop
+// then leaves the attack term out entirely.
+func (m *Metrics) applyAttackMetrics(refA []float64, candA []float64, sampleRate int) {
+	res := analyzeAttack(refA, candA, sampleRate)
+	m.RefRiseTimeMS = res.refRiseMS
+	m.CandRiseTimeMS = res.candRiseMS
+	m.AttackRiseDiffMS = res.riseDiffMS
+	m.RefAttackCentroidHz = res.refCentroidHz
+	m.CandAttackCentroidHz = res.candCentroidHz
+	m.AttackCentroidRMSEOct = res.centroidRMSEOct
+	m.AttackAvailable = res.available
+}
+
+// applyPartialMetrics fills the partial-derived metrics, leaving them NaN when
+// no usable harmonic series could be extracted from both signals.
+func (m *Metrics) applyPartialMetrics(refA []float64, candA []float64, sampleRate int, f0 float64, hint bool) {
+	var refPS partialSet
+	var ok bool
+	if hint {
+		refPS, ok = analyzePartialsHint(refA, sampleRate, f0)
+	} else {
+		refPS, ok = analyzePartials(refA, sampleRate, f0)
+	}
+	if !ok {
+		return
+	}
+	// Both signals are measured against the same fundamental so that a tuning
+	// mismatch shows up as a frequency deviation rather than being absorbed.
+	candPS, ok := analyzePartials(candA, sampleRate, refPS.f0)
+	if !ok {
+		return
+	}
+	m.F0Hz = refPS.f0
+	m.PartialLevelRMSEDB = partialLevelRMSEDB(refPS, candPS)
+	m.PartialFreqRMSECents = partialFreqRMSECents(refPS, candPS)
+	m.TristimulusDistance = tristimulusDistance(refPS, candPS)
+}
+
+// applyNorms mirrors the component norms back onto the metric struct.
+func (m *Metrics) applyNorms(components []Component) {
+	for _, c := range components {
+		switch c.Name {
+		case ComponentTime:
+			m.TimeNorm = c.Norm
+			m.TimeSaturated = c.Saturated
+		case ComponentEnvelope:
+			m.EnvelopeNorm = c.Norm
+			m.EnvelopeSaturated = c.Saturated
+		case ComponentSpectral:
+			m.SpectralNorm = c.Norm
+			m.SpectralSaturated = c.Saturated
+		case ComponentDecay:
+			m.DecayNorm = c.Norm
+			m.DecaySaturated = c.Saturated
+		case ComponentPartialLevel:
+			m.PartialLevelNorm = c.Norm
+			m.PartialLevelSaturated = c.Saturated
+		case ComponentPartialFreq:
+			m.PartialFreqNorm = c.Norm
+			m.PartialFreqSaturated = c.Saturated
+		case ComponentTristimulus:
+			m.TristimulusNorm = c.Norm
+			m.TristimulusSaturated = c.Saturated
+		case ComponentAttack:
+			m.AttackNorm = c.Norm
+			m.AttackSaturated = c.Saturated
+		case ComponentDecaySegment:
+			m.DecaySegmentNorm = c.Norm
+			m.DecaySegmentSaturated = c.Saturated
+		}
+	}
+}
+
+// dominantComponent returns the name of the weighted component with the largest
+// contribution, considering only components that carry weight.
+func dominantComponent(components []Component) string {
+	best := ""
+	bestVal := math.Inf(-1)
+	for _, c := range components {
+		if c.Weight == 0 || !c.Available {
+			continue
+		}
+		if best == "" {
+			// Fall back to the first weighted component so an undefined
+			// (NaN) contribution never leaves Dominant empty.
+			best = c.Name
+		}
+		v := c.Weight * c.Norm
+		if v > bestVal {
+			bestVal = v
+			best = c.Name
+		}
+	}
+	return best
 }
 
 func trimLeadingSilence(x []float64, threshold float64) []float64 {
@@ -525,10 +681,11 @@ func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) spectralResul
 
 	plan, err := getSpectralFFTPlan(winSize)
 	bins := winSize / 2
-	hann := make([]float64, winSize)
-	for i := range hann {
-		hann[i] = 0.5 - 0.5*math.Cos(2*math.Pi*float64(i)/float64(winSize-1))
-	}
+	hann := hannWindow(winSize)
+
+	sc := getScratch(winSize)
+	defer putScratch(winSize, sc)
+	aw, bw := sc.aw, sc.bw
 
 	// Band boundaries in bins.
 	binHz := float64(sampleRate) / float64(winSize)
@@ -561,8 +718,6 @@ func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) spectralResul
 		centerSample := pos + winSize/2
 		weight := phaseWeight(centerSample, attackEnd, sustainEnd)
 
-		aw := make([]float64, winSize)
-		bw := make([]float64, winSize)
 		for i := 0; i < winSize; i++ {
 			aw[i] = a[pos+i] * hann[i]
 			bw[i] = b[pos+i] * hann[i]
@@ -593,8 +748,7 @@ func spectralRMSEDBMulti(a []float64, b []float64, sampleRate int) spectralResul
 
 		computed := false
 		if err == nil {
-			specA := make([]complex128, bins+1)
-			specB := make([]complex128, bins+1)
+			specA, specB := sc.specA, sc.specB
 			if e := plan.forward(specA, aw); e == nil {
 				if e := plan.forward(specB, bw); e == nil {
 					computeBins(func(k int) (float64, float64) {
@@ -685,17 +839,26 @@ func phaseWeight(centerSample int, attackEnd int, sustainEnd int) float64 {
 }
 
 func spectralRMSEDB(a []float64, b []float64) float64 {
-	aw, bw, bins := spectralWindowedInputs(a, b)
+	n := spectralWindowLen(a, b)
+	bins := n / 2
 	if bins < 2 {
 		return 0
 	}
 
-	plan, err := getSpectralFFTPlan(len(aw))
+	sc := getScratch(n)
+	defer putScratch(n, sc)
+	aw, bw := sc.aw, sc.bw
+	hann := hannWindow(n)
+	for i := 0; i < n; i++ {
+		aw[i] = a[i] * hann[i]
+		bw[i] = b[i] * hann[i]
+	}
+
+	plan, err := getSpectralFFTPlan(n)
 	if err != nil {
 		return spectralRMSEDBNaiveWindowed(aw, bw, bins)
 	}
-	specA := make([]complex128, bins+1)
-	specB := make([]complex128, bins+1)
+	specA, specB := sc.specA, sc.specB
 	if err := plan.forward(specA, aw); err != nil {
 		return spectralRMSEDBNaiveWindowed(aw, bw, bins)
 	}
@@ -715,13 +878,15 @@ func spectralRMSEDB(a []float64, b []float64) float64 {
 	return math.Sqrt(sum / float64(bins-1))
 }
 
-func spectralWindowedInputs(a []float64, b []float64) ([]float64, []float64, int) {
+// spectralWindowLen returns the analysis length shared by a and b, or 0 when
+// the signals are too short for a meaningful spectral comparison.
+func spectralWindowLen(a []float64, b []float64) int {
 	n := len(a)
 	if len(b) < n {
 		n = len(b)
 	}
 	if n < 512 {
-		return nil, nil, 0
+		return 0
 	}
 	if n > 4096 {
 		n = 4096
@@ -731,15 +896,25 @@ func spectralWindowedInputs(a []float64, b []float64) ([]float64, []float64, int
 		n--
 	}
 	if n < 512 {
+		return 0
+	}
+	return n
+}
+
+// spectralWindowedInputs returns freshly allocated Hann-windowed copies of a
+// and b plus the usable bin count. It is kept for callers that need to own the
+// buffers; the hot path uses the pooled scratch buffers instead.
+func spectralWindowedInputs(a []float64, b []float64) ([]float64, []float64, int) {
+	n := spectralWindowLen(a, b)
+	if n == 0 {
 		return nil, nil, 0
 	}
-
+	hann := hannWindow(n)
 	aw := make([]float64, n)
 	bw := make([]float64, n)
 	for i := 0; i < n; i++ {
-		w := 0.5 - 0.5*math.Cos(2*math.Pi*float64(i)/float64(n-1))
-		aw[i] = a[i] * w
-		bw[i] = b[i] * w
+		aw[i] = a[i] * hann[i]
+		bw[i] = b[i] * hann[i]
 	}
 	return aw, bw, n / 2
 }

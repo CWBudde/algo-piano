@@ -30,6 +30,7 @@ func main() {
 	releaseAfter := flag.Float64("release-after", 2.0, "Note hold time before NoteOff for rendered candidate")
 	writeCandidate := flag.String("write-candidate", "", "Optional path to write rendered candidate WAV")
 	jsonOut := flag.Bool("json", false, "Print metrics as JSON")
+	thresholdsPath := flag.String("thresholds", "", "Optional gate threshold JSON path; exit 2 when a metric exceeds its max")
 	flag.Parse()
 
 	ref, refSR, err := readWAVMono(*referencePath)
@@ -74,13 +75,17 @@ func main() {
 		}
 	}
 
-	metrics := analysis.Compare(ref, cand, *sampleRate)
+	// The MIDI note is the only thing that says which pitch is being compared.
+	// Without it the fundamental is estimated from the spectrum, and a
+	// mis-estimated f0 biases every partial ratio derived from it.
+	metrics := analysis.CompareWithOptions(ref, cand, *sampleRate, analysis.Options{MIDINote: *note}).Sanitized()
 	if *jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(metrics); err != nil {
 			die("json encode failed: %v", err)
 		}
+		runGate(*thresholdsPath, metrics)
 		return
 	}
 
@@ -110,6 +115,105 @@ func main() {
 	fmt.Printf("\nDecay slopes: ref=%.1f dB/s  cand=%.1f dB/s\n", metrics.RefDecayDBPerS, metrics.CandDecayDBPerS)
 	fmt.Printf("\nSpectral bands:   low(0-500Hz)=%.1f dB  mid(500-2k)=%.1f dB  high(2k+)=%.1f dB\n",
 		metrics.SpectralLowRMSEDB, metrics.SpectralMidRMSEDB, metrics.SpectralHighRMSEDB)
+
+	fmt.Printf("\nPartials:         f0=%.2f Hz  level=%.1f dB  freq=%.1f cents  tristimulus=%.3f\n",
+		metrics.F0Hz, metrics.PartialLevelRMSEDB, metrics.PartialFreqRMSECents, metrics.TristimulusDistance)
+	if metrics.AttackAvailable {
+		fmt.Printf("Attack:           rise ref=%.1f ms cand=%.1f ms (diff %.1f ms)  centroid ref=%.0f Hz cand=%.0f Hz (%.3f oct)\n",
+			metrics.RefRiseTimeMS, metrics.CandRiseTimeMS, metrics.AttackRiseDiffMS,
+			metrics.RefAttackCentroidHz, metrics.CandAttackCentroidHz, metrics.AttackCentroidRMSEOct)
+	} else {
+		fmt.Printf("Attack:           unavailable (no rising onset in the compared window)\n")
+	}
+
+	printSaturationWarnings(metrics)
+
+	runGate(*thresholdsPath, metrics)
+}
+
+// runGate evaluates the threshold file at path against m, prints the verdict,
+// and exits with status 2 when any enforced metric is breached. An empty path
+// disables the gate entirely.
+func runGate(path string, m analysis.Metrics) {
+	if path == "" {
+		return
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		die("failed to read thresholds: %v", err)
+	}
+	var spec gateSpec
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		die("failed to parse thresholds %s: %v", path, err)
+	}
+	breaches, worstUsed, worstMetric, err := evaluateGate(spec, m)
+	if err != nil {
+		die("%v", err)
+	}
+	enforced := spec.enforcedCount()
+	if len(breaches) > 0 {
+		for _, b := range breaches {
+			fmt.Fprintln(os.Stderr, formatBreach(b))
+		}
+		fmt.Fprintf(os.Stderr, "gate: %d of %d enforced metrics breached\n", len(breaches), enforced)
+		os.Exit(2)
+	}
+	fmt.Printf("gate: PASS %d enforced metrics within thresholds\n", enforced)
+	if worstMetric != "" {
+		values := metricsByJSONTag(m)
+		fmt.Printf("gate: worst headroom %s %.2f/%.2f (%.0f%% of budget used)\n",
+			worstMetric, values[worstMetric], *spec.Max[worstMetric], worstUsed*100.0)
+	}
+}
+
+// saturationWarning describes one component whose norm is pinned at 1.0.
+type saturationWarning struct {
+	name      string
+	saturated bool
+	raw       float64
+	unit      string
+	norm      float64
+	normName  string
+}
+
+// printSaturationWarnings reports every component whose raw value has met or
+// exceeded its normalization constant. Such a component is clamped to 1.0 and
+// therefore contributes a constant to the score: it cannot distinguish two
+// candidates and gives an optimizer no gradient at all. That is a property of
+// the norm, not of the audio, and it is invisible in the score itself, so it
+// is called out explicitly.
+func printSaturationWarnings(m analysis.Metrics) {
+	warnings := []saturationWarning{
+		{"time", m.TimeSaturated, m.TimeRMSE, "", analysis.NormTime, "NormTime"},
+		{"envelope", m.EnvelopeSaturated, m.EnvelopeRMSEDB, " dB", analysis.NormEnvelope, "NormEnvelope"},
+		{"spectral", m.SpectralSaturated, m.SpectralRMSEDB, " dB", analysis.NormSpectral, "NormSpectral"},
+		{"decay", m.DecaySaturated, m.DecayDiffDBPerS, " dB/s", analysis.NormDecay, "NormDecay"},
+		{"partial_level", m.PartialLevelSaturated, m.PartialLevelRMSEDB, " dB", analysis.NormPartialLevel, "NormPartialLevel"},
+		{"partial_freq", m.PartialFreqSaturated, m.PartialFreqRMSECents, " cents", analysis.NormPartialFreq, "NormPartialFreq"},
+		{"tristimulus", m.TristimulusSaturated, m.TristimulusDistance, "", analysis.NormTristimulus, "NormTristimulus"},
+		{"decay_segment", m.DecaySegmentSaturated, m.DecaySegmentRMSEDBPerS, " dB/s", analysis.NormDecaySegment, "NormDecaySegment"},
+	}
+	first := true
+	for _, w := range warnings {
+		if !w.saturated {
+			continue
+		}
+		if first {
+			fmt.Println()
+			first = false
+		}
+		fmt.Fprintf(os.Stderr,
+			"WARNING: %s component saturated (%.1f%s >= %s %.1f) - this component provides no gradient\n",
+			w.name, w.raw, w.unit, w.normName, w.norm)
+	}
+	if m.AttackSaturated {
+		if first {
+			fmt.Println()
+		}
+		fmt.Fprintf(os.Stderr,
+			"WARNING: attack component saturated (rise %.1f ms >= NormAttackRise %.1f and centroid %.3f oct >= NormAttackCentroid %.3f) - this component provides no gradient\n",
+			m.AttackRiseDiffMS, analysis.NormAttackRise, m.AttackCentroidRMSEOct, analysis.NormAttackCentroid)
+	}
 }
 
 func renderCandidate(

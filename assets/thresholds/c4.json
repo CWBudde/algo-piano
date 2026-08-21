@@ -1,0 +1,78 @@
+{
+  "_comment": [
+    "C4 regression gate. Consumed by `cmd/piano-distance --thresholds` and by `just gate-c4`.",
+    "",
+    "A number under `max` is ENFORCED: the run fails (exit 2) when the measured metric",
+    "exceeds it. A `null` means NOT YET CALIBRATED - the metric is listed so its existence",
+    "is visible, but it is deliberately not enforced. Calibrating one later is a one-line",
+    "diff (replace the null with a number), not a new file. Any key here that is not a",
+    "float64 field of analysis.Metrics is an ERROR, so typos cannot silently disable a gate.",
+    "",
+    "Thresholds are the values measured on 2026-08-21 plus roughly 8-10% headroom. They are",
+    "a regression fence, not a quality target: tighten them whenever a fit genuinely improves.",
+    "",
+    "SPECTRAL CAVEAT: spectral_rmse_db is gated as a RAW dB value, which is a real regression",
+    "signal. The NORMALISED spectral component is a different matter - at 58.2 dB against",
+    "analysis.NormSpectral = 30.0 it is saturated, clamp01 pins it at 1.0, and it therefore",
+    "contributes a constant to `score` with no gradient for the optimizer. Every preset in",
+    "the repo saturates it (measured population range 51.5-63.7 dB). Re-calibrating",
+    "NormSpectral to roughly 70-80 is the fix, but it rewrites every recorded score and so",
+    "belongs in a separate, deliberately re-baselined change - not here."
+  ],
+
+  "max": {
+    "score": 0.57,
+    "time_rmse": 0.12,
+    "envelope_rmse_db": 9.8,
+    "spectral_rmse_db": 63.5,
+    "decay_diff_db_per_s": 3.45,
+
+    "partial_level_rmse_db": null,
+    "partial_freq_rmse_cents": null,
+    "tristimulus_distance": null,
+    "attack_rise_diff_ms": null,
+    "attack_centroid_rmse_oct": null,
+    "decay_segment_rmse_db_per_s": null
+  },
+
+  "recorded": {
+    "date": "2026-08-21",
+    "preset": "assets/presets/fitted-c4-mayfly.json",
+    "reference": "reference/c4.wav",
+    "score_profile": "legacy-v1",
+    "render": {
+      "note": 60,
+      "velocity": 118,
+      "sample_rate": 48000,
+      "release_after": 3.5,
+      "decay_dbfs": -90,
+      "decay_hold_blocks": 6,
+      "min_duration": 2.0,
+      "max_duration": 30
+    },
+    "note": [
+      "Measured against pristine HEAD as well as the working tree; both give the identical",
+      "score, so these numbers are the current behaviour of analysis.Compare and not a",
+      "regression introduced by the metric work.",
+      "",
+      "Scores recorded before 2026-08 are NOT comparable: analysis/distance.go changed six",
+      "times between 2026-02-14 and 2026-08-16 (phase detection, normalisation), so the",
+      "0.3839 in assets/presets/fitted-c4-mayfly.json.report.json was produced by a",
+      "different metric implementation."
+    ],
+    "measured": {
+      "score": 0.5194,
+      "similarity": 0.1252,
+      "time_rmse": 0.1104,
+      "envelope_rmse_db": 9.008,
+      "spectral_rmse_db": 58.18,
+      "decay_diff_db_per_s": 3.177,
+      "partial_level_rmse_db": 10.6,
+      "partial_freq_rmse_cents": 34.81,
+      "tristimulus_distance": 0.2773,
+      "attack_rise_diff_ms": 24.49,
+      "attack_centroid_rmse_oct": 0.4399,
+      "decay_segment_rmse_db_per_s": 15.32
+    }
+  }
+}

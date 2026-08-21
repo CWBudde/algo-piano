@@ -64,47 +64,117 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
 
 ## Phase 8B — Distance-guided timbre matching (C4 first, then scale out)
 
+> **Recorded scores from before 2026-08 are NOT comparable.**
+> `analysis/distance.go` changed six times between 2026-02-14 and 2026-08-16
+> (phase detection, normalisation), so every score written into a report before
+> that window was produced by a different metric implementation. This applies to
+> the `0.6147` Phase 8A baseline above and to the `best_score 0.3839` recorded in
+> `assets/presets/fitted-c4-mayfly.json.report.json` alike — re-measure, never
+> compare across that boundary. The canonical current number is below, and
+> `docs/plans/2026-08-21-phase8b-metrics.md` has the detail.
+>
+> **Current C4 baseline (re-measured 2026-08-21):**
+> `assets/presets/fitted-c4-mayfly.json` vs `reference/c4.wav`, note 60,
+> velocity 118, release-after 3.5 s, 48 kHz, decay-dbfs -90, decay-hold-blocks 6,
+> min-duration 2.0, max-duration 30 — score `0.5194`, similarity `12.52%`,
+> time `0.1104`, envelope `9.008 dB`, spectral `58.18 dB`, decay slope
+> `3.177 dB/s`. Pristine HEAD and the working tree agree to the last digit
+> (`0.5194351732385747`), so this is the metric's current definition and not a
+> regression.
+
 - [x] First optimization surface exposed: preset-controlled hammer influence,
-      unison detune/crossfeed and IR wet/dry/gain scales, with suggested Mayfly
-      bounds and optimization order in
-      `docs/plans/2026-02-13-phase8b-tweak-surface.md`.
-- [ ] Add render-control fitting loop (before touching physical params)
-  - [x] Fast inner loop in place: `cmd/piano-fit-fast` (time-budgeted, checkpointed
-        best preset/report), `just fit-c4-fast` entrypoint, persisted control
-        settings with score snapshot, and relative IR paths in fitter output that
-        stay loadable from `assets/presets/`. Fitted controls (`velocity=118`,
-        `release-after=3.5`) are the baseline for `just distance-c4`; the tracked
-        checkpoint (2026-02-13) scores `0.4107` at `19.35%` similarity.
-  - [ ] Grid/coordinate search over `velocity`, `release-after`, and output gain to reduce avoidable mismatch
-  - [ ] Promote post-checkpoint best (`score=0.4073`, `similarity=19.61%`, seen in run log at eval ~540) once persisted to preset/report
+      unison detune/crossfeed and IR wet/dry/gain scales, with the knob groups,
+      bounds and staged optimization order now documented in
+      `docs/optimization-workflow.md` and
+      `docs/plans/2026-02-15-unified-piano-fit-design.md`.
+- [x] Add render-control fitting loop (before touching physical params)
+  - [x] Fast inner loop in place: `cmd/piano-fit --optimize=piano,mix`
+        (time-budgeted, checkpointed best preset/report), `just fit-c4`
+        entrypoint, persisted control settings with score snapshot, and relative
+        IR paths in fitter output that stay loadable from `assets/presets/`.
+        Fitted controls (`velocity=118`, `release-after=3.5`) are the baseline
+        for `just distance-c4` and `just gate-c4`.
+  - [x] Deterministic coordinate polish over the render controls: `--polish` /
+        `--polish-only` sweep `render.velocity`, `render.release_after` and
+        `hammer_initial_velocity_scale` (configurable via `--polish-knobs`)
+        under a hard `--polish-evals` budget. A step is accepted only when it
+        improves, so the stage **cannot regress** and is fully deterministic —
+        `--polish-only --resume` is the standard finishing move on an existing
+        best.
+  - [x] Output gain is **solved, not searched**: `analysis.Compare`
+        RMS-normalises both signals, so `output_gain` is provably
+        score-invariant and searching it would burn budget on a flat dimension.
+        `--match-output-gain` (default on) solves it analytically after the
+        search instead, and it is deliberately excluded from the polish knobs.
 - [ ] Add physically-meaningful fitting passes for note parameters
+      (harness landed as `--pass none|attack|sustain|inharmonicity` with
+      `--pass-window`, which restricts the movable knobs and optionally windows
+      the compare; the per-aspect weighting profiles exist but `passScorer` still
+      scores with `legacy-v1`, and none of the three fits has actually been run
+      to convergence yet)
   - [ ] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
   - [ ] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
   - [ ] Inharmonicity pass: fit dispersion/inharmonicity via partial-frequency error
-- [ ] Strengthen distance metrics for piano realism
-  - [ ] Add partial-ratio/tristimulus mismatch metric for harmonic balance
-  - [ ] Add attack-transient metric (onset rise + first 80 ms spectral centroid trajectory)
-  - [ ] Add segment-wise decay metric (early/mid/late slope instead of single global slope)
-- [ ] Regression guardrails
-  - [ ] Add acceptance thresholds for C4 (e.g. target score + per-metric caps)
-  - [ ] CI check that rejects large regressions in distance metrics
-- [ ] Add metaheuristic optimizer integration (`github.com/CWBudde/mayfly`)
+- [x] Strengthen distance metrics for piano realism
+      (`Compare` stays **bit-identical**: the new metrics carry weight 0 in the
+      default `legacy-v1` profile. Named profiles `balanced-v2`, `attack-v1`,
+      `decay-v1` and `inharmonicity-v1` are selectable via
+      `CompareWithWeights`/`CompareWithOptions`. `Metrics.Sanitized()` fixes a
+      real NaN-in-JSON crash. See `docs/plans/2026-08-21-phase8b-metrics.md`.)
+  - [x] Add partial-ratio/tristimulus mismatch metric for harmonic balance
+        (`partial_level_rmse_db`, `partial_freq_rmse_cents`, `tristimulus_distance`)
+  - [x] Add attack-transient metric (onset rise + first 80 ms spectral centroid trajectory)
+        (`attack_rise_diff_ms`, `attack_centroid_rmse_oct`, in octaves so it behaves
+        the same across the keyboard)
+  - [x] Add segment-wise decay metric (early/mid/late slope instead of single global slope)
+        (`decay_segment_rmse_db_per_s`)
+- [x] Regression guardrails
+  - [x] Add acceptance thresholds for C4: `assets/thresholds/c4.json` enforces
+        `score`, `time_rmse`, `envelope_rmse_db`, `spectral_rmse_db` and
+        `decay_diff_db_per_s` at ~8-10% over the 2026-08-21 measurements. The six
+        newer metrics are listed as `null` (present but not yet calibrated).
+        Metric names resolve by reflection over the `analysis.Metrics` JSON tags,
+        so a new metric is gateable with no code change and an unknown key is an
+        error rather than a silently ignored typo.
+  - [x] Check that rejects large regressions in distance metrics:
+        `cmd/piano-distance --thresholds` exits 2 on breach, wrapped as
+        `just gate-c4` and appended to the `ci` recipe. It reports worst-headroom
+        on a pass so creeping regressions show up before they trip. It is
+        deliberately **not** in `.github/workflows/ci.yml` and self-skips with
+        exit 0 when `reference/c4.wav` is missing, because reference WAVs are
+        gitignored by design — which keeps `just ci` green on a fresh clone.
+
+- [x] Add metaheuristic optimizer integration (`github.com/CWBudde/mayfly`)
   - [x] Single-note integration done: optimization vector and bounds (hammer, loss,
         dispersion, strike position, release controls), `analysis.Compare` wrapped as
         weighted objective, C4 runs with fixed seed and checkpointed best candidate,
         best-fit preset persisted to a configurable path (default
         `assets/presets/fitted-c4.json`, tracked run
         `assets/presets/fitted-c4-mayfly.json`), plus max-eval/time budget controls.
-  - [ ] Add constrained multi-note run (e.g. C3/C4/C5) with shared + per-note parameter blocks
+  - [x] Add constrained multi-note run with shared + per-note parameter blocks:
+        `--notes`, `--reference-map`, `--aggregate mean|max|mean-max` and
+        `--note-weights`. Budget scales with the note count (every eval renders
+        every note; the report records `renders_per_eval`). Start with
+        `--notes 48,60`: `defaultUnisonForNote` (`piano/utils.go:22-31`) puts
+        C3(48) and C4(60) in the same 2-string bucket but C5(72) in the 3-string
+        bucket, so a shared `unison_detune_scale` across all three settles on a
+        compromise optimal for neither.
 
 **Done when:** C4 distance and sub-metrics improve materially and remain stable across changes.
+
+**Not yet calibrated:** `NormSpectral = 30.0` is saturated for every preset in
+the repo (measured 51.5-63.7 dB, plus a degenerate 172 dB outlier), so the
+largest-weight component of `legacy-v1` provides the optimizer no gradient at
+all. The gate checks the raw dB value, which is still a real regression signal.
+Re-calibrating `NormSpectral` to ~70-80 rewrites every recorded score and so
+belongs in a separate, deliberately re-baselined change.
 
 ---
 
 ## Phase 8C — Slow loop: IR-shape optimization with `ir-synth` + Mayfly
 
 - [x] Preparation, tool scope and IO contract locked in
-      `docs/plans/2026-02-13-phase8c-ir-fit-tool.md`, including the optimization
+      `docs/plans/2026-02-15-unified-piano-fit-design.md`, including the optimization
       vector over `irsynth.Config` (`modes`, `brightness`, `stereo-width`,
       `direct`, `early`, `late`, `low-decay`, `high-decay`) and the
       checkpoint/report/resume behaviour for long runs.
@@ -148,6 +218,7 @@ This phase is split into execution subphases to make progress and ownership expl
   (`coupling_mode` `off|static|physical`, `coupling_amount`, plus harmonic
   falloff, detune sigma, distance exponent and max-neighbour knobs); hard
   `max_force` clamps retained in the injection path.
+
 ### Phase 9.5 — Instrument Semantics + Radiation + Web Migration
 
 - [x] Make sustain/damper semantics instrument-wide:

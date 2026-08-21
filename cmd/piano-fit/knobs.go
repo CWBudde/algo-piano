@@ -9,12 +9,47 @@ import (
 	"github.com/cwbudde/algo-piano/piano"
 )
 
+// noteField identifies which per-note field a knob targets. Knobs that are not
+// per-note use noteFieldNone.
+type noteField uint8
+
+const (
+	noteFieldNone noteField = iota
+	noteFieldLoss
+	noteFieldInharmonicity
+	noteFieldStrikePosition
+)
+
 type knobDef struct {
 	Name     string
 	Min      float64
 	Max      float64
 	IsInt    bool
 	LogScale bool // Map [0,1] logarithmically; Min must be > 0
+	// Note is the MIDI note a per-note knob targets; 0 when NoteField is
+	// noteFieldNone.
+	Note      int
+	NoteField noteField
+}
+
+// defaultNoteParams returns the seed values used when a preset carries no entry
+// for a note.
+func defaultNoteParams() *piano.NoteParams {
+	return &piano.NoteParams{Loss: 0.9990, Inharmonicity: 0.12, StrikePosition: 0.18}
+}
+
+// perNoteFor returns the per-note parameter block for note, creating it (and the
+// map) on demand.
+func perNoteFor(params *piano.Params, note int) *piano.NoteParams {
+	if params.PerNote == nil {
+		params.PerNote = make(map[int]*piano.NoteParams)
+	}
+	np := params.PerNote[note]
+	if np == nil {
+		np = &piano.NoteParams{}
+		params.PerNote[note] = np
+	}
+	return np
 }
 
 type candidate struct {
@@ -55,20 +90,16 @@ func needsIRSynthesis(groups map[string]bool) bool {
 func initCandidate(
 	base *piano.Params,
 	sampleRate int,
-	note int,
+	notes []int,
 	baseVelocity int,
 	baseReleaseAfter float64,
 	groups map[string]bool,
+	matchOutputGain bool,
 ) ([]knobDef, candidate) {
 	bodyCfg := irsynth.DefaultBodyConfig()
 	bodyCfg.SampleRate = sampleRate
 	roomCfg := irsynth.DefaultRoomConfig()
 	roomCfg.SampleRate = sampleRate
-
-	np := base.PerNote[note]
-	if np == nil {
-		np = &piano.NoteParams{Loss: 0.9990, Inharmonicity: 0.12, StrikePosition: 0.18}
-	}
 
 	defs := make([]knobDef, 0, 32)
 	vals := make([]float64, 0, 32)
@@ -84,7 +115,15 @@ func initCandidate(
 
 	// Piano group knobs.
 	if groups["piano"] {
-		addKnob(knobDef{Name: "output_gain", Min: 0.01, Max: 5.0}, float64(base.OutputGain))
+		// output_gain is score-invariant: analysis.Compare RMS-normalises both
+		// signals before it computes anything, so no value of this knob can
+		// move the score. Searching it therefore spends the eval budget on a
+		// flat dimension. When the closed-form match is active it is left out
+		// of the search entirely and solved once at the end instead, which
+		// also frees it from the [0.01, 5.0] search bounds.
+		if !matchOutputGain {
+			addKnob(knobDef{Name: "output_gain", Min: 0.01, Max: 5.0}, float64(base.OutputGain))
+		}
 		addKnob(knobDef{Name: "hammer_stiffness_scale", Min: 0.6, Max: 1.8}, float64(base.HammerStiffnessScale))
 		addKnob(knobDef{Name: "hammer_exponent_scale", Min: 0.8, Max: 1.2}, float64(base.HammerExponentScale))
 		addKnob(knobDef{Name: "hammer_damping_scale", Min: 0.6, Max: 1.8}, float64(base.HammerDampingScale))
@@ -93,9 +132,24 @@ func initCandidate(
 		addKnob(knobDef{Name: "high_freq_damping", Min: 0.0, Max: 0.6}, float64(base.HighFreqDamping))
 		addKnob(knobDef{Name: "unison_detune_scale", Min: 0.0, Max: 2.0}, float64(base.UnisonDetuneScale))
 		addKnob(knobDef{Name: "unison_crossfeed", Min: 0.0, Max: 0.005}, float64(base.UnisonCrossfeed))
-		addKnob(knobDef{Name: fmt.Sprintf("per_note.%d.loss", note), Min: 0.985, Max: 0.99995}, float64(np.Loss))
-		addKnob(knobDef{Name: fmt.Sprintf("per_note.%d.inharmonicity", note), Min: 0.0, Max: 0.6}, float64(np.Inharmonicity))
-		addKnob(knobDef{Name: fmt.Sprintf("per_note.%d.strike_position", note), Min: 0.08, Max: 0.45}, float64(np.StrikePosition))
+		for _, n := range notes {
+			np := base.PerNote[n]
+			if np == nil {
+				np = defaultNoteParams()
+			}
+			addKnob(knobDef{
+				Name: fmt.Sprintf("per_note.%d.loss", n), Min: 0.985, Max: 0.99995,
+				Note: n, NoteField: noteFieldLoss,
+			}, float64(np.Loss))
+			addKnob(knobDef{
+				Name: fmt.Sprintf("per_note.%d.inharmonicity", n), Min: 0.0, Max: 0.6,
+				Note: n, NoteField: noteFieldInharmonicity,
+			}, float64(np.Inharmonicity))
+			addKnob(knobDef{
+				Name: fmt.Sprintf("per_note.%d.strike_position", n), Min: 0.08, Max: 0.45,
+				Note: n, NoteField: noteFieldStrikePosition,
+			}, float64(np.StrikePosition))
+		}
 		addKnob(knobDef{Name: "attack_noise_level", Min: 0.0, Max: 0.5}, float64(base.AttackNoiseLevel))
 		addKnob(knobDef{Name: "attack_noise_duration_ms", Min: 0.5, Max: 8.0}, float64(base.AttackNoiseDurationMs))
 		addKnob(knobDef{Name: "attack_noise_color", Min: -12.0, Max: 0.0}, float64(base.AttackNoiseColor))
@@ -157,7 +211,6 @@ func initCandidate(
 func applyCandidate(
 	base *piano.Params,
 	sampleRate int,
-	note int,
 	baseVelocity int,
 	baseReleaseAfter float64,
 	defs []knobDef,
@@ -168,19 +221,24 @@ func applyCandidate(
 	roomCfg := irsynth.DefaultRoomConfig()
 	roomCfg.SampleRate = sampleRate
 	params := cloneParams(base)
-	if params.PerNote == nil {
-		params.PerNote = make(map[int]*piano.NoteParams)
-	}
-	np := params.PerNote[note]
-	if np == nil {
-		np = &piano.NoteParams{}
-		params.PerNote[note] = np
-	}
 	velocity := baseVelocity
 	releaseAfter := baseReleaseAfter
 
 	for i, def := range defs {
 		v := c.Vals[i]
+		if def.NoteField != noteFieldNone {
+			np := perNoteFor(params, def.Note)
+			switch def.NoteField {
+			case noteFieldLoss:
+				np.Loss = float32(v)
+			case noteFieldInharmonicity:
+				np.Inharmonicity = float32(v)
+			case noteFieldStrikePosition:
+				np.StrikePosition = float32(v)
+			case noteFieldNone:
+			}
+			continue
+		}
 		switch def.Name {
 		// Piano knobs.
 		case "output_gain":
@@ -207,12 +265,6 @@ func applyCandidate(
 			params.AttackNoiseDurationMs = float32(v)
 		case "attack_noise_color":
 			params.AttackNoiseColor = float32(v)
-		case fmt.Sprintf("per_note.%d.loss", note):
-			np.Loss = float32(v)
-		case fmt.Sprintf("per_note.%d.inharmonicity", note):
-			np.Inharmonicity = float32(v)
-		case fmt.Sprintf("per_note.%d.strike_position", note):
-			np.StrikePosition = float32(v)
 		case "render.velocity":
 			velocity = int(math.Round(v))
 		case "render.release_after":
@@ -313,4 +365,30 @@ func fromNormalized(pos []float64, defs []knobDef) candidate {
 		vals[i] = v
 	}
 	return candidate{Vals: vals}
+}
+
+// toNormalized is the inverse of fromNormalized: it maps concrete knob values
+// back into the unit hypercube the optimizer searches.
+func toNormalized(c candidate, defs []knobDef) []float64 {
+	pos := make([]float64, len(defs))
+	for i := range defs {
+		v := 0.0
+		if i < len(c.Vals) {
+			v = c.Vals[i]
+		}
+		d := defs[i]
+		x := 0.0
+		switch {
+		case d.Max == d.Min:
+			x = 0.0
+		case d.LogScale && !d.IsInt:
+			if v > 0 && d.Min > 0 && d.Max > 0 {
+				x = (math.Log(v) - math.Log(d.Min)) / (math.Log(d.Max) - math.Log(d.Min))
+			}
+		default:
+			x = (v - d.Min) / (d.Max - d.Min)
+		}
+		pos[i] = clamp(x, 0, 1)
+	}
+	return pos
 }

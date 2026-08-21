@@ -860,33 +860,7 @@ func clamp(v float64, lo float64, hi float64) float64 {
 }
 
 func sanitizeMetrics(m analysis.Metrics) analysis.Metrics {
-	if !isFiniteFloat(m.TimeRMSE) {
-		m.TimeRMSE = 1.0
-	}
-	if !isFiniteFloat(m.EnvelopeRMSEDB) {
-		m.EnvelopeRMSEDB = 60.0
-	}
-	if !isFiniteFloat(m.SpectralRMSEDB) {
-		m.SpectralRMSEDB = 60.0
-	}
-	if !isFiniteFloat(m.RefDecayDBPerS) {
-		m.RefDecayDBPerS = 0
-	}
-	if !isFiniteFloat(m.CandDecayDBPerS) {
-		m.CandDecayDBPerS = 0
-	}
-	if !isFiniteFloat(m.DecayDiffDBPerS) {
-		m.DecayDiffDBPerS = 60.0
-	}
-	if !isFiniteFloat(m.Score) {
-		m.Score = 1.0
-	}
-	m.Score = clamp(m.Score, 0, 1)
-	if !isFiniteFloat(m.Similarity) {
-		m.Similarity = 0.0
-	}
-	m.Similarity = clamp(m.Similarity, 0, 1)
-	return m
+	return m.Sanitized()
 }
 
 func isFiniteFloat(v float64) bool {
