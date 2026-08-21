@@ -322,6 +322,66 @@ fit-c4-stages time_budget="600":
         "resume=false"
     echo "Final preset: $out_dir/final.json"
 
+# Each pass restricts which knobs may move AND scores with the weighting
+# profile that describes the aspect being fitted, so the three runs cannot
+# trade one aspect against another. Scores are NOT comparable across passes -
+# each one is measured against a different profile - so the recipe ends with
+# legacy-v1 distance reports, which are the numbers that stay comparable.
+#
+# The final artifact is attack -> inharmonicity. The sustain pass runs and is
+# measured, but is deliberately NOT chained into it: it regresses the
+# comparable score until NormSpectral is recalibrated.
+
+# Per-aspect C4 fitting passes (final artifact is attack -> inharmonicity)
+fit-c4-passes time_budget="180" preset="assets/presets/fitted-c4-mayfly.json":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    time_budget_raw="{{time_budget}}"
+    time_budget="${time_budget_raw#time_budget=}"
+    preset_raw="{{preset}}"
+    preset="${preset_raw#preset=}"
+    out_dir="out/passes"
+    mkdir -p "$out_dir"
+    # The attack window ends well before the reference's early decay does, so
+    # only onset material is scored.
+    echo "=== Pass 1/3: attack (hammer + attack noise, profile attack-v1) ==="
+    just fit-c4 \
+        "preset=$preset" \
+        "output_preset=$out_dir/attack.json" \
+        "optimize=piano,mix" \
+        "time_budget=$time_budget" \
+        "resume=false" \
+        "extra=--pass attack --pass-window 0:0.35"
+    # No window: decay-v1 weights the segmented decay metric at 0.55, and its
+    # late segment needs signal out to 5 s. Cutting the tail off would remove
+    # the very thing the pass is fitting.
+    echo "=== Pass 2/3: sustain (loss + damping, profile decay-v1) ==="
+    just fit-c4 \
+        "preset=$out_dir/attack.json" \
+        "output_preset=$out_dir/sustain.json" \
+        "optimize=piano,mix" \
+        "time_budget=$time_budget" \
+        "resume=false" \
+        "extra=--pass sustain"
+    # Chained from the ATTACK preset, not the sustain one. The sustain pass
+    # regresses the comparable score until NormSpectral is recalibrated (see
+    # docs/optimization-workflow.md), so it is measured above and then left out
+    # of the line that produces the final artifact.
+    echo "=== Pass 3/3: inharmonicity (dispersion + strike position, profile inharmonicity-v1) ==="
+    just fit-c4 \
+        "preset=$out_dir/attack.json" \
+        "output_preset=$out_dir/inharmonicity.json" \
+        "optimize=piano,mix" \
+        "time_budget=$time_budget" \
+        "resume=false" \
+        "extra=--pass inharmonicity --pass-window 0.2:2.0"
+    # distance-c4 routes its arguments positionally, so the reference has to be
+    # named even though it is the default.
+    echo "=== Legacy-v1 distance of the sustain pass (measured, NOT chained) ==="
+    just distance-c4 "reference/c4.wav" "$out_dir/sustain.json" ""
+    echo "=== Legacy-v1 distance of attack -> inharmonicity (the final artifact) ==="
+    just distance-c4 "reference/c4.wav" "$out_dir/inharmonicity.json" "$out_dir/inharmonicity.wav"
+
 fix:
     just lint-fix
     just fmt

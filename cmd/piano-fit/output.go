@@ -36,12 +36,16 @@ type runReport struct {
 	// Optional fields used by multi-note, per-aspect and polish runs. They are
 	// omitted when unset so existing readers and existing report files stay
 	// valid.
-	Notes          []int        `json:"notes,omitempty"`
-	PerNote        []noteReport `json:"per_note,omitempty"`
-	Aggregate      string       `json:"aggregate,omitempty"`
-	Pass           string       `json:"pass,omitempty"`
-	PassWindow     *windowSpec  `json:"pass_window,omitempty"`
-	RendersPerEval int          `json:"renders_per_eval,omitempty"`
+	Notes      []int        `json:"notes,omitempty"`
+	PerNote    []noteReport `json:"per_note,omitempty"`
+	Aggregate  string       `json:"aggregate,omitempty"`
+	Pass       string       `json:"pass,omitempty"`
+	PassWindow *windowSpec  `json:"pass_window,omitempty"`
+	// ScoreProfile names the analysis weighting profile best_score was
+	// produced with. Scores from different profiles are not comparable, so an
+	// unlabelled report is a legacy-v1 report.
+	ScoreProfile   string `json:"score_profile,omitempty"`
+	RendersPerEval int    `json:"renders_per_eval,omitempty"`
 
 	// Polish carries the deterministic polish-stage summary, when it ran.
 	Polish *polishSummary `json:"polish,omitempty"`
@@ -147,6 +151,17 @@ func writeOutputs(req outputRequest) error {
 	if pass == passNone {
 		pass = ""
 	}
+	// The profile is derived from the metrics rather than passed in, so that
+	// checkpoint writes cannot forget it: an interrupted attack-v1 run must not
+	// leave behind a report that reads as legacy-v1. CompareWithOptions always
+	// stamps ScoreProfile, so every scored candidate carries its own label.
+	//
+	// A legacy-v1 report is what every existing report already is, so leaving
+	// the field out keeps new reports byte-comparable with old ones.
+	scoreProfile := req.bestMetrics.ScoreProfile
+	if scoreProfile == analysis.ProfileLegacyV1 {
+		scoreProfile = ""
+	}
 
 	rep := runReport{
 		ReferencePath:   req.referencePath,
@@ -171,6 +186,7 @@ func writeOutputs(req outputRequest) error {
 		Aggregate:       aggregate,
 		Pass:            pass,
 		PassWindow:      req.passWindow,
+		ScoreProfile:    scoreProfile,
 		RendersPerEval:  rendersPerEval,
 
 		Polish:            req.polish,

@@ -94,9 +94,13 @@ func parseWindow(raw string) (windowSpec, error) {
 // A pass is orthogonal to --optimize: groups are additive knob sets, a pass is
 // a restriction applied on top of whatever the groups produced.
 type passSpec struct {
-	Name   string
-	Allow  []string
-	Window windowSpec
+	Name  string
+	Allow []string
+	// Profile is the analysis weighting profile the pass scores with. Empty
+	// means the legacy profile, i.e. the score every tracked report was
+	// produced with.
+	Profile string
+	Window  windowSpec
 }
 
 // isNone reports whether the pass leaves the run unrestricted.
@@ -110,7 +114,7 @@ func parsePass(raw string) (passSpec, error) {
 	case "", passNone:
 		return passSpec{Name: passNone}, nil
 	case passAttack:
-		return passSpec{Name: passAttack, Allow: []string{
+		return passSpec{Name: passAttack, Profile: analysis.ProfileAttackV1, Allow: []string{
 			"hammer_stiffness_scale",
 			"hammer_exponent_scale",
 			"hammer_damping_scale",
@@ -122,7 +126,7 @@ func parsePass(raw string) (passSpec, error) {
 			"render.velocity",
 		}}, nil
 	case passSustain:
-		return passSpec{Name: passSustain, Allow: []string{
+		return passSpec{Name: passSustain, Profile: analysis.ProfileDecayV1, Allow: []string{
 			"per_note.*.loss",
 			"high_freq_damping",
 			"unison_detune_scale",
@@ -130,7 +134,7 @@ func parsePass(raw string) (passSpec, error) {
 			"render.release_after",
 		}}, nil
 	case passInharmonicity:
-		return passSpec{Name: passInharmonicity, Allow: []string{
+		return passSpec{Name: passInharmonicity, Profile: analysis.ProfileInharmonicityV1, Allow: []string{
 			"per_note.*.inharmonicity",
 			"per_note.*.strike_position",
 			"unison_detune_scale",
@@ -201,28 +205,61 @@ func filterKnobsForPass(defs []knobDef, c candidate, spec passSpec) ([]knobDef, 
 	return outDefs, candidate{Vals: outVals}
 }
 
-// passScorer returns the metric used while a pass is active, or nil for an
-// unrestricted run (which leaves optimizationConfig.score on analysis.Compare).
+// withProfile overrides the pass's weighting profile. An empty name keeps the
+// pass default; an unknown name is an error rather than a silent fallback,
+// because scoring a fit with the wrong profile produces a plausible-looking
+// number that is not comparable to anything.
+func (s passSpec) withProfile(raw string) (passSpec, error) {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return s, nil
+	}
+	if _, err := analysis.WeightsForProfile(raw); err != nil {
+		return s, err
+	}
+	s.Profile = raw
+	return s, nil
+}
+
+// profileName is the profile the pass actually scores with.
+func (s passSpec) profileName() string {
+	if s.Profile == "" {
+		return analysis.ProfileLegacyV1
+	}
+	return s.Profile
+}
+
+// passScorer returns the metric used while a pass is active, or nil when the
+// run is unrestricted, unwindowed and scored with the legacy profile (which
+// leaves optimizationConfig.score on its own default).
 //
-// This closure is the single seam for the metric emphasis of a pass. Swapping
-// analysis.Compare for analysis.CompareWithWeights and a named profile is a
-// one-line change here.
+// This closure is the metric emphasis of a pass: the knob allowlist decides
+// what may move, the profile decides what "better" means. Fitting hammer
+// settings against a score dominated by full-signal spectral RMSE would let
+// the optimizer trade attack accuracy for tail accuracy, which is exactly what
+// the pass exists to prevent.
 //
-// NOTE: a windowed compare slices BOTH signals first, so analysis.Compare
+// NOTE: a windowed compare slices BOTH signals first, so the comparison
 // re-runs trimLeadingSilence, normalizeRMS and lag estimation inside the
 // window. Windowed scores are therefore NOT comparable to full-signal scores.
-func passScorer(spec passSpec) scorer {
-	if spec.isNone() {
-		return nil
+func passScorer(spec passSpec) (scorer, error) {
+	profile := spec.profileName()
+	if spec.isNone() && spec.Window.isZero() && profile == analysis.ProfileLegacyV1 {
+		return nil, nil
+	}
+	weights, err := analysis.WeightsForProfile(profile)
+	if err != nil {
+		return nil, err
 	}
 	window := spec.Window
-	return func(reference, cand []float64, sampleRate int) analysis.Metrics {
-		return analysis.Compare(
+	return func(reference, cand []float64, sampleRate, midiNote int) analysis.Metrics {
+		return analysis.CompareWithOptions(
 			window.slice(reference, sampleRate),
 			window.slice(cand, sampleRate),
 			sampleRate,
+			analysis.Options{Weights: weights, MIDINote: midiNote},
 		)
-	}
+	}, nil
 }
 
 // seedRenderControls reads render.velocity and render.release_after out of a

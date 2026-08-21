@@ -107,14 +107,35 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         `--match-output-gain` (default on) solves it analytically after the
         search instead, and it is deliberately excluded from the polish knobs.
 - [ ] Add physically-meaningful fitting passes for note parameters
-      (harness landed as `--pass none|attack|sustain|inharmonicity` with
-      `--pass-window`, which restricts the movable knobs and optionally windows
-      the compare; the per-aspect weighting profiles exist but `passScorer` still
-      scores with `legacy-v1`, and none of the three fits has actually been run
-      to convergence yet)
-  - [ ] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
+      (`--pass none|attack|sustain|inharmonicity` restricts the movable knobs,
+      optionally windows the compare via `--pass-window`, **and** now scores with
+      the profile that describes the aspect — `attack-v1`, `decay-v1`,
+      `inharmonicity-v1`. `--profile` overrides that and works with `--pass none`
+      too; the profile is recorded as `score_profile` in the report. `just
+    fit-c4-passes` runs all three and ends with `legacy-v1` distance reports,
+      the only numbers comparable across passes; its final artifact chains
+      `attack` → `inharmonicity` and leaves the regressing `sustain` pass out.
+      Measurements below.)
+  - [x] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
+        (180 s from `fitted-c4-mayfly.json`, `--pass-window 0:0.35`: legacy score
+        `0.5194` → `0.5117`, attack centroid error `0.440` → `0.084` octaves. The
+        one pass that is a net win today.)
   - [ ] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
+        (**runs and converges, but regresses the comparable score — do not chain
+        it into a shipping preset yet.** It improves exactly what `decay-v1`
+        weights, segmented decay RMSE `14.58` → `12.84` dB/s, and pays with
+        spectral RMSE `58.0` → `66.9` dB and partial-level RMSE `14.0` → `27.4` dB,
+        for a legacy score of `0.5581`. Cause is the saturated `NormSpectral`
+        below, not the pass machinery: at both 58 dB and 67 dB the spectral term
+        normalises to exactly 1.0, so it is a constant in `decay-v1` and exerts no
+        restoring force, while partial level carries weight 0 there. Blocked on
+        the `NormSpectral` recalibration.)
   - [ ] Inharmonicity pass: fit dispersion/inharmonicity via partial-frequency error
+        (runs; score-neutral from the attack-pass preset, `0.5117` → `0.5121`,
+        partial-frequency RMSE `34.9` → `34.5` cents. Its three knobs have too
+        little leverage at C4 to close a 35-cent gap — the knob bound/scaling
+        issue recorded in the Phase 8B design notes still needs addressing before
+        this can be ticked.)
 - [x] Strengthen distance metrics for piano realism
       (`Compare` stays **bit-identical**: the new metrics carry weight 0 in the
       default `legacy-v1` profile. Named profiles `balanced-v2`, `attack-v1`,
@@ -168,6 +189,11 @@ largest-weight component of `legacy-v1` provides the optimizer no gradient at
 all. The gate checks the raw dB value, which is still a real regression signal.
 Re-calibrating `NormSpectral` to ~70-80 rewrites every recorded score and so
 belongs in a separate, deliberately re-baselined change.
+
+This is no longer only a missed opportunity: the sustain pass above degraded
+spectral RMSE by 9 dB and neither its own profile nor the legacy gate could see
+it, because a saturated component is a constant. **Recalibrating `NormSpectral`
+is now a prerequisite for the sustain pass, not a nice-to-have.**
 
 ---
 
