@@ -2,6 +2,23 @@ package piano
 
 import dspcore "github.com/cwbudde/algo-dsp/dsp/core"
 
+const (
+	// delayHeadroom is how many slots the delay line is allocated beyond the
+	// integer part of the loop delay. readDelayFractional taps at
+	// writePos-intDelay and writePos-intDelay-1, which modulo the buffer length
+	// are the slots delayHeadroom and delayHeadroom-1 *ahead* of the write
+	// pointer, so the headroom is exactly the window in which freshly injected
+	// energy is still readable. It must be at least 2 for the two taps to fit.
+	delayHeadroom = 4
+
+	// minIntDelay is the smallest integer delay the buffer is sized for. It
+	// keeps a few injectable slots above delayHeadroom even for a fundamental
+	// far above anything the keyboard can produce (MIDI 108 is 11.5 samples at
+	// 48 kHz, so this guard is unreachable in practice and exists so that an
+	// out-of-range f0 degrades instead of collapsing).
+	minIntDelay = 4
+)
+
 // StringWaveguide implements the digital waveguide string model.
 type StringWaveguide struct {
 	sampleRate  float32
@@ -40,12 +57,46 @@ func NewStringWaveguide(sampleRate int, f0 float32) *StringWaveguide {
 
 	s.delayLength = s.sampleRate / s.f0
 	intDelay := int(s.delayLength)
-	if intDelay < 2 {
-		intDelay = 2
+	if intDelay < minIntDelay {
+		intDelay = minIntDelay
 	}
-	s.delayLine = make([]float32, intDelay+4)
+	s.delayLine = make([]float32, intDelay+delayHeadroom)
 
 	return s
+}
+
+// injectionOffset maps a fractional string position [0,1] onto a delay-line
+// offset measured forward from the write pointer, clamped to the range that is
+// actually observable.
+//
+// The buffer is delayHeadroom slots longer than the integer delay, so the two
+// interpolating taps of readDelayFractional sit at writePos+delayHeadroom and
+// writePos+delayHeadroom-1 (modulo the buffer length). Energy written at offset
+// k is therefore first read delayHeadroom-k samples later and destroyed by the
+// write pointer k samples later. At k == delayHeadroom-1 only the fractional
+// tap ever sees it, so the string receives a frac-weighted fraction of the
+// force; at k <= delayHeadroom-2 it is overwritten before either tap reads it
+// and the injection is silently discarded. That was the cause of
+// the bit-exact silence at MIDI 106-108, whose delay lines are only 16, 16 and
+// 15 slots long: a strike position of 0.18 lands on offset 2.
+//
+// Clamping into [delayHeadroom, len-1] leaves every offset that was already
+// observable bit-identical and only moves the ones that were being thrown away.
+func (s *StringWaveguide) injectionOffset(strikePos float32) int {
+	if strikePos < 0.01 {
+		strikePos = 0.01
+	}
+	if strikePos > 0.99 {
+		strikePos = 0.99
+	}
+	off := int(float32(len(s.delayLine)) * strikePos)
+	if off < delayHeadroom {
+		off = delayHeadroom
+	}
+	if off > len(s.delayLine)-1 {
+		off = len(s.delayLine) - 1
+	}
+	return off
 }
 
 // Process renders one sample from the string and advances the simulation.
@@ -67,14 +118,7 @@ func (s *StringWaveguide) Excite(force float32) {
 
 // ExciteAtPosition applies an excitation at a fractional string position [0,1].
 func (s *StringWaveguide) ExciteAtPosition(force float32, strikePos float32) {
-	if strikePos < 0.01 {
-		strikePos = 0.01
-	}
-	if strikePos > 0.99 {
-		strikePos = 0.99
-	}
-
-	basePos := (s.writePos + int(float32(len(s.delayLine))*strikePos)) % len(s.delayLine)
+	basePos := (s.writePos + s.injectionOffset(strikePos)) % len(s.delayLine)
 	width := int(float32(len(s.delayLine)) * (0.04 + 0.22*strikePos))
 	if width < 4 {
 		width = 4
@@ -92,13 +136,7 @@ func (s *StringWaveguide) ExciteAtPosition(force float32, strikePos float32) {
 
 // InjectForceAtPosition injects a single-sample force at a fractional string position.
 func (s *StringWaveguide) InjectForceAtPosition(force float32, strikePos float32) {
-	if strikePos < 0.01 {
-		strikePos = 0.01
-	}
-	if strikePos > 0.99 {
-		strikePos = 0.99
-	}
-	pos := (s.writePos + int(float32(len(s.delayLine))*strikePos)) % len(s.delayLine)
+	pos := (s.writePos + s.injectionOffset(strikePos)) % len(s.delayLine)
 	s.delayLine[pos] += force
 }
 
