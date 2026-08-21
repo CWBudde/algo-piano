@@ -85,8 +85,7 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
 - [x] First optimization surface exposed: preset-controlled hammer influence,
       unison detune/crossfeed and IR wet/dry/gain scales, with the knob groups,
       bounds and staged optimization order now documented in
-      `docs/optimization-workflow.md` and
-      `docs/plans/2026-02-15-unified-piano-fit-design.md`.
+      `docs/optimization-workflow.md`.
 - [x] Add render-control fitting loop (before touching physical params)
   - [x] Fast inner loop in place: `cmd/piano-fit --optimize=piano,mix`
         (time-budgeted, checkpointed best preset/report), `just fit-c4`
@@ -199,11 +198,12 @@ is now a prerequisite for the sustain pass, not a nice-to-have.**
 
 ## Phase 8C — Slow loop: IR-shape optimization with `ir-synth` + Mayfly
 
-- [x] Preparation, tool scope and IO contract locked in
-      `docs/plans/2026-02-15-unified-piano-fit-design.md`, including the optimization
-      vector over `irsynth.Config` (`modes`, `brightness`, `stereo-width`,
-      `direct`, `early`, `late`, `low-decay`, `high-decay`) and the
-      checkpoint/report/resume behaviour for long runs.
+- [x] Preparation, tool scope and IO contract locked in, including the
+      optimization vector over `irsynth.Config` (`modes`, `brightness`,
+      `stereo-width`, `direct`, `early`, `late`, `low-decay`, `high-decay`) and
+      the checkpoint/report/resume behaviour for long runs. The design note that
+      recorded this has been removed as superseded; `cmd/piano-fit-ir` and
+      `docs/optimization-workflow.md` are the current reference.
 - [x] Outer-loop IR fitting implemented as `cmd/piano-fit-ir`: candidate IRs via
       `irsynth.GenerateStereo`, scored against `reference/c4.wav` through
       `analysis.Compare`, optimized over the full parameter vector above.
@@ -271,8 +271,13 @@ This phase is split into execution subphases to make progress and ownership expl
         (`piano/sympathetic_test.go`, DWG and modal cores)
   - [x] hammer contact ends while ringing continues
         (`piano/hammer_ringing_test.go`, both asserted in one render)
-  - [ ] `coupling_mode` transitions (`off/static/physical`) behave as expected
-  - [ ] detune and distance penalties measurably reduce coupling according to model
+  - [x] `coupling_mode` transitions (`off/static/physical`) behave as expected
+        (`piano/coupling_behaviour_test.go`, measured target energy per mode plus a
+        mid-render `SetCouplingMode` switch, DWG and modal cores)
+  - [x] detune and distance penalties measurably reduce coupling according to model
+        (`piano/coupling_behaviour_test.go`, monotone sweeps of
+        `CouplingDetuneSigmaCents`, `CouplingDistanceExponent` and
+        `CouplingMaxNeighbors`)
 - [ ] Add regression tests for API compatibility and long-render stability (no NaN/Inf).
 - [ ] Add benchmarks:
   - [x] idle full-string-bank cost (`BenchmarkStringBankIdle`)

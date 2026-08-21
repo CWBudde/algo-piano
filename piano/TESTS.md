@@ -27,6 +27,14 @@ This maps each split source file to its direct and indirect test coverage.
 - `TestStaticCouplingSourceStringCountScalesOutgoingGain` (`ringing_test.go`)
 - `TestStringBankSetCouplingModeTransitions` (`ringing_test.go`)
 - `TestPianoSetCouplingModeUpdatesEngineState` (`ringing_test.go`)
+- `TestCouplingModeChangesSympatheticEnergyDWG` (`coupling_behaviour_test.go`)
+- `TestCouplingModeChangesSympatheticEnergyModal` (`coupling_behaviour_test.go`)
+- `TestPhysicalCouplingEnergyFollowsRelatedness` (`coupling_behaviour_test.go`) — DWG and modal
+- `TestRuntimeCouplingModeSwitchTakesEffectMidRender` (`coupling_behaviour_test.go`)
+- `TestCouplingDetuneSigmaReducesInjectedEnergy` (`coupling_behaviour_test.go`)
+- `TestCouplingDistanceExponentReducesInjectedEnergy` (`coupling_behaviour_test.go`)
+- `TestPhysicalCouplingEdgeSetFollowsNeighborCap` (`coupling_behaviour_test.go`)
+- `TestPhysicalCouplingEdgeSetShrinksWithTighterDetunePenalty` (`coupling_behaviour_test.go`)
 - `TestPianoKeyDownWithoutStrikeIsSilentAndUndamped` (`ringing_test.go`)
 - `TestStringModelDefaultsToDWG` (`ringing_test.go`)
 - `TestStringBankModalModelSelectable` (`ringing_test.go`)
@@ -46,6 +54,8 @@ This maps each split source file to its direct and indirect test coverage.
 - `TestPianoSetStringModelSwitchesCore` (`ringing_test.go`)
 - `TestModalPartialsParameterControlsModeCount` (`ringing_test.go`)
 - `TestModalExcitationParameterScalesOutputEnergy` (`ringing_test.go`)
+- `TestCouplingModeChangesSympatheticEnergyModal` (`coupling_behaviour_test.go`)
+- `TestPhysicalCouplingEnergyFollowsRelatedness` (`coupling_behaviour_test.go`) — modal subtest
 - `TestModalSoAOffsetsAreConsistent` (`modal_parity_test.go`)
 - `TestModalFallbackSingleModeLayout` (`modal_parity_test.go`)
 - `TestModalLongRenderIsFiniteAcrossKernels` (`modal_parity_test.go`)
@@ -99,6 +109,9 @@ assert equality with no tolerance.
 
 ## `params.go`
 
+- `TestCouplingDetuneSigmaReducesInjectedEnergy` (`coupling_behaviour_test.go`) — `CouplingDetuneSigmaCents`
+- `TestCouplingDistanceExponentReducesInjectedEnergy` (`coupling_behaviour_test.go`) — `CouplingDistanceExponent`
+- `TestPhysicalCouplingEdgeSetFollowsNeighborCap` (`coupling_behaviour_test.go`) — `CouplingMaxNeighbors`
 - Covered indirectly by all tests that call `NewDefaultParams`, especially:
   - `TestLongRenderHasNoNaNOrInf` (`integration_test.go`)
   - `TestSoftPedalReducesAttackBrightness` (`pedals_test.go`)
