@@ -48,11 +48,15 @@ const (
 // Normalization scales for the two halves of the attack metric.
 const (
 	// NormAttackRise maps a rise-time difference in milliseconds onto [0,1].
-	// The tracked C4 reference rises in roughly 58 ms, so 20 ms is a large but
-	// not absurd miss.
+	// Frozen at the legacy value; CalibratedNorms raises it to 50 ms. The
+	// tracked C4 reference rises in 25.5 ms (measured 2026-08-21 - an earlier
+	// comment here claimed 58 ms, which was never right), and every candidate in
+	// the repo rises in about 1 ms, so the difference sits at roughly 24 ms and
+	// saturates this 20 ms scale outright.
 	NormAttackRise = 20.0
 	// NormAttackCentroid maps the centroid trajectory error in octaves onto
-	// [0,1]. Half an octave apart is a plainly different onset colour.
+	// [0,1]. Frozen at the legacy value; CalibratedNorms raises it to 1.5
+	// octaves, since the observed population reaches 1.40.
 	NormAttackCentroid = 0.5
 )
 

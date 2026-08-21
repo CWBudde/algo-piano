@@ -60,10 +60,11 @@ type Weights struct {
 //
 // Weights.Norms is the mechanism for exactly that: a profile names the scales
 // it recalibrates and inherits the rest, so a calibrated profile and the frozen
-// legacy one can coexist. No registered profile sets it yet - picking the new
-// values needs a measurement pass over the tracked preset population, which is
-// a separate change - so today every profile still resolves to LegacyNorms and
-// scores exactly as before.
+// legacy one can coexist. legacy-v1 uses LegacyNorms and keeps saturating;
+// every other registered profile uses CalibratedNorms, whose values were picked
+// from the measured spread of the tracked preset population rather than
+// guessed. TestCalibratedNormsCoverObservedPopulation replays the worst
+// observed value of each metric and fails if any weighted component saturates.
 //
 // Profile names.
 const (
@@ -85,6 +86,7 @@ var profileRegistry = map[string]Weights{
 	},
 	ProfileBalancedV2: {
 		Name:         ProfileBalancedV2,
+		Norms:        CalibratedNorms(),
 		Time:         0.18,
 		Envelope:     0.16,
 		Spectral:     0.20,
@@ -97,6 +99,7 @@ var profileRegistry = map[string]Weights{
 	},
 	ProfileAttackV1: {
 		Name:         ProfileAttackV1,
+		Norms:        CalibratedNorms(),
 		Envelope:     0.05,
 		Spectral:     0.20,
 		PartialLevel: 0.10,
@@ -105,6 +108,7 @@ var profileRegistry = map[string]Weights{
 	},
 	ProfileDecayV1: {
 		Name:         ProfileDecayV1,
+		Norms:        CalibratedNorms(),
 		Envelope:     0.20,
 		Spectral:     0.10,
 		Decay:        0.15,
@@ -112,6 +116,7 @@ var profileRegistry = map[string]Weights{
 	},
 	ProfileInharmonicityV1: {
 		Name:         ProfileInharmonicityV1,
+		Norms:        CalibratedNorms(),
 		Spectral:     0.10,
 		PartialLevel: 0.10,
 		PartialFreq:  0.70,

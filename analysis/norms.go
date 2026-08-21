@@ -44,6 +44,53 @@ func LegacyNorms() Norms {
 	}
 }
 
+// CalibratedNorms returns scales chosen from the observed spread of the tracked
+// preset population, rather than from the frozen legacy guesses. Measured
+// 2026-08-21 against reference/c4.wav, note 60, velocity 118, release-after
+// 3.5 s, 48 kHz, over the seven real presets in assets/presets plus the three
+// per-aspect pass outputs in out/passes. assets/presets/modal-calibrated.json is
+// excluded as degenerate: it renders at 172 dB spectral RMSE and 883 dB/s decay
+// difference, which is a broken preset rather than a point on the distribution.
+//
+// The rule each value follows: a norm must be large enough that the worst
+// observed candidate does not saturate, and small enough that the population
+// still spans a useful fraction of [0,1]. A saturated component contributes a
+// constant and therefore no gradient; an oversized one contributes a sliver of
+// its nominal weight.
+//
+//	component       observed          legacy -> calibrated   normalized span
+//	spectral        51.5 - 71.3 dB    30.0   -> 80.0         0.64 - 0.89
+//	decay            0.13 - 14.7 dB/s 40.0   -> 15.0         0.01 - 0.98
+//	partial_level   10.6 - 27.4 dB    12.0   -> 35.0         0.30 - 0.78
+//	partial_freq    34.8 - 48.9 cents 50.0   -> 70.0         0.50 - 0.70
+//	attack_rise     24.1 - 24.5 ms    20.0   -> 50.0         ~0.49
+//	attack_centroid  0.08 - 1.40 oct   0.5   ->  1.5         0.06 - 0.93
+//	time             0.11 - 0.17       0.25  (unchanged)     0.43 - 0.67
+//	envelope         8.4 - 24.3 dB    30.0   (unchanged)     0.28 - 0.81
+//	tristimulus      0.15 - 0.40       0.5   (unchanged)     0.30 - 0.80
+//	decay_segment   12.8 - 23.2 dB/s  30.0   (unchanged)     0.43 - 0.77
+//
+// Caveat on attack_rise: raising its norm stops it saturating, but the metric is
+// close to constant across the whole population anyway (24.1 - 24.5 ms), because
+// every candidate rises in about 1 ms against the reference's 25.5 ms. That is a
+// model deficiency, not a normalization one - the synthesized onset is far too
+// abrupt - and no choice of norm creates a gradient the raw metric does not have.
+// The centroid half of the composite is what currently carries the attack term.
+func CalibratedNorms() Norms {
+	return Norms{
+		Time:           NormTime,
+		Envelope:       NormEnvelope,
+		Spectral:       80.0,
+		Decay:          15.0,
+		PartialLevel:   35.0,
+		PartialFreq:    70.0,
+		Tristimulus:    NormTristimulus,
+		AttackRise:     50.0,
+		AttackCentroid: 1.5,
+		DecaySegment:   NormDecaySegment,
+	}
+}
+
 // resolve fills every unset field from LegacyNorms. A norm is a divisor, so a
 // zero (or negative, or non-finite) value is never a meaningful setting -
 // treating it as "unset" lets a profile name only the scales it changes and
