@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/cwbudde/algo-piano/piano"
@@ -124,7 +125,7 @@ func knobNameSet(defs []knobDef) map[string]bool {
 func TestInitCandidatePianoMixOnly(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true, "mix": true}
-	defs, cand := initCandidate(base, 48000, 60, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
 
 	// piano: 17 knobs (incl attack noise + high_freq_damping), legacy mix: 3 knobs = 20 total
 	if len(defs) != 20 {
@@ -157,7 +158,7 @@ func TestInitCandidatePianoMixDualIR(t *testing.T) {
 	base.BodyIRWavPath = "body.wav"
 	base.RoomIRWavPath = "room.wav"
 	groups := map[string]bool{"piano": true, "mix": true}
-	defs, cand := initCandidate(base, 48000, 60, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
 
 	// piano: 17 knobs (incl attack noise + high_freq_damping), dual-IR mix: 4 knobs = 21 total
 	if len(defs) != 21 {
@@ -181,7 +182,7 @@ func TestInitCandidatePianoMixDualIR(t *testing.T) {
 func TestInitCandidateBodyIRMix(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"body-ir": true, "mix": true}
-	defs, cand := initCandidate(base, 48000, 60, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
 
 	// body-ir: 11 knobs (plate_ratio, stiffness_ratio, mode_warp, 2-way decay, crossover, fadeout, etc), dual-IR mix: 4 knobs = 15 total
 	if len(defs) != 15 {
@@ -205,7 +206,7 @@ func TestInitCandidateBodyIRMix(t *testing.T) {
 func TestInitCandidateFullJoint(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true, "body-ir": true, "room-ir": true, "mix": true}
-	defs, cand := initCandidate(base, 48000, 60, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
 
 	// piano: 17, body-ir: 11 (Kirchhoff plate + mode_warp + 2-way decay + fadeout), room-ir: 8 (incl fadeout), dual-IR mix: 4 = 40 total
 	if len(defs) != 40 {
@@ -235,7 +236,7 @@ func TestInitCandidateFullJoint(t *testing.T) {
 func TestApplyCandidatePianoKnobs(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true, "mix": true}
-	defs, _ := initCandidate(base, 48000, 60, 118, 3.5, groups)
+	defs, _ := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
 
 	// Build candidate with specific values for piano knobs.
 	vals := make([]float64, len(defs))
@@ -260,7 +261,7 @@ func TestApplyCandidatePianoKnobs(t *testing.T) {
 		}
 	}
 
-	_, params, velocity, releaseAfter := applyCandidate(base, 48000, 60, 118, 3.5, defs, candidate{Vals: vals})
+	_, params, velocity, releaseAfter := applyCandidate(base, 48000, 118, 3.5, defs, candidate{Vals: vals})
 
 	if params.OutputGain != float32(1.1) {
 		t.Fatalf("OutputGain = %v, want 1.1", params.OutputGain)
@@ -287,7 +288,7 @@ func TestApplyCandidateDualIRMix(t *testing.T) {
 	base.BodyIRWavPath = "body.wav"
 	base.RoomIRWavPath = "room.wav"
 	groups := map[string]bool{"piano": true, "mix": true}
-	defs, _ := initCandidate(base, 48000, 60, 118, 3.5, groups)
+	defs, _ := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
 
 	vals := make([]float64, len(defs))
 	for i, d := range defs {
@@ -304,7 +305,7 @@ func TestApplyCandidateDualIRMix(t *testing.T) {
 		}
 	}
 
-	_, params, _, _ := applyCandidate(base, 48000, 60, 118, 3.5, defs, candidate{Vals: vals})
+	_, params, _, _ := applyCandidate(base, 48000, 118, 3.5, defs, candidate{Vals: vals})
 	if params.BodyDryMix != float32(0.9) {
 		t.Fatalf("BodyDryMix = %v, want 0.9", params.BodyDryMix)
 	}
@@ -316,5 +317,132 @@ func TestApplyCandidateDualIRMix(t *testing.T) {
 	}
 	if params.RoomGain != float32(1.2) {
 		t.Fatalf("RoomGain = %v, want 1.2", params.RoomGain)
+	}
+}
+
+func TestInitCandidateMultiNoteKnobCounts(t *testing.T) {
+	base := piano.NewDefaultParams()
+	groups := map[string]bool{"piano": true, "mix": true}
+	notes := []int{48, 60, 72}
+	defs, cand := initCandidate(base, 48000, notes, 118, 3.5, groups)
+
+	// 14 shared piano knobs + 3 per-note knobs x 3 notes + 3 legacy mix knobs.
+	if len(defs) != 26 {
+		t.Fatalf("defs len = %d, want 26", len(defs))
+	}
+	if len(cand.Vals) != len(defs) {
+		t.Fatalf("vals len = %d, want %d", len(cand.Vals), len(defs))
+	}
+
+	names := knobNameSet(defs)
+	for _, n := range notes {
+		for _, suffix := range []string{"loss", "inharmonicity", "strike_position"} {
+			name := fmt.Sprintf("per_note.%d.%s", n, suffix)
+			if !names[name] {
+				t.Fatalf("expected knob %q", name)
+			}
+		}
+	}
+
+	perNoteCount := 0
+	for _, d := range defs {
+		if d.NoteField == noteFieldNone {
+			continue
+		}
+		perNoteCount++
+		if d.Note != 48 && d.Note != 60 && d.Note != 72 {
+			t.Fatalf("knob %q has unexpected note %d", d.Name, d.Note)
+		}
+	}
+	if perNoteCount != 9 {
+		t.Fatalf("per-note knob count = %d, want 9", perNoteCount)
+	}
+}
+
+func TestApplyCandidateMultiNotePerNote(t *testing.T) {
+	base := piano.NewDefaultParams()
+	groups := map[string]bool{"piano": true}
+	notes := []int{48, 60, 72}
+	defs, _ := initCandidate(base, 48000, notes, 118, 3.5, groups)
+
+	want := map[int][3]float64{
+		48: {0.9900, 0.05, 0.10},
+		60: {0.9950, 0.20, 0.20},
+		72: {0.9990, 0.40, 0.30},
+	}
+
+	vals := make([]float64, len(defs))
+	for i, d := range defs {
+		vals[i] = (d.Min + d.Max) / 2
+		if d.NoteField == noteFieldNone {
+			continue
+		}
+		w := want[d.Note]
+		switch d.NoteField {
+		case noteFieldLoss:
+			vals[i] = w[0]
+		case noteFieldInharmonicity:
+			vals[i] = w[1]
+		case noteFieldStrikePosition:
+			vals[i] = w[2]
+		case noteFieldNone:
+		}
+	}
+
+	_, params, _, _ := applyCandidate(base, 48000, 118, 3.5, defs, candidate{Vals: vals})
+	for n, w := range want {
+		np := params.PerNote[n]
+		if np == nil {
+			t.Fatalf("PerNote[%d] missing", n)
+		}
+		if np.Loss != float32(w[0]) {
+			t.Fatalf("PerNote[%d].Loss = %v, want %v", n, np.Loss, float32(w[0]))
+		}
+		if np.Inharmonicity != float32(w[1]) {
+			t.Fatalf("PerNote[%d].Inharmonicity = %v, want %v", n, np.Inharmonicity, float32(w[1]))
+		}
+		if np.StrikePosition != float32(w[2]) {
+			t.Fatalf("PerNote[%d].StrikePosition = %v, want %v", n, np.StrikePosition, float32(w[2]))
+		}
+	}
+}
+
+func TestToNormalizedRoundTrip(t *testing.T) {
+	defs := []knobDef{
+		{Name: "linear", Min: 0.0, Max: 2.0},
+		{Name: "linear_offset", Min: -12.0, Max: 0.0},
+		{Name: "log", Min: 3.0, Max: 25.0, LogScale: true},
+		{Name: "log_small", Min: 0.001, Max: 0.15, LogScale: true},
+		{Name: "int", Min: 40, Max: 127, IsInt: true},
+		{Name: "degenerate", Min: 1.0, Max: 1.0},
+	}
+
+	for _, pos := range [][]float64{
+		{0, 0, 0, 0, 0, 0},
+		{1, 1, 1, 1, 1, 1},
+		{0.25, 0.5, 0.75, 0.125, 0.5, 0.5},
+		{0.9, 0.1, 0.33, 0.66, 0.8, 0.0},
+	} {
+		cand := fromNormalized(pos, defs)
+		back := toNormalized(cand, defs)
+		round := fromNormalized(back, defs)
+		for i := range defs {
+			got, want := round.Vals[i], cand.Vals[i]
+			tol := math.Abs(want) * 1e-9
+			if tol < 1e-9 {
+				tol = 1e-9
+			}
+			if math.Abs(got-want) > tol {
+				t.Fatalf("knob %q round-trip = %v, want %v (pos %v)", defs[i].Name, got, want, pos)
+			}
+		}
+	}
+
+	// toNormalized clamps out-of-range values into the unit hypercube.
+	out := toNormalized(candidate{Vals: []float64{-5, 5, 0.0001, 100, 1000, 7}}, defs)
+	for i, x := range out {
+		if x < 0 || x > 1 {
+			t.Fatalf("toNormalized[%d] = %v, want within [0,1]", i, x)
+		}
 	}
 }

@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,44 +32,86 @@ type runReport struct {
 	BestKnobs       map[string]float64 `json:"best_knobs"`
 	CheckpointCount int                `json:"checkpoint_count"`
 	TopCandidates   []topCandidate     `json:"top_candidates,omitempty"`
+
+	// Optional fields used by multi-note, per-aspect and polish runs. They are
+	// omitted when unset so existing readers and existing report files stay
+	// valid.
+	Notes          []int        `json:"notes,omitempty"`
+	PerNote        []noteReport `json:"per_note,omitempty"`
+	Aggregate      string       `json:"aggregate,omitempty"`
+	Pass           string       `json:"pass,omitempty"`
+	PassWindow     *windowSpec  `json:"pass_window,omitempty"`
+	RendersPerEval int          `json:"renders_per_eval,omitempty"`
+
+	// Polish carries the deterministic polish-stage summary, when it ran.
+	Polish *polishSummary `json:"polish,omitempty"`
+	// OutputGainMatched is the closed-form multiplier applied to
+	// piano.OutputGain after the search finished. It is score-invariant, so it
+	// is reported separately instead of being folded into best_knobs.
+	OutputGainMatched float64 `json:"output_gain_matched,omitempty"`
 }
 
-func writeOutputs(
-	outputIR string,
-	outputPreset string,
-	reportPath string,
-	referencePath string,
-	presetPath string,
-	sampleRate int,
-	note int,
-	velocity int,
-	releaseAfter float64,
-	elapsed float64,
-	evals int,
-	variant string,
-	defs []knobDef,
-	best candidate,
-	bestM analysis.Metrics,
-	bestParams *piano.Params,
-	bestBodyIR []float32,
-	bestRoomIRL []float32,
-	bestRoomIRR []float32,
-	checkpoints int,
-	top []topCandidate,
-) error {
-	p := cloneParams(bestParams)
+// noteReport carries the per-note breakdown of a multi-note fit.
+type noteReport struct {
+	Note          int              `json:"note"`
+	ReferencePath string           `json:"reference_path,omitempty"`
+	Score         float64          `json:"score"`
+	Similarity    float64          `json:"similarity"`
+	Metrics       analysis.Metrics `json:"metrics"`
+}
+
+// outputRequest bundles everything writeOutputs needs. It replaces a long
+// positional parameter list so new optional fields can be added without
+// touching every call site.
+type outputRequest struct {
+	outputIR      string
+	outputPreset  string
+	reportPath    string
+	referencePath string
+	presetPath    string
+	sampleRate    int
+	note          int
+	velocity      int
+	releaseAfter  float64
+	elapsed       float64
+	evals         int
+	variant       string
+	defs          []knobDef
+	best          candidate
+	bestScore     float64
+	bestMetrics   analysis.Metrics
+	bestParams    *piano.Params
+	bestBodyIR    []float32
+	bestRoomIRL   []float32
+	bestRoomIRR   []float32
+	checkpoints   int
+	top           []topCandidate
+
+	// Optional; zero values are omitted from the report.
+	notes             []int
+	perNote           []noteReport
+	aggregate         string
+	pass              string
+	passWindow        *windowSpec
+	rendersPerEval    int
+	polish            *polishSummary
+	outputGainMatched float64
+}
+
+func writeOutputs(req outputRequest) error {
+	p := cloneParams(req.bestParams)
 
 	// Write IR WAVs if outputIR is set and we have IR buffers.
-	if outputIR != "" && (len(bestBodyIR) > 0 || len(bestRoomIRL) > 0) {
-		ext := filepath.Ext(outputIR)
-		base := strings.TrimSuffix(outputIR, ext)
+	if req.outputIR != "" && (len(req.bestBodyIR) > 0 || len(req.bestRoomIRL) > 0) {
+		ext := filepath.Ext(req.outputIR)
+		base := strings.TrimSuffix(req.outputIR, ext)
 		bodyIRPath := base + "-body" + ext
 		roomIRPath := base + "-room" + ext
 
-		if err := writeMonoWAV(bodyIRPath, bestBodyIR, sampleRate); err != nil {
+		if err := writeMonoWAV(bodyIRPath, req.bestBodyIR, req.sampleRate); err != nil {
 			return err
 		}
-		if err := writeStereoWAV(roomIRPath, bestRoomIRL, bestRoomIRR, sampleRate); err != nil {
+		if err := writeStereoWAV(roomIRPath, req.bestRoomIRL, req.bestRoomIRR, req.sampleRate); err != nil {
 			return err
 		}
 
@@ -77,39 +121,116 @@ func writeOutputs(
 		p.IRWavPath = ""
 	}
 
-	if err := writePresetJSON(outputPreset, p); err != nil {
+	if err := writePresetJSON(req.outputPreset, p); err != nil {
 		return err
 	}
 
-	knobs := make(map[string]float64, len(defs))
-	for i, d := range defs {
-		knobs[d.Name] = best.Vals[i]
+	knobs := make(map[string]float64, len(req.defs))
+	for i, d := range req.defs {
+		knobs[d.Name] = req.best.Vals[i]
+	}
+
+	bestScore := req.bestScore
+	if bestScore == 0 {
+		bestScore = req.bestMetrics.Score
+	}
+
+	// Single-note runs keep the pre-multi-note report shape byte for byte: the
+	// per-note breakdown would only restate best_score/best_metrics, and the
+	// aggregate of one note is that note. Likewise an unrestricted run records
+	// no pass.
+	notes, perNote, aggregate, rendersPerEval := req.notes, req.perNote, req.aggregate, req.rendersPerEval
+	if len(notes) <= 1 {
+		notes, perNote, aggregate, rendersPerEval = nil, nil, "", 0
+	}
+	pass := req.pass
+	if pass == passNone {
+		pass = ""
 	}
 
 	rep := runReport{
-		ReferencePath:   referencePath,
-		PresetPath:      presetPath,
-		OutputPreset:    outputPreset,
-		OutputIR:        outputIR,
-		SampleRate:      sampleRate,
-		Note:            note,
-		Velocity:        velocity,
-		ReleaseAfterSec: releaseAfter,
-		DurationSec:     elapsed,
-		Evaluations:     evals,
-		MayflyVariant:   variant,
-		BestScore:       bestM.Score,
-		BestSimilarity:  bestM.Similarity,
-		BestMetrics:     bestM,
+		ReferencePath:   req.referencePath,
+		PresetPath:      req.presetPath,
+		OutputPreset:    req.outputPreset,
+		OutputIR:        req.outputIR,
+		SampleRate:      req.sampleRate,
+		Note:            req.note,
+		Velocity:        req.velocity,
+		ReleaseAfterSec: req.releaseAfter,
+		DurationSec:     req.elapsed,
+		Evaluations:     req.evals,
+		MayflyVariant:   req.variant,
+		BestScore:       bestScore,
+		BestSimilarity:  req.bestMetrics.Similarity,
+		BestMetrics:     req.bestMetrics,
 		BestKnobs:       knobs,
-		CheckpointCount: checkpoints,
-		TopCandidates:   top,
+		CheckpointCount: req.checkpoints,
+		TopCandidates:   req.top,
+		Notes:           notes,
+		PerNote:         perNote,
+		Aggregate:       aggregate,
+		Pass:            pass,
+		PassWindow:      req.passWindow,
+		RendersPerEval:  rendersPerEval,
+
+		Polish:            req.polish,
+		OutputGainMatched: req.outputGainMatched,
 	}
 
+	// analysis.Metrics can legitimately carry NaN (an undefined decay slope,
+	// for example) and encoding/json refuses to marshal it, which would turn a
+	// finished run into a hard write failure. JSON has no NaN literal, so the
+	// closest honest encoding is to record such values as 0.
+	sanitizeNonFinite(reflect.ValueOf(&rep).Elem())
+
+	reportPath := req.reportPath
 	if reportPath == "" {
-		reportPath = outputPreset + ".report.json"
+		reportPath = req.outputPreset + ".report.json"
 	}
 	return writeJSON(reportPath, rep)
+}
+
+// sanitizeNonFinite replaces every NaN and +/-Inf float reachable from v with
+// 0 so the value can be marshalled to JSON.
+func sanitizeNonFinite(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.Float32, reflect.Float64:
+		if f := v.Float(); (math.IsNaN(f) || math.IsInf(f, 0)) && v.CanSet() {
+			v.SetFloat(0)
+		}
+	case reflect.Struct:
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			if t.Field(i).PkgPath != "" {
+				continue // unexported, and not marshalled either
+			}
+			sanitizeNonFinite(v.Field(i))
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			sanitizeNonFinite(v.Index(i))
+		}
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			sanitizeNonFinite(v.Elem())
+		}
+	case reflect.Map:
+		for _, key := range v.MapKeys() {
+			elem := v.MapIndex(key)
+			switch elem.Kind() {
+			case reflect.Float32, reflect.Float64:
+				if f := elem.Float(); math.IsNaN(f) || math.IsInf(f, 0) {
+					v.SetMapIndex(key, reflect.Zero(elem.Type()))
+				}
+			default:
+				// Map values are not addressable; rebuild through a copy.
+				tmp := reflect.New(elem.Type()).Elem()
+				tmp.Set(elem)
+				sanitizeNonFinite(tmp)
+				v.SetMapIndex(key, tmp)
+			}
+		}
+	}
 }
 
 func writePresetJSON(path string, p *piano.Params) error {
@@ -152,6 +273,22 @@ func writePresetJSON(path string, p *piano.Params) error {
 		AttackNoiseLevel           float32              `json:"attack_noise_level,omitempty"`
 		AttackNoiseDurationMs      float32              `json:"attack_noise_duration_ms,omitempty"`
 		AttackNoiseColor           float32              `json:"attack_noise_color,omitempty"`
+		StringModel                string               `json:"string_model,omitempty"`
+		ModalPartials              int                  `json:"modal_partials,omitempty"`
+		ModalGainExponent          float32              `json:"modal_gain_exponent,omitempty"`
+		ModalExcitation            float32              `json:"modal_excitation,omitempty"`
+		ModalUndampedLoss          float32              `json:"modal_undamped_loss,omitempty"`
+		ModalDampedLoss            float32              `json:"modal_damped_loss,omitempty"`
+		CouplingEnabled            bool                 `json:"coupling_enabled"`
+		CouplingOctaveGain         float32              `json:"coupling_octave_gain,omitempty"`
+		CouplingFifthGain          float32              `json:"coupling_fifth_gain,omitempty"`
+		CouplingMaxForce           float32              `json:"coupling_max_force,omitempty"`
+		CouplingMode               string               `json:"coupling_mode,omitempty"`
+		CouplingAmount             float32              `json:"coupling_amount,omitempty"`
+		CouplingHarmonicFalloff    float32              `json:"coupling_harmonic_falloff,omitempty"`
+		CouplingDetuneSigmaCents   float32              `json:"coupling_detune_sigma_cents,omitempty"`
+		CouplingDistanceExponent   float32              `json:"coupling_distance_exponent,omitempty"`
+		CouplingMaxNeighbors       int                  `json:"coupling_max_neighbors,omitempty"`
 		PerNote                    map[string]noteEntry `json:"per_note,omitempty"`
 	}
 
@@ -185,6 +322,22 @@ func writePresetJSON(path string, p *piano.Params) error {
 		AttackNoiseLevel:           p.AttackNoiseLevel,
 		AttackNoiseDurationMs:      p.AttackNoiseDurationMs,
 		AttackNoiseColor:           p.AttackNoiseColor,
+		StringModel:                string(p.StringModel),
+		ModalPartials:              p.ModalPartials,
+		ModalGainExponent:          p.ModalGainExponent,
+		ModalExcitation:            p.ModalExcitation,
+		ModalUndampedLoss:          p.ModalUndampedLoss,
+		ModalDampedLoss:            p.ModalDampedLoss,
+		CouplingEnabled:            p.CouplingEnabled,
+		CouplingOctaveGain:         p.CouplingOctaveGain,
+		CouplingFifthGain:          p.CouplingFifthGain,
+		CouplingMaxForce:           p.CouplingMaxForce,
+		CouplingMode:               string(p.CouplingMode),
+		CouplingAmount:             p.CouplingAmount,
+		CouplingHarmonicFalloff:    p.CouplingHarmonicFalloff,
+		CouplingDetuneSigmaCents:   p.CouplingDetuneSigmaCents,
+		CouplingDistanceExponent:   p.CouplingDistanceExponent,
+		CouplingMaxNeighbors:       p.CouplingMaxNeighbors,
 		PerNote:                    map[string]noteEntry{},
 	}
 	keys := make([]int, 0, len(p.PerNote))

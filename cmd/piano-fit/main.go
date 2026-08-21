@@ -24,6 +24,13 @@ func main() {
 	workDir := flag.String("work-dir", "out/fit", "Directory for temporary candidates")
 	optimize := flag.String("optimize", "piano,mix", "Comma-separated knob groups to optimize: piano, body-ir, room-ir, mix")
 	note := flag.Int("note", 60, "MIDI note to fit")
+	notesFlag := flag.String("notes", "", "Comma-separated MIDI notes to fit jointly, e.g. \"48,60\" (empty uses --note). "+
+		"CAVEAT: piano.defaultUnisonForNote buckets notes as <40 (1 string), <70 (2 strings, -/+1.8 cents) and >=70 "+
+		"(3 strings, -/+3.0 cents), so a shared unison_detune_scale across notes from different buckets settles on a "+
+		"compromise optimal for neither. Start with notes from one bucket, e.g. --notes 48,60.")
+	referenceMap := flag.String("reference-map", "", "Per-note reference WAVs, e.g. \"48=reference/c3.wav,60=reference/c4.wav\" (wins over --reference)")
+	aggregateFlag := flag.String("aggregate", "mean", "Multi-note objective aggregation: mean|max|mean-max")
+	noteWeights := flag.String("note-weights", "", "Per-note aggregate weights, e.g. \"48=1,60=2\" (empty means uniform)")
 	velocity := flag.Int("velocity", 118, "MIDI velocity for rendering during fit")
 	releaseAfter := flag.Float64("release-after", 3.5, "Seconds before NoteOff for each evaluation render")
 	sampleRate := flag.Int("sample-rate", 48000, "Render/analysis sample rate")
@@ -51,6 +58,25 @@ func main() {
 	mayflyVariant := flag.String("mayfly-variant", "desma", "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
 	mayflyPop := flag.Int("mayfly-pop", 10, "Male and female population size per Mayfly run")
 	mayflyRoundEvals := flag.Int("mayfly-round-evals", 240, "Target eval budget per Mayfly round")
+
+	polish := flag.Bool("polish", false, "Run a deterministic coordinate-descent polish stage after optimization")
+	polishOnly := flag.Bool("polish-only", false, "Skip the Mayfly search entirely and only run the polish stage (implies --polish); pair with --resume as a finishing move")
+	polishKnobs := flag.String("polish-knobs", defaultPolishKnobs, "Comma-separated knob names the polish stage may move")
+	polishEvals := flag.Int("polish-evals", 200, "Hard evaluation budget for the polish stage")
+	polishRounds := flag.Int("polish-rounds", 6, "Maximum coordinate-descent rounds")
+	polishStep := flag.Float64("polish-step", 0.08, "Initial polish step in normalised knob space")
+	polishShrink := flag.Float64("polish-shrink", 0.5, "Step shrink factor applied after a sweep that improves nothing")
+	polishMinStep := flag.Float64("polish-min-step", 0.004, "Polish stops once the step falls below this")
+
+	matchOutputGainFlag := flag.Bool("match-output-gain", true, "Solve output_gain analytically after the search instead of searching it "+
+		"(analysis.Compare RMS-normalises both signals, so output_gain cannot move the score at all)")
+
+	passFlag := flag.String("pass", "none", "Per-aspect fitting pass: none|attack|sustain|inharmonicity. Restricts which knobs may move and "+
+		"which part of the signal is compared; orthogonal to --optimize")
+	passWindowFlag := flag.String("pass-window", "", "Compare window \"start:end\" in seconds (empty = whole signal). "+
+		"NOTE: the window is applied BEFORE analysis.Compare, so trimLeadingSilence, normalizeRMS and lag estimation all "+
+		"re-run inside the window; windowed scores are NOT comparable to full-signal scores")
+
 	flag.Parse()
 
 	if *cpuProfile != "" {
@@ -67,6 +93,39 @@ func main() {
 	groups, err := parseOptimizeGroups(*optimize)
 	if err != nil {
 		die("invalid --optimize: %v", err)
+	}
+
+	if *polishOnly {
+		*polish = true
+	}
+
+	notes, err := parseNotesFlag(*notesFlag, *note)
+	if err != nil {
+		die("invalid --notes: %v", err)
+	}
+	refMap, err := parseNoteReferenceMap(*referenceMap)
+	if err != nil {
+		die("invalid --reference-map: %v", err)
+	}
+	weightMap, err := parseNoteWeights(*noteWeights)
+	if err != nil {
+		die("invalid --note-weights: %v", err)
+	}
+	aggregate, err := parseAggregate(*aggregateFlag)
+	if err != nil {
+		die("invalid --aggregate: %v", err)
+	}
+	passSpecification, err := parsePass(*passFlag)
+	if err != nil {
+		die("invalid --pass: %v", err)
+	}
+	passSpecification.Window, err = parseWindow(*passWindowFlag)
+	if err != nil {
+		die("invalid --pass-window: %v", err)
+	}
+	referencePaths, err := resolveReferences(notes, refMap, *referencePath)
+	if err != nil {
+		die("%v", err)
 	}
 
 	if needsIRSynthesis(groups) && *outputIR == "" {
@@ -143,23 +202,15 @@ func main() {
 		baseParams.ResonanceEnabled = false
 	}
 
-	refRaw, refSR, err := readWAVMono(*referencePath)
+	targets, err := loadNoteTargets(notes, referencePaths, resolveNoteWeights(notes, weightMap), *optSampleRate, *sampleRate)
 	if err != nil {
-		die("failed to read reference: %v", err)
-	}
-	refOpt, err := resampleIfNeeded(refRaw, refSR, *optSampleRate)
-	if err != nil {
-		die("failed to resample optimization reference: %v", err)
-	}
-	refFull, err := resampleIfNeeded(refRaw, refSR, *sampleRate)
-	if err != nil {
-		die("failed to resample full reference: %v", err)
+		die("%v", err)
 	}
 
 	defs, initCand := initCandidate(
 		baseParams,
 		*optSampleRate,
-		*note,
+		notes,
 		*velocity,
 		*releaseAfter,
 		groups,
@@ -181,13 +232,43 @@ func main() {
 		}
 	}
 
+	if !passSpecification.isNone() {
+		// render.velocity and render.release_after are not preset fields: they
+		// come from --velocity/--release-after. Seed them from the (possibly
+		// resumed) candidate BEFORE filtering, so a pass that freezes them
+		// keeps the fitted values instead of silently reverting to the CLI
+		// defaults.
+		*velocity, *releaseAfter = seedRenderControls(defs, initCand, *velocity, *releaseAfter)
+		defs, initCand = filterKnobsForPass(defs, initCand, passSpecification)
+		if len(defs) == 0 {
+			die("--pass %s leaves no knobs to optimize with --optimize %s", passSpecification.Name, *optimize)
+		}
+		fmt.Printf("Pass %s: %d of the active knobs may move\n", passSpecification.Name, len(defs))
+	}
+
+	polishIndices := []int(nil)
+	if *polish {
+		knobsRaw := *polishKnobs
+		if knobsRaw == defaultPolishKnobs {
+			// A default the user never typed must not turn a --pass or a
+			// narrow --optimize selection into a hard error.
+			knobsRaw = intersectKnobNames(knobsRaw, defs)
+		}
+		if knobsRaw == "" {
+			fmt.Fprintf(os.Stderr, "polish disabled: none of the default polish knobs (%s) are active\n", defaultPolishKnobs)
+			*polish = false
+			*polishOnly = false
+		} else if polishIndices, err = parsePolishKnobs(knobsRaw, defs); err != nil {
+			die("invalid --polish-knobs: %v", err)
+		}
+	}
+
 	cfg := &optimizationConfig{
-		reference:        refOpt,
-		finalReference:   refFull,
+		targets:          targets,
+		aggregate:        aggregate,
 		baseParams:       baseParams,
 		defs:             defs,
 		initCandidate:    initCand,
-		note:             *note,
 		baseVelocity:     *velocity,
 		baseReleaseAfter: *releaseAfter,
 		sampleRate:       *optSampleRate,
@@ -215,8 +296,22 @@ func main() {
 		outputIR:         *outputIR,
 		outputPreset:     *outputPreset,
 		reportPath:       *reportPath,
-		referencePath:    *referencePath,
+		referencePath:    referencePaths[0],
 		presetPath:       *presetPath,
+
+		scorer: passScorer(passSpecification),
+		pass:   passSpecification.Name,
+
+		polish:            *polish,
+		polishOnly:        *polishOnly,
+		polishKnobIndices: polishIndices,
+		polishEvals:       *polishEvals,
+		polishRounds:      *polishRounds,
+		polishStep:        *polishStep,
+		polishShrink:      *polishShrink,
+		polishMinStep:     *polishMinStep,
+
+		matchOutputGain: *matchOutputGainFlag,
 	}
 
 	result, err := runOptimization(cfg)
@@ -228,33 +323,55 @@ func main() {
 		result.bestParams.ResonanceEnabled = presetResonance
 	}
 
-	if err := writeOutputs(
-		*outputIR,
-		*outputPreset,
-		*reportPath,
-		*referencePath,
-		*presetPath,
-		*sampleRate,
-		*note,
-		result.bestVelocity,
-		result.bestReleaseAfter,
-		result.elapsed,
-		result.evals,
-		strings.ToLower(*mayflyVariant),
-		defs,
-		result.best,
-		result.bestMetrics,
-		result.bestParams,
-		result.bestBodyIR,
-		result.bestRoomIRL,
-		result.bestRoomIRR,
-		result.checkpoints,
-		result.top,
-	); err != nil {
+	var passWindow *windowSpec
+	if !passSpecification.Window.isZero() {
+		w := passSpecification.Window
+		passWindow = &w
+	}
+
+	if err := writeOutputs(outputRequest{
+		outputIR:      *outputIR,
+		outputPreset:  *outputPreset,
+		reportPath:    *reportPath,
+		referencePath: referencePaths[0],
+		presetPath:    *presetPath,
+		sampleRate:    *sampleRate,
+		note:          notes[0],
+		velocity:      result.bestVelocity,
+		releaseAfter:  result.bestReleaseAfter,
+		elapsed:       result.elapsed,
+		evals:         result.evals,
+		variant:       strings.ToLower(*mayflyVariant),
+		defs:          defs,
+		best:          result.best,
+		bestScore:     result.bestScore,
+		bestMetrics:   result.bestMetrics,
+		bestParams:    result.bestParams,
+		bestBodyIR:    result.bestBodyIR,
+		bestRoomIRL:   result.bestRoomIRL,
+		bestRoomIRR:   result.bestRoomIRR,
+		checkpoints:   result.checkpoints,
+		top:           result.top,
+
+		notes:             notes,
+		perNote:           result.bestNotes,
+		aggregate:         aggregate,
+		pass:              passSpecification.Name,
+		passWindow:        passWindow,
+		rendersPerEval:    len(targets),
+		polish:            result.polish,
+		outputGainMatched: result.outputGainRatio,
+	}); err != nil {
 		die("failed to write outputs: %v", err)
 	}
 
-	fmt.Printf("Done evals=%d elapsed=%.1fs best_score=%.4f best_similarity=%.2f%% variant=%s\n", result.evals, result.elapsed, result.bestMetrics.Score, result.bestMetrics.Similarity*100.0, strings.ToLower(*mayflyVariant))
+	fmt.Printf("Done evals=%d elapsed=%.1fs best_score=%.4f best_similarity=%.2f%% notes=%v variant=%s\n",
+		result.evals, result.elapsed, result.bestScore, result.bestMetrics.Similarity*100.0, sortedNotes(notes), strings.ToLower(*mayflyVariant))
+	if len(result.bestNotes) > 1 {
+		for _, nr := range result.bestNotes {
+			fmt.Printf("  note %d score=%.4f similarity=%.2f%% (%s)\n", nr.Note, nr.Score, nr.Similarity*100.0, nr.ReferencePath)
+		}
+	}
 }
 
 func parseWorkersFlag(raw string) (int, error) {
