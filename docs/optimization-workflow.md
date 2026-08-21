@@ -299,27 +299,49 @@ either mode resume into the other, since resume matches knobs by name.
 
 ## Per-Aspect Passes
 
-`--pass none|attack|sustain|inharmonicity` restricts which knobs may move, on
-top of whatever `--optimize` selected. Everything else keeps its value from the
-input preset. `--pass-window start:end` (seconds) additionally narrows the
-comparison to a time window.
+A pass does two things: it restricts which knobs may move, on top of whatever
+`--optimize` selected, and it scores with the weighting profile that describes
+the aspect being fitted. Everything else keeps its value from the input preset.
+`--pass-window start:end` (seconds) additionally narrows the comparison to a
+time window.
 
-| Pass            | Knobs it may move                                                                                           | Typical window          |
-| --------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------- |
-| `attack`        | `hammer_*_scale`, `attack_noise_level`, `attack_noise_duration_ms`, `attack_noise_color`, `render.velocity` | `--pass-window 0:0.25`  |
-| `sustain`       | `per_note.*.loss`, `high_freq_damping`, `unison_detune_scale`, `unison_crossfeed`, `render.release_after`   | `--pass-window 0.5:3.0` |
-| `inharmonicity` | `per_note.*.inharmonicity`, `per_note.*.strike_position`, `unison_detune_scale`                             | whole signal            |
+Both halves are needed. Restricting the knobs without changing the objective
+would let the optimizer spend the attack knobs on whatever the full-signal
+legacy score happens to reward; changing the objective without restricting the
+knobs would let it reach the same target through parameters that belong to a
+different aspect.
+
+| Pass            | Knobs it may move                                                                                           | Profile            | Typical window          |
+| --------------- | ----------------------------------------------------------------------------------------------------------- | ------------------ | ----------------------- |
+| `none`          | everything `--optimize` selected                                                                            | `legacy-v1`        | whole signal            |
+| `attack`        | `hammer_*_scale`, `attack_noise_level`, `attack_noise_duration_ms`, `attack_noise_color`, `render.velocity` | `attack-v1`        | `--pass-window 0:0.35`  |
+| `sustain`       | `per_note.*.loss`, `high_freq_damping`, `unison_detune_scale`, `unison_crossfeed`, `render.release_after`   | `decay-v1`         | whole signal            |
+| `inharmonicity` | `per_note.*.inharmonicity`, `per_note.*.strike_position`, `unison_detune_scale`                             | `inharmonicity-v1` | `--pass-window 0.2:2.0` |
+
+`--profile <name>` overrides the pass default and works with `--pass none` too,
+so an unrestricted run can be scored with `balanced-v2`. An unknown name is an
+error rather than a silent fallback. The profile a run used is recorded as
+`score_profile` in its report; a report without that key is a `legacy-v1`
+report, which is what every report written so far is.
+
+The `sustain` pass deliberately gets **no** window: `decay-v1` weights the
+segmented decay metric at 0.55 and its late segment measures out to 5 s, so
+cutting the tail off would remove the very thing the pass is fitting.
+
+`just fit-c4-passes` runs all three in order and finishes with a `legacy-v1`
+distance report on the result, which is the only number comparable to anything
+else. The individual runs are:
 
 ```bash
-# 1. Attack pass on the first 250 ms
+# 1. Attack pass on the first 350 ms
 go run -tags asm ./cmd/piano-fit \
-    --preset out/stages/final.json --output-preset out/pass/attack.json \
-    --pass attack --pass-window 0:0.25 --time-budget 300
+    --preset out/stages/final.json --output-preset out/passes/attack.json \
+    --pass attack --pass-window 0:0.35 --time-budget 180
 
 # 2. Sustain pass, chained from the attack pass OUTPUT PRESET
 go run -tags asm ./cmd/piano-fit \
-    --preset out/pass/attack.json --output-preset out/pass/sustain.json \
-    --pass sustain --pass-window 0.5:3.0 --time-budget 300 --resume=false
+    --preset out/passes/attack.json --output-preset out/passes/sustain.json \
+    --pass sustain --time-budget 180 --resume=false
 ```
 
 Two caveats that will bite otherwise:
@@ -335,11 +357,36 @@ Two caveats that will bite otherwise:
   from a pass report alone would seed it with a partial knob set; feed the
   previous stage's **output preset** forward instead (and pass `--resume=false`).
 
-Note that a pass currently only restricts knobs and (optionally) the compare
-window — it still scores with the default `legacy-v1` weighting.
-`passScorer` in `cmd/piano-fit/pass.go` is the single seam where swapping in
-`analysis.CompareWithWeights` and a named profile (`attack-v1`, `decay-v1`,
-`inharmonicity-v1`) would be a one-line change.
+### Measured results (2026-08-21, 180 s per pass, from `fitted-c4-mayfly.json`)
+
+Judged the only honest way — by re-running the full `legacy-v1` compare on each
+pass's output preset:
+
+| Stage                     | legacy score | what its own profile did                |
+| ------------------------- | ------------ | --------------------------------------- |
+| baseline                  | 0.5194       | —                                       |
+| after `attack`            | **0.5117**   | attack centroid 0.440 → 0.084 oct       |
+| after `sustain` (chained) | 0.5581       | segmented decay RMSE 14.58 → 12.84 dB/s |
+| after `inharmonicity`     | 0.5691       | partial-frequency RMSE barely moved     |
+
+Only the `attack` pass is currently a net win. Both others improve exactly the
+metric their profile weights and pay for it elsewhere — the `sustain` pass buys
+1.7 dB/s of segmented-decay accuracy with 9 dB of spectral RMSE (58.0 → 66.9)
+and 13 dB of partial-level RMSE (14.0 → 27.4).
+
+That is not a flaw in the pass machinery, it is `NormSpectral = 30.0` being
+saturated. At 58 dB and at 67 dB the spectral component normalises to exactly
+1.0, so it contributes a _constant_ to `decay-v1` and supplies no restoring
+force at all against a spectral degradation of that size. Partial level carries
+weight 0 in `decay-v1`, so nothing objects there either. **Do not chain the
+`sustain` pass into a shipping preset until `NormSpectral` is recalibrated**
+(see the note at the end of Phase 8B in `PLAN.md`); run it in isolation and
+check `just gate-c4` on the result.
+
+Run `inharmonicity` from the attack-pass preset rather than the sustain-pass
+preset — done that way it is score-neutral (0.5117 → 0.5121) and nudges
+partial-frequency RMSE from 34.9 to 34.5 cents. Its three knobs simply have
+little leverage at C4.
 
 ## Multi-Note Fitting
 
