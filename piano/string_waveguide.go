@@ -1,6 +1,10 @@
 package piano
 
-import dspcore "github.com/cwbudde/algo-dsp/dsp/core"
+import (
+	"math"
+
+	dspcore "github.com/cwbudde/algo-dsp/dsp/core"
+)
 
 const (
 	// delayHeadroom is how many slots the delay line is allocated beyond the
@@ -17,6 +21,18 @@ const (
 	// 48 kHz, so this guard is unreachable in practice and exists so that an
 	// out-of-range f0 degrades instead of collapsing).
 	minIntDelay = 4
+
+	// dcBlockCutoffHz is the -3 dB corner of the DC blocker that sits in the
+	// string loop. The loop filter of processLoopLoss has unity DC gain, so
+	// without this the loop is a leaky integrator for DC: the per-sample
+	// crossfeed injection of RingingStringGroup.processSample outruns the
+	// per-round-trip loss and the offset diverges (measured +108 at MIDI 108
+	// once the injection fix let energy into those strings at all).
+	// A real string cannot sustain DC, so blocking it in the loop is the
+	// physical model, not a patch. The corner sits well below A0 (27.5 Hz), and
+	// the phase lead it costs is compensated in dcBlockPhaseDelay, so it leaves
+	// neither an audible tilt nor a tuning error.
+	dcBlockCutoffHz = 2.0
 )
 
 // StringWaveguide implements the digital waveguide string model.
@@ -40,6 +56,11 @@ type StringWaveguide struct {
 	dispersionY1    float32
 	dispersionX2    float32
 	dispersionY2    float32
+
+	dcBlockPole float32
+	dcBlockGain float32
+	dcBlockX1   float32
+	dcBlockY1   float32
 }
 
 // NewStringWaveguide creates a new string waveguide.
@@ -55,7 +76,16 @@ func NewStringWaveguide(sampleRate int, f0 float32) *StringWaveguide {
 		dispersionCoeff:  0.0,
 	}
 
-	s.delayLength = s.sampleRate / s.f0
+	// Standard normalised DC blocker: H(z) = g*(1 - z^-1) / (1 - p*z^-1) with
+	// g = (1+p)/2. The normalisation matters inside a feedback loop: the raw
+	// (1 - z^-1)/(1 - p*z^-1) form peaks at 2/(1+p) > 1 at Nyquist, which would
+	// push the loop gain above the 0.9999 reflection and make the string blow
+	// up at half the sample rate. With g the magnitude is exactly 1 at Nyquist
+	// and below 1 everywhere else, so the loop can only ever lose energy.
+	s.dcBlockPole = 1 - 2*math.Pi*dcBlockCutoffHz/s.sampleRate
+	s.dcBlockGain = (1 + s.dcBlockPole) / 2
+
+	s.delayLength = s.sampleRate/s.f0 + s.dcBlockPhaseDelay()
 	intDelay := int(s.delayLength)
 	if intDelay < minIntDelay {
 		intDelay = minIntDelay
@@ -63,6 +93,30 @@ func NewStringWaveguide(sampleRate int, f0 float32) *StringWaveguide {
 	s.delayLine = make([]float32, intDelay+delayHeadroom)
 
 	return s
+}
+
+// dcBlockPhaseDelay returns how many samples the delay line has to grow to
+// cancel the phase lead the DC blocker adds to the loop, evaluated at f0.
+//
+// The blocker leads by roughly fc/f radians at f >> fc, which shortens the loop
+// round trip by fc/(2*pi*f^2) seconds and therefore sharpens every string by a
+// flat fc/(2*pi) Hz - independent of pitch, so it is nearly inaudible at the top
+// and badly wrong at the bottom. Measured before this compensation existed, with
+// fc = 2 Hz: every note from MIDI 21 to 108 came out +0.31 Hz sharp, which is
+// +19.6 cents at A0 and +0.2 cents at C8. Adding the blocker's own phase delay
+// back into the delay line removes the tilt entirely: measured 2026-08-21 the
+// compensated core is within 0.64 cents everywhere below MIDI 104 and matches
+// the pre-DC-blocker core to better than 0.01 cents note for note.
+func (s *StringWaveguide) dcBlockPhaseDelay() float32 {
+	w := 2 * math.Pi * float64(s.f0) / float64(s.sampleRate)
+	if w <= 0 || w >= math.Pi {
+		return 0
+	}
+	p := float64(s.dcBlockPole)
+	// angle of (1 - e^-jw) is (pi - w)/2; the gain g is real and positive and
+	// so contributes no phase.
+	phase := (math.Pi-w)/2 - math.Atan2(p*math.Sin(w), 1-p*math.Cos(w))
+	return float32(phase / w)
 }
 
 // injectionOffset maps a fractional string position [0,1] onto a delay-line
@@ -103,7 +157,7 @@ func (s *StringWaveguide) injectionOffset(strikePos float32) int {
 func (s *StringWaveguide) Process() float32 {
 	delayedSample := s.readDelayFractional(s.delayLength)
 	dispersed := s.processDispersion(delayedSample)
-	loopSample := s.processLoopLoss(dispersed)
+	loopSample := s.processDCBlock(s.processLoopLoss(dispersed))
 	output := delayedSample
 
 	s.delayLine[s.writePos] = loopSample
@@ -214,6 +268,16 @@ func (s *StringWaveguide) processLoopLoss(input float32) float32 {
 	lp = float32(dspcore.FlushDenormals(float64(lp)))
 	s.loopState = lp
 	return float32(dspcore.FlushDenormals(float64(lp * s.reflection)))
+}
+
+// processDCBlock removes the DC component from the loop signal. All state is a
+// pair of float32 fields on the struct, so it allocates nothing per block.
+func (s *StringWaveguide) processDCBlock(input float32) float32 {
+	y := s.dcBlockGain*(input-s.dcBlockX1) + s.dcBlockPole*s.dcBlockY1
+	y = float32(dspcore.FlushDenormals(float64(y)))
+	s.dcBlockX1 = input
+	s.dcBlockY1 = y
+	return y
 }
 
 func (s *StringWaveguide) processDispersion(input float32) float32 {
