@@ -81,14 +81,36 @@ func BenchmarkBodyConvolverIRLength(b *testing.B) {
 }
 
 // convolverBenchAudioFrames is the amount of audio each partition-size
-// iteration renders. Keeping it fixed means every partition size does the same
-// acoustic work, so the numbers compare directly instead of measuring how much
-// audio one call happens to consume.
-const convolverBenchAudioFrames = 4096
+// iteration renders, and convolverBenchCallbackFrames is the size of the
+// individual Process calls it is delivered in. Keeping the total fixed means
+// every partition size does the same acoustic work, so the numbers compare
+// directly instead of measuring how much audio one call happens to consume.
+//
+// The audio is delivered in 128-frame calls because that is the shape the
+// engine actually runs in. It matters: SoundboardConvolver.Process pads any
+// call shorter than partSize up to partSize, advances a whole overlap-add
+// partition, and then returns only the first len(input) samples. Handing the
+// convolver all 4096 frames in one call would therefore measure an offline
+// throughput number that no realtime caller can obtain, and dividing it by 32
+// would understate the true per-callback cost for every partSize above 128.
+const (
+	convolverBenchAudioFrames    = 4096
+	convolverBenchCallbackFrames = 128
+)
+
+// processInCallbacks feeds input to fn in convolverBenchCallbackFrames-sized
+// slices, i.e. exactly as the audio callback would.
+func processInCallbacks(fn func([]float32) []float32, input []float32) {
+	for off := 0; off+convolverBenchCallbackFrames <= len(input); off += convolverBenchCallbackFrames {
+		_ = fn(input[off : off+convolverBenchCallbackFrames])
+	}
+}
 
 // BenchmarkSoundboardConvolverPartitionSize sweeps the partition size at a
-// fixed one-second IR. Larger partitions mean fewer, bigger FFTs and lower
-// throughput cost, paid for with latency.
+// fixed one-second IR, driving the convolver with 128-frame calls throughout.
+// Larger partitions mean fewer, bigger FFTs per unit of audio in an offline
+// setting; under a fixed 128-frame callback they instead mean one full,
+// mostly-discarded partition per callback.
 func BenchmarkSoundboardConvolverPartitionSize(b *testing.B) {
 	input := benchmarkInput(convolverBenchAudioFrames)
 	ir := benchmarkIR(48000)
@@ -100,7 +122,7 @@ func BenchmarkSoundboardConvolverPartitionSize(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = c.Process(input)
+				processInCallbacks(c.Process, input)
 			}
 		})
 	}
@@ -119,7 +141,7 @@ func BenchmarkBodyConvolverPartitionSize(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_ = c.Process(input)
+				processInCallbacks(c.Process, input)
 			}
 		})
 	}

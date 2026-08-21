@@ -1,6 +1,7 @@
 package piano
 
 import (
+	"math"
 	"testing"
 
 	"github.com/cwbudde/algo-piano/analysis"
@@ -63,8 +64,13 @@ func TestDWGModalDistanceIsBounded(t *testing.T) {
 			note, m.Score, m.Similarity*100, m.Dominant,
 			m.TimeRMSE, m.EnvelopeRMSEDB, m.SpectralRMSEDB, m.DecayDiffDBPerS)
 
-		if m.Score > maxScore {
-			t.Errorf("note %d: DWG/modal distance score %.4f exceeds bound %.2f", note, m.Score, maxScore)
+		// The NaN check is not redundant: every comparison against NaN is
+		// false, so a bare `m.Score > maxScore` would silently accept a
+		// non-finite regression propagated out of a string core through
+		// analysis.Compare's metrics and clamp01. Anything not demonstrably
+		// within the bound has to fail.
+		if math.IsNaN(m.Score) || m.Score > maxScore {
+			t.Errorf("note %d: DWG/modal distance score %.4f is not within bound %.2f", note, m.Score, maxScore)
 		}
 		if m.AlignedFrames < blocks*128/2 {
 			t.Errorf("note %d: only %d frames aligned out of %d, comparison is not meaningful",

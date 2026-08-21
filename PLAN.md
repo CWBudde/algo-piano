@@ -541,10 +541,10 @@ Tooling:
 ### 12.4 — Validation + performance acceptance
 
 - [ ] Add A/B tests and metrics:
-  - [x] DWG vs modal distance on selected notes/chords
-        (`piano/core_distance_test.go`, single notes only; chords still open.
-        The measured scores are 0.71-0.85 — the cores do **not** currently
-        match, see the treble finding under Phase 13)
+  - [x] DWG vs modal distance on selected single notes
+        (`piano/core_distance_test.go`. The measured scores are 0.71-0.85 — the
+        cores do **not** currently match, see the treble finding under Phase 13)
+  - [ ] DWG vs modal distance on chords
   - [ ] sustain pedal and coupling behavior parity checks
   - [ ] long-render stability (NaN/Inf free)
 - [ ] Add benchmarks:

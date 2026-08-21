@@ -79,7 +79,28 @@ a sustained group never deactivates, so they stall there indefinitely.
 Cost was previously a function of how long the run had been going, which also
 made every earlier modal benchmark unreliable.
 
+**Open gap: the flush rate is set by the caller.** `flushDenormalModes` runs from
+`endBlock`, once per `StringBank.Process` call, not on a fixed sample stride.
+`Piano.Process` accepts any block length, and at the slowest per-sample decay a
+mode just above the flush threshold enters the denormal range after 197 samples —
+fine for a 128-frame callback, not fine for the 4800- and 48000-frame calls the
+offline tests use. Measured on the sustained-decay scenario, ~256k frames per
+case, four runs:
+
+| Block length   | Cost per frame |
+| -------------- | -------------- |
+| 128 (callback) | 870-943 ns     |
+| 4800           | 813-845 ns     |
+| 48000          | 1712-1813 ns   |
+
+A 48000-frame call costs about 2x per frame what the callback-sized call does.
+The realtime path is unaffected; offline rendering is not. See the skipped
+`TestModalFlushSurvivesLongProcessCalls` in `piano/denormal_test.go`.
+
 ## Convolver cost
+
+All convolver figures are the median of five `-count=5` runs at default
+benchtime, measured 2026-08-21 at load average 1 to 3.
 
 `BenchmarkSoundboardConvolverIRLength` / `BenchmarkBodyConvolverIRLength`, one
 128-frame block per iteration at the production partition size of 128 — the
@@ -88,52 +109,80 @@ is **2.67 ms**.
 
 | IR length     | Room (stereo) | Body (mono) | Room, % of budget |
 | ------------- | ------------- | ----------- | ----------------- |
-| 128 (2.7 ms)  | 8.3 µs        | 3.7 µs      | 0.3%              |
-| 1024 (21 ms)  | 50 µs         | 24 µs       | 1.9%              |
-| 8192 (170 ms) | 0.32 ms       | 0.15 ms     | 12%               |
-| 48000 (1 s)   | 2.30 ms       | 0.80 ms     | **86%**           |
-| 192000 (4 s)  | 23.3 ms       | 13.8 ms     | **873%**          |
+| 128 (2.7 ms)  | 4.0 µs        | 2.0 µs      | 0.2%              |
+| 1024 (21 ms)  | 22 µs         | 9.5 µs      | 0.8%              |
+| 8192 (170 ms) | 0.38 ms       | 95 µs       | 14%               |
+| 48000 (1 s)   | 1.06 ms       | 0.45 ms     | **40%**           |
+| 192000 (4 s)  | 16.0 ms       | 6.9 ms      | **599%**          |
 
-Cost grows linearly with IR length, as uniform partitioning implies. The
-practical consequence: at the default `partSize = 128` a one-second stereo room
-IR eats 86% of the entire block budget before the string bank has been charged
-for anything, and a four-second room IR is 8.7x over budget on its own. Long room
-IRs are not viable at this partition size.
+Cost grows with IR length, as uniform partitioning implies. The practical
+consequence: at the default `partSize = 128` a one-second stereo room IR eats
+40% of the entire block budget before the string bank has been charged for
+anything, and a four-second room IR is 6x over budget on its own. Four-second
+room IRs are not viable at this partition size.
+
+### Partition size is not a lever for realtime cost
 
 `BenchmarkSoundboardConvolverPartitionSize` / `BenchmarkBodyConvolverPartitionSize`
 render a fixed 4096 frames per iteration so every partition size does the same
-acoustic work. Room IR is 1 s, body IR is 8192 taps. The normalized columns
-divide by 32 to give the cost of one 128-frame block.
+acoustic work. Room IR is 1 s, body IR is 8192 taps. Those 4096 frames are
+delivered as 32 separate 128-frame `Process` calls, because that is the shape the
+engine actually runs in; the normalized columns divide by 32 to give the cost of
+one real 128-frame callback.
 
-| Partition | Room / 4096 fr | Room / 128 fr | Body / 4096 fr | Body / 128 fr |
-| --------- | -------------- | ------------- | -------------- | ------------- |
-| 64        | 203 ms         | 6.34 ms       | 10.4 ms        | 0.32 ms       |
-| 128       | 71.5 ms        | 2.24 ms       | 8.2 ms         | 0.26 ms       |
-| 256       | 21.9 ms        | 0.69 ms       | 4.7 ms         | 0.15 ms       |
-| 512       | 26.5 ms        | 0.83 ms       | 2.0 ms         | 0.061 ms      |
-| 1024      | 9.9 ms         | 0.31 ms       | 0.77 ms        | 0.024 ms      |
+| Partition | Room / 4096 fr | Room / callback | Room, % of budget | Body / 4096 fr | Body / callback |
+| --------- | -------------- | --------------- | ----------------- | -------------- | --------------- |
+| 64        | 61.9 ms        | 1.94 ms         | 73%               | 6.05 ms        | 0.19 ms         |
+| 128       | 30.6 ms        | 0.96 ms         | 36%               | 3.05 ms        | 0.095 ms        |
+| 256       | 29.8 ms        | 0.93 ms         | 35%               | 3.17 ms        | 0.099 ms        |
+| 512       | 30.8 ms        | 0.96 ms         | 36%               | 3.20 ms        | 0.100 ms        |
+| 1024      | 30.9 ms        | 0.96 ms         | 36%               | 3.30 ms        | 0.103 ms        |
 
-The room figure at partition 128 (2.24 ms) agrees with the 1 s row of the
-IR-length table (2.30 ms), which is a useful cross-check that the two benchmarks
-measure the same thing.
+Cross-checks against the IR-length table: room at partition 128 is 0.96 ms here
+against 1.06 ms there, and body at partition 128 is 95 µs against that table's
+8192 row at 95 µs.
 
-Partition size, not IR length, is the lever: 128 -> 256 cuts the room convolver
-by about 3x, from 86% of the block budget to 26%, and 1024 gets it to 12%. The
-room path's 512 entry sits above its 256 entry, which is the FFT size crossing a
-radix boundary plus residual measurement noise rather than a real inversion. The
-mono body path improves monotonically all the way to 1024. What partitioning
-costs is latency — one partition of it.
+**Raising the partition size above 128 buys nothing.** The room path is flat from
+128 to 1024 — 0.93 to 0.96 ms, inside run-to-run noise — and the body path drifts
+slightly upwards. Only 64 stands out, at almost exactly 2x the 128 cost.
 
-**Caveat on absolute values.** The measurement window overlapped unrelated work
-on this machine; load average ranged from 12 to 25 and repeat runs of the same
-case spread by up to 2x. The table above comes from the least-loaded run. The
-scaling shape (linear in IR length, sharply falling in partition size) reproduced
-across five runs and the two benchmarks cross-check each other, but re-measure on
-a quiet machine before adopting the absolute milliseconds as a budget:
+An earlier revision of this document claimed the opposite: that 128 -> 256 cut the
+room convolver by about 3x, from 86% of the block budget to 26%, and that 1024
+got it to 12%. That was an artefact of the benchmark, which used to hand the
+convolver all 4096 frames in a single `Process` call. `SoundboardConvolver.Process`
+consumes its input in `partSize` chunks, so one big call amortizes each partition
+over `partSize` frames of output, and dividing by 32 then produced a number no
+realtime caller can obtain.
+
+Driving it callback-by-callback shows the real behaviour, and the flat curve is
+what the arithmetic predicts. Per `Process` call the convolver transforms one
+partition and multiplies it against all `irLen / partSize` IR partitions, so the
+work is `O(irLen * log partSize)` per call — near-constant in `partSize`, with
+only the weak log term left, which is the slight upward drift on the body path.
+`partSize = 64` is the one real outlier because a 128-frame callback then contains
+two inner blocks: exactly twice the FFT round-trips, and the measurement is
+61.9 / 30.6 = 2.02x.
+
+There is a second reason not to raise it, independent of cost. Above 128,
+`Process` pads each short callback up to `partSize`, advances one full overlap-add
+partition, and returns only the first 128 samples — so the rest of that
+partition's output is discarded and the stream is wrong, not merely expensive.
+
+Turning partition size into a genuine lever would take cross-callback buffering
+inside the convolver: accumulate callbacks until a full partition is available,
+then drain that partition's output over the following callbacks, trading one
+partition of latency for the amortization. That does not exist today. Until it
+does, the only real levers on room-convolver cost are IR length and a non-uniform
+partitioning scheme.
+
+Re-measure with:
 
 ```bash
-go test ./piano/ -run='^$' -bench='Convolver' -benchmem -benchtime=50x -count=5
+go test ./piano/ -run='^$' -bench='Convolver' -benchmem -count=5
 ```
+
+Room `ir8k` was the noisiest case, spreading 0.32 to 0.64 ms across the five
+runs; everything else held within about 10%.
 
 ## Idle string bank
 

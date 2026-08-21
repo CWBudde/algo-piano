@@ -9,10 +9,18 @@ import (
 // 88-key string bank with nothing playing — the price the engine pays every
 // block just for existing. This is PLAN.md 9.6's "idle full-string-bank cost".
 //
-// Two pedal states are measured because they take different paths: with the
-// pedal up nothing is in the active set at all, while a held pedal lifts every
-// damper and marks every group active, which is the state a player leaves the
-// instrument in between phrases.
+// Both pedal states are measured, and what the pair currently confirms is that
+// damper state on its own does not activate idle groups: StringBank.SetSustain
+// forwards the damper state to each group without enrolling anything in the
+// active set, so a bank with the pedal held down — the state a player leaves the
+// instrument in between phrases — takes the same empty-active-set fast path as
+// the pedal-up bank. That is the behaviour of today's SetSustain, not a design
+// invariant. If undamped groups are ever enrolled in the active set (so that
+// sympathetic energy injected into them is actually rendered), the pedalDown
+// case stops being an idle measurement; the b.Fatalf below is deliberately
+// there so that change fails loudly here instead of quietly turning this into a
+// different benchmark, and it should then be replaced by a sympathetic-resonance
+// floor measurement rather than relaxed.
 func BenchmarkStringBankIdle(b *testing.B) {
 	for _, model := range []StringModel{StringModelDWG, StringModelModal} {
 		for _, sustain := range []bool{false, true} {
