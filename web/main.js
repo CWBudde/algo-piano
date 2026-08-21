@@ -353,7 +353,14 @@ function attachKeyboardListeners() {
         syncPedalUI();
     }
 
-    sustainLevel = parseInt(sustainLevelSlider.value, 10) || 50;
+    // A slider at 0 parses to numeric zero, so fall back only when the value is
+    // not a number at all; `|| 50` would silently turn 0% into 50%.
+    function parseSustainLevel(value) {
+        const parsed = parseInt(value, 10);
+        return Number.isNaN(parsed) ? 50 : parsed;
+    }
+
+    sustainLevel = parseSustainLevel(sustainLevelSlider.value);
     sustainLevelValue.textContent = `${sustainLevel}%`;
     updateSliderFill(sustainLevel);
     syncPedalUI();
@@ -469,7 +476,7 @@ function attachKeyboardListeners() {
     });
 
     sustainLevelSlider.addEventListener('input', (event) => {
-        sustainLevel = parseInt(event.target.value, 10) || 50;
+        sustainLevel = parseSustainLevel(event.target.value);
         sustainLevelValue.textContent = `${sustainLevel}%`;
         updateSliderFill(sustainLevel);
         pushSustainToEngine();
