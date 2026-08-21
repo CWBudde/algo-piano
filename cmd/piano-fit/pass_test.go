@@ -81,7 +81,7 @@ func TestKnobAllowedWildcard(t *testing.T) {
 func TestFilterKnobsForPass(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true}
-	defs, cand := initCandidate(base, 48000, []int{48, 60}, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, []int{48, 60}, 118, 3.5, groups, false)
 
 	t.Run("none is a pass-through", func(t *testing.T) {
 		gotDefs, gotCand := filterKnobsForPass(defs, cand, passSpec{Name: passNone})
@@ -271,7 +271,7 @@ func TestPassSeedsRenderControlsFromReport(t *testing.T) {
 
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true}
-	defs, initCand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
+	defs, initCand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups, false)
 
 	resumed, ok, err := loadCandidateFromReport(reportPath, defs, initCand)
 	if err != nil || !ok {

@@ -286,9 +286,16 @@ selection, polish disables itself with a message rather than erroring.
 
 `analysis.Compare` RMS-normalises both signals before scoring, which makes
 `output_gain` provably **score-invariant**: searching it burns budget on a
-perfectly flat dimension. `--match-output-gain` (default on) instead solves it
-analytically after the search, so the written preset lands at the right absolute
-level without ever having been optimized for it.
+perfectly flat dimension. `--match-output-gain` (default on) therefore drops the
+knob from the searched dimensions entirely and solves it in closed form after
+the search, so the written preset lands at the right absolute level without ever
+having been optimized for it. Because it is no longer a knob, the match is also
+free of the `[0.01, 5.0]` search bounds and can reach whatever level the
+reference actually needs.
+
+Pass `--match-output-gain=false` to get the old behaviour: `output_gain` returns
+to the knob set and is searched like any other dimension. Reports written in
+either mode resume into the other, since resume matches knobs by name.
 
 ## Per-Aspect Passes
 

@@ -94,6 +94,7 @@ func initCandidate(
 	baseVelocity int,
 	baseReleaseAfter float64,
 	groups map[string]bool,
+	matchOutputGain bool,
 ) ([]knobDef, candidate) {
 	bodyCfg := irsynth.DefaultBodyConfig()
 	bodyCfg.SampleRate = sampleRate
@@ -114,7 +115,15 @@ func initCandidate(
 
 	// Piano group knobs.
 	if groups["piano"] {
-		addKnob(knobDef{Name: "output_gain", Min: 0.01, Max: 5.0}, float64(base.OutputGain))
+		// output_gain is score-invariant: analysis.Compare RMS-normalises both
+		// signals before it computes anything, so no value of this knob can
+		// move the score. Searching it therefore spends the eval budget on a
+		// flat dimension. When the closed-form match is active it is left out
+		// of the search entirely and solved once at the end instead, which
+		// also frees it from the [0.01, 5.0] search bounds.
+		if !matchOutputGain {
+			addKnob(knobDef{Name: "output_gain", Min: 0.01, Max: 5.0}, float64(base.OutputGain))
+		}
 		addKnob(knobDef{Name: "hammer_stiffness_scale", Min: 0.6, Max: 1.8}, float64(base.HammerStiffnessScale))
 		addKnob(knobDef{Name: "hammer_exponent_scale", Min: 0.8, Max: 1.2}, float64(base.HammerExponentScale))
 		addKnob(knobDef{Name: "hammer_damping_scale", Min: 0.6, Max: 1.8}, float64(base.HammerDampingScale))

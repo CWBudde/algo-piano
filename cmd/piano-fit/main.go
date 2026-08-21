@@ -214,6 +214,7 @@ func main() {
 		*velocity,
 		*releaseAfter,
 		groups,
+		*matchOutputGainFlag,
 	)
 	if *resume {
 		resumePath := *resumeReport

@@ -64,7 +64,7 @@ func testConfig(t *testing.T, notes []int) *optimizationConfig {
 	settings := testEvalSettings()
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true}
-	defs, cand := initCandidate(base, settings.sampleRate, notes, 100, 0.2, groups)
+	defs, cand := initCandidate(base, settings.sampleRate, notes, 100, 0.2, groups, false)
 
 	targets := make([]noteTarget, 0, len(notes))
 	for _, n := range notes {

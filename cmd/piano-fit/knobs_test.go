@@ -125,7 +125,7 @@ func knobNameSet(defs []knobDef) map[string]bool {
 func TestInitCandidatePianoMixOnly(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true, "mix": true}
-	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups, false)
 
 	// piano: 17 knobs (incl attack noise + high_freq_damping), legacy mix: 3 knobs = 20 total
 	if len(defs) != 20 {
@@ -158,7 +158,7 @@ func TestInitCandidatePianoMixDualIR(t *testing.T) {
 	base.BodyIRWavPath = "body.wav"
 	base.RoomIRWavPath = "room.wav"
 	groups := map[string]bool{"piano": true, "mix": true}
-	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups, false)
 
 	// piano: 17 knobs (incl attack noise + high_freq_damping), dual-IR mix: 4 knobs = 21 total
 	if len(defs) != 21 {
@@ -182,7 +182,7 @@ func TestInitCandidatePianoMixDualIR(t *testing.T) {
 func TestInitCandidateBodyIRMix(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"body-ir": true, "mix": true}
-	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups, false)
 
 	// body-ir: 11 knobs (plate_ratio, stiffness_ratio, mode_warp, 2-way decay, crossover, fadeout, etc), dual-IR mix: 4 knobs = 15 total
 	if len(defs) != 15 {
@@ -206,7 +206,7 @@ func TestInitCandidateBodyIRMix(t *testing.T) {
 func TestInitCandidateFullJoint(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true, "body-ir": true, "room-ir": true, "mix": true}
-	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups, false)
 
 	// piano: 17, body-ir: 11 (Kirchhoff plate + mode_warp + 2-way decay + fadeout), room-ir: 8 (incl fadeout), dual-IR mix: 4 = 40 total
 	if len(defs) != 40 {
@@ -236,7 +236,7 @@ func TestInitCandidateFullJoint(t *testing.T) {
 func TestApplyCandidatePianoKnobs(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true, "mix": true}
-	defs, _ := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
+	defs, _ := initCandidate(base, 48000, []int{60}, 118, 3.5, groups, false)
 
 	// Build candidate with specific values for piano knobs.
 	vals := make([]float64, len(defs))
@@ -288,7 +288,7 @@ func TestApplyCandidateDualIRMix(t *testing.T) {
 	base.BodyIRWavPath = "body.wav"
 	base.RoomIRWavPath = "room.wav"
 	groups := map[string]bool{"piano": true, "mix": true}
-	defs, _ := initCandidate(base, 48000, []int{60}, 118, 3.5, groups)
+	defs, _ := initCandidate(base, 48000, []int{60}, 118, 3.5, groups, false)
 
 	vals := make([]float64, len(defs))
 	for i, d := range defs {
@@ -324,7 +324,7 @@ func TestInitCandidateMultiNoteKnobCounts(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true, "mix": true}
 	notes := []int{48, 60, 72}
-	defs, cand := initCandidate(base, 48000, notes, 118, 3.5, groups)
+	defs, cand := initCandidate(base, 48000, notes, 118, 3.5, groups, false)
 
 	// 14 shared piano knobs + 3 per-note knobs x 3 notes + 3 legacy mix knobs.
 	if len(defs) != 26 {
@@ -363,7 +363,7 @@ func TestApplyCandidateMultiNotePerNote(t *testing.T) {
 	base := piano.NewDefaultParams()
 	groups := map[string]bool{"piano": true}
 	notes := []int{48, 60, 72}
-	defs, _ := initCandidate(base, 48000, notes, 118, 3.5, groups)
+	defs, _ := initCandidate(base, 48000, notes, 118, 3.5, groups, false)
 
 	want := map[int][3]float64{
 		48: {0.9900, 0.05, 0.10},
@@ -443,6 +443,44 @@ func TestToNormalizedRoundTrip(t *testing.T) {
 	for i, x := range out {
 		if x < 0 || x > 1 {
 			t.Fatalf("toNormalized[%d] = %v, want within [0,1]", i, x)
+		}
+	}
+}
+
+// output_gain is score-invariant, so the default --match-output-gain path must
+// keep it out of the search and solve it in closed form instead. Every other
+// knob has to survive: dropping it is a one-dimension change, not a reshuffle.
+func TestInitCandidateExcludesOutputGainWhenMatched(t *testing.T) {
+	base := piano.NewDefaultParams()
+	groups := map[string]bool{"piano": true, "mix": true}
+
+	searched, _ := initCandidate(base, 48000, []int{60}, 118, 3.5, groups, false)
+	matched, matchedCand := initCandidate(base, 48000, []int{60}, 118, 3.5, groups, true)
+
+	if !knobNameSet(searched)["output_gain"] {
+		t.Fatal("output_gain should be searched when matchOutputGain is false")
+	}
+	if knobNameSet(matched)["output_gain"] {
+		t.Fatal("output_gain should not be searched when matchOutputGain is true")
+	}
+	if len(matched) != len(searched)-1 {
+		t.Fatalf("defs len = %d, want %d", len(matched), len(searched)-1)
+	}
+	if len(matchedCand.Vals) != len(matched) {
+		t.Fatalf("vals len = %d, want %d", len(matchedCand.Vals), len(matched))
+	}
+
+	// The remaining knobs keep their order and bounds, so a report written by
+	// one mode still resumes by name into the other.
+	want := make([]knobDef, 0, len(searched))
+	for _, d := range searched {
+		if d.Name != "output_gain" {
+			want = append(want, d)
+		}
+	}
+	for i := range want {
+		if matched[i] != want[i] {
+			t.Fatalf("knob %d = %+v, want %+v", i, matched[i], want[i])
 		}
 	}
 }
