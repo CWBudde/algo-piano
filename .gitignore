@@ -21,7 +21,9 @@ piano-fit
 output.wav
 bench-*.wav
 tests/*.wav
-out/stages/
+# Everything under out/ is tool output: fit work dirs, stage and pass presets,
+# rendered candidates and their reports.
+out/
 
 # IDEs
 .vscode/
