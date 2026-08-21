@@ -274,9 +274,15 @@ Frontend (`web/main.js`) responsibilities:
 - audio callback rendering in chunks (128-frame synth chunks)
 - runtime calls for coupling/mode changes
 
-Current limitation:
+Runtime IR loading:
 
-- `wasmLoadIR` receives IR bytes but runtime IR application is marked TODO in WASM entrypoint.
+- `wasmLoadIR(kind, buffer)` decodes a WAV from the supplied `ArrayBuffer`/`Uint8Array` and applies it
+  to the body (`"body"`) or room (`"room"`) convolver, resampling to the AudioContext rate. The legacy
+  single-argument form `wasmLoadIR(buffer)` still targets the room slot. Returns `true` on success.
+- `wasmSetIRMix(bodyDry, bodyGain, roomWet, roomGain)` sets the dual-IR mix at runtime; the room IR is
+  inaudible without it because `RoomWetMix` defaults to `0`.
+- The web demo loads `assets/ir/default_96k.wav` into the room slot and falls back to no convolution
+  when the fetch fails.
 
 ## 8. Offline Tooling Around the Core Architecture
 

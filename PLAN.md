@@ -348,7 +348,7 @@ This phase is split into execution subphases to make progress and ownership expl
   - [ ] enforce `string-bank bridge mix -> body IR -> room IR`
   - [ ] keep body/room separation first-class in params/presets
   - [ ] keep legacy single-IR path as fallback only
-  - [ ] complete WASM runtime IR apply (`wasmLoadIR`)
+  - [x] complete WASM runtime IR apply (`wasmLoadIR`)
 - [ ] Web/demo compatibility:
   - [ ] keep JS/WASM note + pedal API stable
   - [x] retire sustain timer release behavior in web layer once physical pedal semantics are active

@@ -12,6 +12,9 @@ type Piano struct {
 	resonance     *ResonanceEngine
 	sustainAmount float32
 	softPedal     bool
+	// irMixExplicit records that SetIRMix was called, so Process must use the
+	// dual-IR mix verbatim instead of remapping the deprecated IR params.
+	irMixExplicit bool
 }
 
 // NewPiano creates a new piano engine.
@@ -171,6 +174,38 @@ func (p *Piano) SetRoomIR(left, right []float32) {
 	p.roomConvolver.SetIR(left, right)
 }
 
+// SetBodyIRFromBytes loads the mono body impulse response from in-memory WAV
+// bytes, resampling to the engine sample rate if needed.
+func (p *Piano) SetBodyIRFromBytes(data []byte) error {
+	return p.bodyConvolver.SetIRFromBytes(data, p.sampleRate)
+}
+
+// SetRoomIRFromBytes loads the stereo room impulse response from in-memory WAV
+// bytes, resampling to the engine sample rate if needed.
+func (p *Piano) SetRoomIRFromBytes(data []byte) error {
+	return p.roomConvolver.SetIRFromBytes(data)
+}
+
+// SetIRMix sets the dual-IR mix parameters at runtime.
+// bodyGain and roomGain are only applied when strictly positive, matching the
+// defaults used by Process.
+func (p *Piano) SetIRMix(bodyDry, bodyGain, roomWet, roomGain float32) {
+	if p.params == nil {
+		p.params = NewDefaultParams()
+	}
+	p.params.BodyDryMix = bodyDry
+	p.params.BodyIRGain = bodyGain
+	p.params.RoomWetMix = roomWet
+	p.params.RoomGain = roomGain
+	// Mirror the mix onto the deprecated params so callers that still read them
+	// observe the same settings, and disable the legacy remap in Process: it
+	// cannot represent bodyGain and would otherwise reset it to 1.
+	p.params.IRDryMix = bodyDry
+	p.params.IRWetMix = roomWet
+	p.params.IRGain = roomGain
+	p.irMixExplicit = true
+}
+
 // Process renders a block of audio samples (stereo interleaved).
 func (p *Piano) Process(numFrames int) []float32 {
 	monoMix := p.ringing.Process(numFrames, p.hammerExciter)
@@ -209,8 +244,9 @@ func (p *Piano) Process(numFrames int) []float32 {
 			roomGain = p.params.RoomGain
 		}
 		// Legacy compat: if old IRWetMix/IRDryMix/IRGain are set and new ones aren't,
-		// map old params to new signal flow.
-		if p.params.RoomIRWavPath == "" && p.params.BodyIRWavPath == "" && p.params.IRWavPath != "" {
+		// map old params to new signal flow. Skipped once SetIRMix supplied an
+		// explicit dual-IR mix, which the legacy params cannot represent.
+		if !p.irMixExplicit && p.params.RoomIRWavPath == "" && p.params.BodyIRWavPath == "" && p.params.IRWavPath != "" {
 			bodyDry = p.params.IRDryMix
 			roomWet = p.params.IRWetMix
 			roomGain = p.params.IRGain

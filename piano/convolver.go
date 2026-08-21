@@ -1,7 +1,9 @@
 package piano
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 
 	dspconv "github.com/cwbudde/algo-dsp/dsp/conv"
@@ -116,7 +118,7 @@ func (c *SoundboardConvolver) SetIR(leftIR []float32, rightIR []float32) {
 	c.Reset()
 }
 
-// SetIRFromWAV loads a mono/stereo IR from WAV.
+// SetIRFromWAV loads a mono/stereo IR from a WAV file.
 func (c *SoundboardConvolver) SetIRFromWAV(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -124,16 +126,27 @@ func (c *SoundboardConvolver) SetIRFromWAV(path string) error {
 	}
 	defer f.Close()
 
-	dec := wav.NewDecoder(f)
+	return c.SetIRFromReader(f, path)
+}
+
+// SetIRFromBytes loads a mono/stereo IR from in-memory WAV bytes.
+func (c *SoundboardConvolver) SetIRFromBytes(data []byte) error {
+	return c.SetIRFromReader(bytes.NewReader(data), "<bytes>")
+}
+
+// SetIRFromReader loads a mono/stereo IR from a WAV stream.
+// name is only used to describe the source in error messages.
+func (c *SoundboardConvolver) SetIRFromReader(r io.ReadSeeker, name string) error {
+	dec := wav.NewDecoder(r)
 	if !dec.IsValidFile() {
-		return fmt.Errorf("invalid wav file: %s", path)
+		return fmt.Errorf("invalid wav file: %s", name)
 	}
 	buf, err := dec.FullPCMBuffer()
 	if err != nil {
 		return err
 	}
 	if buf == nil || buf.Format == nil || buf.Format.NumChannels < 1 {
-		return fmt.Errorf("invalid wav buffer: %s", path)
+		return fmt.Errorf("invalid wav buffer: %s", name)
 	}
 
 	numCh := buf.Format.NumChannels
@@ -143,7 +156,7 @@ func (c *SoundboardConvolver) SetIRFromWAV(path string) error {
 	}
 	frames := len(buf.Data) / numCh
 	if frames == 0 {
-		return fmt.Errorf("empty wav data: %s", path)
+		return fmt.Errorf("empty wav data: %s", name)
 	}
 
 	left := make([]float32, frames)
@@ -257,23 +270,34 @@ func (c *BodyConvolver) SetIRFromWAV(path string, targetRate int) error {
 	}
 	defer f.Close()
 
-	dec := wav.NewDecoder(f)
+	return c.SetIRFromReader(f, path, targetRate)
+}
+
+// SetIRFromBytes loads a mono IR from in-memory WAV bytes, resampling if needed.
+func (c *BodyConvolver) SetIRFromBytes(data []byte, targetRate int) error {
+	return c.SetIRFromReader(bytes.NewReader(data), "<bytes>", targetRate)
+}
+
+// SetIRFromReader loads a mono IR from a WAV stream, resampling if needed.
+// name is only used to describe the source in error messages.
+func (c *BodyConvolver) SetIRFromReader(r io.ReadSeeker, name string, targetRate int) error {
+	dec := wav.NewDecoder(r)
 	if !dec.IsValidFile() {
-		return fmt.Errorf("invalid wav file: %s", path)
+		return fmt.Errorf("invalid wav file: %s", name)
 	}
 	buf, err := dec.FullPCMBuffer()
 	if err != nil {
 		return err
 	}
 	if buf == nil || buf.Format == nil || buf.Format.NumChannels < 1 {
-		return fmt.Errorf("invalid wav buffer: %s", path)
+		return fmt.Errorf("invalid wav buffer: %s", name)
 	}
 
 	srcRate := buf.Format.SampleRate
 	numCh := buf.Format.NumChannels
 	frames := len(buf.Data) / numCh
 	if frames == 0 {
-		return fmt.Errorf("empty wav data: %s", path)
+		return fmt.Errorf("empty wav data: %s", name)
 	}
 
 	// Mix to mono.
