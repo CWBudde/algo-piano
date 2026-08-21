@@ -1,6 +1,10 @@
 package piano
 
-import "testing"
+import (
+	"fmt"
+	"math"
+	"testing"
+)
 
 // Behaviour coverage for the sparse string-bank coupling graph: what the
 // listener hears when `coupling_mode` changes, and how the physical weight
@@ -26,6 +30,19 @@ func couplingBehaviourParams(mode CouplingMode) *Params {
 	return params
 }
 
+// requireFinite rejects NaN and infinities before any ordered comparison sees
+// them. Every threshold in this file is an ordered comparison, and both `x <= 0`
+// and `x < y` are false for NaN, so a numerically unstable coupling render would
+// otherwise satisfy the monotonicity and non-zero assertions instead of failing
+// them.
+func requireFinite(t *testing.T, label string, value float64) float64 {
+	t.Helper()
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		t.Fatalf("%s: expected a finite measurement, got %v", label, value)
+	}
+	return value
+}
+
 // renderCouplingEnergyDWG strikes note 60 with the sustain pedal down and
 // returns the energy stored in the unstruck DWG target's delay lines.
 func renderCouplingEnergyDWG(t *testing.T, params *Params, target int, blocks int) float64 {
@@ -42,7 +59,7 @@ func renderCouplingEnergyDWG(t *testing.T, params *Params, target int, blocks in
 	for i := 0; i < blocks; i++ {
 		_ = p.Process(128)
 	}
-	return voiceInternalEnergy(g)
+	return requireFinite(t, fmt.Sprintf("DWG note %d energy", target), voiceInternalEnergy(g))
 }
 
 // renderCouplingEnergyModal is the modal-core twin of renderCouplingEnergyDWG.
@@ -66,7 +83,7 @@ func renderCouplingEnergyModal(t *testing.T, params *Params, target int, blocks 
 	for i := range g.re {
 		sum += float64(g.re[i])*float64(g.re[i]) + float64(g.im[i])*float64(g.im[i])
 	}
-	return sum
+	return requireFinite(t, fmt.Sprintf("modal note %d energy", target), sum)
 }
 
 func couplingEdgeGain(sb *StringBank, src int, dst int) float32 {
@@ -214,19 +231,28 @@ func TestPhysicalCouplingEnergyFollowsRelatedness(t *testing.T) {
 // Measured on 2026-08-21, DWG core, note 60 struck, note 72 observed, 60 blocks
 // of 128 frames, switch performed before block 30:
 //
-//	always off:      0.000000e+00
-//	always static:   4.590862e-09
-//	off -> static:   1.736573e-09   (37.8% of the always-static arm)
-//	static -> off:   1.313719e-09   (28.6% of the always-static arm)
+//	always off:        0.000000e+00
+//	always static:     4.590862e-09
+//	off -> static:     1.736573e-09   (37.8% of the always-static arm)
+//	static -> off:     1.313719e-09   (28.6% of the always-static arm)
+//	always physical:   8.176180e-10
+//	off -> physical:   3.518491e-10   (43.0% of the always-physical arm)
+//	physical -> off:   2.635450e-10   (32.2% of the always-physical arm)
 //
-// Both switched arms have to land strictly between the two constant arms. The
-// upper bound is 0.70x the always-static energy — the worst measured share is
-// 37.8%, so that is the measurement plus ~40% headroom and then some.
+// Physical mode gets its own pair of switched arms because SetCouplingMode
+// rebuilds the graph from the physical weight model rather than the static one;
+// the off/static pair alone would leave a runtime switch into physical mode
+// untested (only its startup path is covered above).
+//
+// Every switched arm has to land strictly between the two constant arms of its
+// mode. The upper bound is 0.70x the constant arm — the worst measured share is
+// 43.0%, i.e. the worst measurement plus ~60% headroom.
 func TestRuntimeCouplingModeSwitchTakesEffectMidRender(t *testing.T) {
 	const struck = 60
 	const target = 72
 	const blocks = 60
 	const switchAt = 30
+	const physicalSwitchedShareMax = 0.70
 
 	render := func(start CouplingMode, switchTo CouplingMode, doSwitch bool) float64 {
 		p := NewPiano(48000, 16, couplingBehaviourParams(start))
@@ -244,17 +270,23 @@ func TestRuntimeCouplingModeSwitchTakesEffectMidRender(t *testing.T) {
 			}
 			_ = p.Process(128)
 		}
-		return voiceInternalEnergy(g)
+		return requireFinite(t, fmt.Sprintf("DWG note %d energy", target), voiceInternalEnergy(g))
 	}
 
 	alwaysOff := render(CouplingModeOff, CouplingModeOff, false)
 	alwaysStatic := render(CouplingModeStatic, CouplingModeStatic, false)
 	offThenStatic := render(CouplingModeOff, CouplingModeStatic, true)
 	staticThenOff := render(CouplingModeStatic, CouplingModeOff, true)
+	alwaysPhysical := render(CouplingModePhysical, CouplingModePhysical, false)
+	offThenPhysical := render(CouplingModeOff, CouplingModePhysical, true)
+	physicalThenOff := render(CouplingModePhysical, CouplingModeOff, true)
 
 	t.Logf("note-%d energy: alwaysOff=%e alwaysStatic=%e offThenStatic=%e (%.1f%%) staticThenOff=%e (%.1f%%)",
 		target, alwaysOff, alwaysStatic, offThenStatic, 100*offThenStatic/alwaysStatic,
 		staticThenOff, 100*staticThenOff/alwaysStatic)
+	t.Logf("note-%d energy: alwaysPhysical=%e offThenPhysical=%e (%.1f%%) physicalThenOff=%e (%.1f%%)",
+		target, alwaysPhysical, offThenPhysical, 100*offThenPhysical/alwaysPhysical,
+		physicalThenOff, 100*physicalThenOff/alwaysPhysical)
 
 	if alwaysOff != 0 {
 		t.Fatalf("expected the always-off arm to stay silent, got %e", alwaysOff)
@@ -275,6 +307,24 @@ func TestRuntimeCouplingModeSwitchTakesEffectMidRender(t *testing.T) {
 	if staticThenOff >= alwaysStatic*0.70 {
 		t.Fatalf("switching static->off mid-render did not reach the audio: switched=%e always=%e",
 			staticThenOff, alwaysStatic)
+	}
+
+	if alwaysPhysical <= 0 {
+		t.Fatalf("expected the always-physical arm to build up energy, got %e", alwaysPhysical)
+	}
+	if offThenPhysical <= 0 {
+		t.Fatalf("switching off->physical mid-render did not reach the audio: energy stayed at %e", offThenPhysical)
+	}
+	if offThenPhysical >= alwaysPhysical*physicalSwitchedShareMax {
+		t.Fatalf("off->physical arm should carry clearly less energy than always-physical: switched=%e always=%e",
+			offThenPhysical, alwaysPhysical)
+	}
+	if physicalThenOff <= 0 {
+		t.Fatalf("expected the physical->off arm to keep the energy gathered before the switch, got %e", physicalThenOff)
+	}
+	if physicalThenOff >= alwaysPhysical*physicalSwitchedShareMax {
+		t.Fatalf("switching physical->off mid-render did not reach the audio: switched=%e always=%e",
+			physicalThenOff, alwaysPhysical)
 	}
 }
 
@@ -304,6 +354,10 @@ var couplingDetuneSweepSigmas = []float32{4, 8, 14, 28, 56, 112}
 //	 56             1.489667e-06       6.973052e-14
 //	112             1.521218e-06       7.261825e-14
 //
+// The sweep runs from the tightest sigma to the loosest, so both the gain and
+// the energy column have to be non-decreasing; the failure messages are phrased
+// in that direction ("loosening ... must not reduce ...").
+//
 // The sweep is asserted as monotone rather than against pinned magnitudes: the
 // last two steps differ by only 4%, so any fixed tolerance would either be
 // meaningless or brittle.
@@ -318,17 +372,18 @@ func TestCouplingDetuneSigmaReducesInjectedEnergy(t *testing.T) {
 		params.CouplingDetuneSigmaCents = sigma
 		params.CouplingMaxNeighbors = 64
 		gains[i] = couplingEdgeGain(NewStringBank(48000, params), 60, target)
+		requireFinite(t, fmt.Sprintf("edge gain 60->%d at sigma %.1f cents", target, sigma), float64(gains[i]))
 		energies[i] = renderCouplingEnergyDWG(t, params, target, blocks)
 		t.Logf("detune sigma=%6.1f cents: edge gain 60->%d=%e energy=%e", sigma, target, gains[i], energies[i])
 	}
 
 	for i := 1; i < len(energies); i++ {
 		if energies[i] < energies[i-1] {
-			t.Fatalf("tightening the detune penalty must not increase injected energy: sigma %.1f=%e, sigma %.1f=%e",
+			t.Fatalf("loosening the detune penalty must not reduce injected energy: sigma %.1f cents=%e dropped to sigma %.1f cents=%e",
 				couplingDetuneSweepSigmas[i-1], energies[i-1], couplingDetuneSweepSigmas[i], energies[i])
 		}
 		if gains[i] < gains[i-1] {
-			t.Fatalf("tightening the detune penalty must not increase the edge gain: sigma %.1f=%e, sigma %.1f=%e",
+			t.Fatalf("loosening the detune penalty must not reduce the edge gain: sigma %.1f cents=%e dropped to sigma %.1f cents=%e",
 				couplingDetuneSweepSigmas[i-1], gains[i-1], couplingDetuneSweepSigmas[i], gains[i])
 		}
 	}
@@ -371,6 +426,7 @@ func TestCouplingDistanceExponentReducesInjectedEnergy(t *testing.T) {
 		params := couplingBehaviourParams(CouplingModePhysical)
 		params.CouplingDistanceExponent = exponent
 		gains[i] = couplingEdgeGain(NewStringBank(48000, params), 60, target)
+		requireFinite(t, fmt.Sprintf("edge gain 60->%d at distance exponent %.1f", target, exponent), float64(gains[i]))
 		energies[i] = renderCouplingEnergyDWG(t, params, target, blocks)
 		t.Logf("distance exponent=%.1f: edge gain 60->%d=%e energy=%e", exponent, target, gains[i], energies[i])
 	}
