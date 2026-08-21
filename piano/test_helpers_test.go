@@ -2,26 +2,101 @@ package piano
 
 import (
 	"math"
+	"math/cmplx"
 	"os"
 	"testing"
 
+	algofft "github.com/cwbudde/algo-fft"
 	"github.com/cwbudde/wav"
 	"github.com/go-audio/audio"
 )
 
-func measureFundamentalFreq(samples []float32, sampleRate float32) float32 {
-	startIdx := len(samples) / 10
-	crossings := 0
-	for i := startIdx + 1; i < len(samples); i++ {
-		if (samples[i-1] < 0 && samples[i] >= 0) || (samples[i-1] >= 0 && samples[i] < 0) {
-			crossings++
-		}
+// measureFundamentalNear estimates the fundamental of a plucked/struck string
+// signal by locating the spectral peak nearest a known nominal frequency and
+// refining it with parabolic interpolation over the log magnitudes of the two
+// neighbouring bins.
+//
+// It replaced a bare zero-crossing counter on 2026-08-21. Counting sign changes
+// has no noise margin: it reports the right answer only while the waveform
+// happens to cross zero exactly twice per period, and any low-level ripple
+// riding on it doubles or triples the count. That was masked for the DWG core
+// because its output used to be exactly 0.0 between excitation pulses; once the
+// loop DC blocker leaves a small decaying residue there instead, a sign counter
+// reads 2x the true pitch at several mid-range notes while the spectrum is
+// still exactly where it should be. Measured on note 69: sign counting says
+// 779.4 Hz, the spectrum says 440.5 Hz against a nominal 440.0 Hz.
+//
+// Searching near a nominal rather than globally is deliberate: the peak of a
+// piano partial series is not always the fundamental. The +/-35% window is a
+// little over five semitones wide, far beyond any tuning error worth calling
+// accurate, so it constrains nothing the test cares about.
+func measureFundamentalNear(samples []float32, sampleRate int, nominalHz float64) float64 {
+	const fftLen = 65536 // 1.365 s at 48 kHz; bin spacing 0.73 Hz before interpolation
+
+	// Skip the attack, which is broadband and would smear the peak.
+	start := len(samples) / 10
+	if len(samples)-start < fftLen {
+		start = 0
 	}
-	if crossings == 0 {
+	if len(samples)-start < fftLen {
 		return 0
 	}
-	duration := float32(len(samples)-startIdx) / sampleRate
-	return float32(crossings) / (2.0 * duration)
+
+	plan, err := algofft.NewPlanReal64(fftLen)
+	if err != nil {
+		return 0
+	}
+
+	in := make([]float64, fftLen)
+	for i := range in {
+		// Hann window: without it the spectral leakage of a decaying tone is
+		// wide enough to move the interpolated peak by several cents.
+		w := 0.5 - 0.5*math.Cos(2*math.Pi*float64(i)/float64(fftLen))
+		in[i] = float64(samples[start+i]) * w
+	}
+
+	spec := make([]complex128, fftLen/2+1)
+	if err := plan.Forward(spec, in); err != nil {
+		return 0
+	}
+
+	binHz := float64(sampleRate) / float64(fftLen)
+	lo := int((nominalHz * 0.65) / binHz)
+	hi := int((nominalHz*1.35)/binHz) + 1
+	if lo < 1 {
+		lo = 1
+	}
+	if hi > len(spec)-2 {
+		hi = len(spec) - 2
+	}
+	if lo >= hi {
+		return 0
+	}
+
+	best, bestMag := lo, 0.0
+	for k := lo; k <= hi; k++ {
+		if m := cmplx.Abs(spec[k]); m > bestMag {
+			best, bestMag = k, m
+		}
+	}
+	if bestMag <= 0 {
+		return 0
+	}
+
+	// Parabolic interpolation on log magnitudes, the standard refinement for a
+	// Hann-windowed peak. Guard against a zero neighbour, whose log is -Inf.
+	l, c, r := cmplx.Abs(spec[best-1]), bestMag, cmplx.Abs(spec[best+1])
+	offset := 0.0
+	if l > 0 && r > 0 {
+		ll, lc, lr := math.Log(l), math.Log(c), math.Log(r)
+		if denom := ll - 2*lc + lr; denom != 0 {
+			offset = 0.5 * (ll - lr) / denom
+		}
+		if offset > 0.5 || offset < -0.5 {
+			offset = 0
+		}
+	}
+	return (float64(best) + offset) * binHz
 }
 
 func windowRMS(samples []float32) float64 {
@@ -255,20 +330,4 @@ func writeTempIRWav(t *testing.T, left []float32, right []float32, sampleRate in
 	}
 	t.Cleanup(func() { _ = os.Remove(f.Name()) })
 	return f.Name()
-}
-
-// removeDCOffset applies a one-pole DC blocker (cutoff ~7.6 Hz at 48 kHz).
-// Waveguide output carries a large, slowly decaying DC component, which makes
-// zero-crossing pitch measurement report 0 Hz; blocking DC restores it.
-func removeDCOffset(s []float32) []float32 {
-	const pole = 0.999
-	out := make([]float32, len(s))
-	var prevIn, prevOut float64
-	for i, v := range s {
-		x := float64(v)
-		y := x - prevIn + pole*prevOut
-		prevIn, prevOut = x, y
-		out[i] = float32(y)
-	}
-	return out
 }

@@ -35,25 +35,33 @@ func renderNoteMono(model StringModel, note int, velocity int, blocks int) []flo
 // distance from analysis.Compare, so a change that quietly pulls one core away
 // from the other shows up as a number instead of a listening session.
 //
-// Measured on 2026-08-21 (Go 1.26.5, linux/amd64), 750 blocks of 128 frames
-// at 48 kHz, sustain held, resonance and coupling disabled:
+// Re-measured on 2026-08-21 (Go 1.26.5, linux/amd64) after the DWG injection
+// and loop DC fixes, 750 blocks of 128 frames at 48 kHz, sustain held,
+// resonance and coupling disabled:
 //
-//	note 48: score 0.8462  similarity 3.39%  dominant=spectral
-//	note 60: score 0.8484  similarity 3.36%  dominant=spectral
-//	note 72: score 0.7082  similarity 5.89%  dominant=spectral
+//	note 48: score 0.8421  similarity 3.45%  dominant=spectral
+//	note 60: score 0.8386  similarity 3.49%  dominant=spectral
+//	note 72: score 0.8292  similarity 3.63%  dominant=spectral
 //
-// The bound is set to 0.90, about 6% of headroom over the worst measured score.
+// The bound is tightened from 0.90 to 0.89, about 6% of headroom over the worst
+// measured score.
 //
 // Read those numbers as an alarm, not as an acceptance criterion: the two cores
-// currently agree very poorly. The envelope term alone reaches 92-154 dB RMSE,
-// which is what happens when one signal is momentarily silent while the other
-// is not — the DWG core's raw bank output is a sparse impulse train riding on a
-// large DC offset (see TestTrebleRegisterCollapsesInDWGCore), so whole analysis
-// windows read as digital silence. Until that is fixed, a low score here is not
-// achievable and the test can only catch further drift.
+// still agree very poorly, and removing the DC offset barely moved the number.
+// The envelope term alone still reaches 92-149 dB RMSE, which is what happens
+// when one signal is momentarily silent while the other is not. The DC was only
+// half of the earlier explanation, and it turned out to be the half that did not
+// matter here: what makes whole analysis windows read as digital silence is that
+// the DWG bank output is a sparse impulse train. That is not the delay-line
+// headroom bug either - it is the excitation. ExciteAtPosition writes an
+// antisymmetric ramp whose width is only 4-25% of the delay line, so most of the
+// loop stays at exactly 0.0 and circulates as a pulse: a bare A0 string has 444
+// non-zero samples out of 4000, measured 2026-08-21. Closing this gap needs a
+// distributed excitation or a loop filter with real bandwidth, not a DC fix, so
+// a low score here is still not achievable and the test can only catch drift.
 func TestDWGModalDistanceIsBounded(t *testing.T) {
 	const blocks = 750
-	const maxScore = 0.90
+	const maxScore = 0.89
 
 	for _, note := range []int{48, 60, 72} {
 		dwg := renderNoteMono(StringModelDWG, note, 100, blocks)

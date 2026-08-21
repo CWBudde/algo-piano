@@ -415,8 +415,13 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
 
 - [ ] Add A/B tests and metrics:
   - [x] DWG vs modal distance on selected single notes
-        (`piano/core_distance_test.go`. The measured scores are 0.71-0.85 — the
-        cores do **not** currently match, see the treble finding under Phase 13)
+        (`piano/core_distance_test.go`. Re-measured 2026-08-21 after the DWG DC
+        and injection fixes: 0.83-0.84, bound tightened 0.90 → 0.89. The cores
+        still do **not** match. Removing the DC changed the score by less than
+        0.01, so the DC was not the cause: what keeps whole analysis windows at
+        digital silence is that the DWG excitation fills only 4-25% of the delay
+        line, so the bank output is a sparse impulse train. Closing that gap
+        needs a distributed excitation or a loop filter with real bandwidth.)
   - [ ] DWG vs modal distance on chords
   - [ ] sustain pedal and coupling behavior parity checks
   - [ ] long-render stability (NaN/Inf free)
@@ -504,10 +509,10 @@ cut sustained-decay cost from 4.2 ms to 0.59 ms — a larger win than the SIMD w
 ## Phase 13 — Tests + benchmarks (keep realtime honest)
 
 - [ ] Unit tests
-  - [ ] Tuning accuracy across a range of notes
-        (`piano/tuning_test.go` covers MIDI 21-92 with per-register tolerances.
-        Left unticked: MIDI 93-108 has no measurable pitch — see the finding
-        below.)
+  - [x] Tuning accuracy across a range of notes
+        (`piano/tuning_test.go` covers the whole MIDI 21-108 compass with
+        per-register tolerances, worst measured 0.64 cents below MIDI 104 and
+        3.48 cents in the top five notes.)
   - [ ] Convolver correctness bound
   - [x] Stability tests: long render without NaNs/denorm storms
         (`piano/integration_test.go` NaN/Inf, `piano/denormal_test.go` denormals)
@@ -522,19 +527,43 @@ cut sustained-decay cost from 4.2 ms to 0.59 ms — a larger win than the SIMD w
         and the sweep stops at MIDI 91 to stay clear of the DWG treble collapse
         below, so the 128-voice case is 130 strings over keys 36-91)
 
-**Open finding — DWG treble collapse (2026-08-21).** Extending tuning coverage
-past MIDI 92 turned up two defects in the DWG core, documented and reproduced by
-the skipped `TestTrebleRegisterCollapsesInDWGCore`:
+**Resolved — DWG treble collapse (2026-08-21).** Extending tuning coverage past
+MIDI 92 turned up two independent defects in the DWG core. Both are fixed;
+`TestTrebleRegisterIsStableInDWGCore` (formerly the skipped
+`TestTrebleRegisterCollapsesInDWGCore`) is now the regression test.
 
-- from roughly MIDI 96 up, the bank output is essentially pure DC and the offset
-  grows without converging (note 96 held for 800 blocks goes from +4.8 to +59.2,
-  ~50x full scale); zeroing `UnisonCrossfeed` turns growth into decay, pointing
-  at the crossfeed path as a positive-feedback route for DC through a loop with
-  unity DC gain;
-- MIDI 106, 107 and 108 render bit-exact silence.
+- **Bit-exact silence at MIDI 106-108.** The delay line is allocated four slots
+  longer than the integer delay and the interpolating taps read at the far end
+  of that headroom, so a slot written closer than three slots ahead of the write
+  pointer is overwritten before any tap reads it. Those notes have 16, 16 and 15
+  slot delay lines and the default strike position of 0.18 lands on offset 2, so
+  every bit of hammer energy was discarded. `StringWaveguide.injectionOffset`
+  now clamps injections into the observable range. MIDI 100-105 were affected
+  too, less visibly: offset 3 is read by the fractional tap only, so those notes
+  received a `frac`-weighted fraction of the hammer force.
+- **DC runaway from ~MIDI 96.** The loop filter has unity DC gain, so the loop
+  is a leaky integrator for DC, and unison crossfeed injects into every string
+  every sample while a top-octave loop only loses `1-reflection` per round trip
+  about 4000 times a second. `StringWaveguide.processDCBlock` now removes DC
+  inside the loop, which is what a real string does. Its phase lead sharpens
+  every string by a flat `fc/(2*pi)` Hz — +19.6 cents at A0 — so
+  `dcBlockPhaseDelay` adds the blocker's own phase delay back into the delay
+  line; measured residual after compensation is 0.64 cents worst case.
 
-The modal core shows neither symptom. This also dominates the DWG-vs-modal
-distance measured in 12.4, so that bound cannot be tightened until it is fixed.
+Two things found on the way that contradict the earlier reading of this finding:
+
+- The DC was not what made the DWG-vs-modal distance bad (see 12.4).
+- The C4 regression gate was calibrated against a render carrying that DC as a
+  first-order component. At the source — raw string-bank output, before
+  `output_gain` and the body IR — the offset was mean +0.606 against an AC RMS
+  of 0.376, a ratio of 1.61; on the rendered candidate that `analysis.Compare`
+  actually scores it was +0.0325 against 0.0652, a ratio of 0.50 and 44.6% of
+  total RMS, against 0.15% in the reference. Removing it
+  improves `time_rmse` and `spectral_rmse_db` and worsens `envelope_rmse_db` and
+  `decay_diff_db_per_s`, because a non-decaying offset had been propping the
+  envelope up. `assets/thresholds/c4.json` records the whole before/after and
+  says which two thresholds were loosened and why. Re-fitting the C4 preset
+  against the corrected core is the outstanding follow-up.
 
 **Done when:** you have a baseline performance budget and regression alarms.
 

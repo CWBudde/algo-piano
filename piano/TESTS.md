@@ -85,6 +85,9 @@ assert equality with no tolerance.
 ## `string_waveguide.go`
 
 - `TestTuningAccuracy` (`string_waveguide_test.go`)
+- `TestTuningAccuracyAcrossCompass` (`tuning_test.go`) — all 88 notes, per-register cents tolerances
+- `TestTrebleRegisterIsStableInDWGCore` (`tuning_test.go`) — regression test for the delay-line
+  injection headroom bug (bit-exact silence at MIDI 106-108) and for the loop DC runaway
 - `TestLoopLossEnergyDecaysMonotonically` (`string_waveguide_test.go`)
 - `TestDispersionDetunesPartialsFromHarmonicSeries` (`string_waveguide_test.go`)
 - `TestStrikePositionChangesSpectralTilt` (`string_waveguide_test.go`)
@@ -124,6 +127,11 @@ assert equality with no tolerance.
   - `TestUnisonDetuneProducesBeating` (`string_waveguide_test.go`)
   - `TestStringBankUnisonStringCountByRange` (`ringing_test.go`)
   - `TestPartitionedConvolverMatchesDirectConvolution` (`convolver_test.go`)
+
+## Cross-core comparisons
+
+- `TestDWGModalDistanceIsBounded` (`core_distance_test.go`) — bounds the objective
+  `analysis.Compare` distance between the DWG and modal cores (PLAN.md 12.4)
 
 ## External dependency sanity checks
 

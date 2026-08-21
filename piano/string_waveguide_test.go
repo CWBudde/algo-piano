@@ -33,7 +33,7 @@ func TestTuningAccuracy(t *testing.T) {
 				samples[i] = str.Process()
 			}
 
-			measuredFreq := measureFundamentalFreq(samples, float32(sampleRate))
+			measuredFreq := float32(measureFundamentalNear(samples, sampleRate, float64(freq)))
 			diff := math.Abs(float64(measuredFreq - tt.expectedFreq))
 			if diff > float64(tt.tolerance) {
 				t.Errorf("Note %d: expected %.2f Hz, got %.2f Hz (diff: %.2f Hz, tolerance: %.2f Hz)",
@@ -87,9 +87,16 @@ func TestDispersionDetunesPartialsFromHarmonicSeries(t *testing.T) {
 		dispSamples[i] = disp.Process()
 	}
 
+	// 32768 samples, not 8192: findPeakNear reports raw bin centres, so the
+	// window length is the measurement resolution. At 8192 that is 5.86 Hz,
+	// which is coarser than the shift dispersion actually produces here - the
+	// test passed only because the base and dispersed peaks happened to fall on
+	// opposite sides of a bin boundary. At 32768 the resolution is 1.46 Hz and
+	// all four partials move by at least one full bin (measured 2026-08-21:
+	// -1.46, -1.46, -1.46 and -2.93 Hz for partials 2 to 5).
 	skip := 4096
-	baseAnalysis := baseSamples[skip : skip+8192]
-	dispAnalysis := dispSamples[skip : skip+8192]
+	baseAnalysis := baseSamples[skip : skip+32768]
+	dispAnalysis := dispSamples[skip : skip+32768]
 	fund := findPeakNear(baseAnalysis, sampleRate, f0, 20.0)
 	if fund <= 0 {
 		t.Fatalf("could not detect fundamental")
@@ -211,5 +218,50 @@ func TestUnisonDetuneProducesBeating(t *testing.T) {
 	rSep := math.Abs(r2 - r1)
 	if uSep <= rSep+1.5 {
 		t.Fatalf("expected larger peak separation for detuned unison: unison=%.2fHz reference=%.2fHz", uSep, rSep)
+	}
+}
+
+// TestInjectionOffsetResolvesStrikePositionInTopRegister guards the top of the
+// compass against a strike position that no longer does anything.
+//
+// Only the slots in [delayHeadroom, len-1] are ever read before the write
+// pointer overwrites them, and in the treble that window is most of the buffer:
+// MIDI 108 is 15 slots long. Mapping the raw buffer length and then clamping
+// would fold every position below delayHeadroom/len onto the first observable
+// slot - below 0.27 for MIDI 108 - so the soft pedal's strike movement and the
+// fitted strike_position parameter would produce bit-identical excitation over
+// most of the range the fitter is allowed to explore (knobs.go bounds
+// strike_position to [0.08, 0.45]).
+func TestInjectionOffsetResolvesStrikePositionInTopRegister(t *testing.T) {
+	const sampleRate = 48000
+
+	// MIDI 103, 106 and 108 - the shortest delay lines in the compass.
+	for _, f0 := range []float32{1975.53, 2349.32, 4186.01} {
+		s := NewStringWaveguide(sampleRate, f0)
+
+		// Every offset must land where a tap can still read it.
+		seen := map[int]bool{}
+		for _, pos := range []float32{0.08, 0.18, 0.22, 0.30, 0.45} {
+			off := s.injectionOffset(pos)
+			if off < delayHeadroom || off > len(s.delayLine)-1 {
+				t.Fatalf("f0=%.2f pos=%.2f: offset %d outside observable [%d,%d]",
+					f0, pos, off, delayHeadroom, len(s.delayLine)-1)
+			}
+			seen[off] = true
+		}
+		if len(seen) < 3 {
+			t.Fatalf("f0=%.2f (%d slots): five strike positions collapsed onto %d distinct offsets, want at least 3",
+				f0, len(s.delayLine), len(seen))
+		}
+
+		// And the mapping must stay monotonic across the whole range.
+		prev := -1
+		for pos := float32(0.0); pos <= 1.0; pos += 0.01 {
+			off := s.injectionOffset(pos)
+			if off < prev {
+				t.Fatalf("f0=%.2f: offset not monotonic at pos=%.2f (%d after %d)", f0, pos, off, prev)
+			}
+			prev = off
+		}
 	}
 }
