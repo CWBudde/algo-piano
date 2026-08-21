@@ -132,6 +132,13 @@ func main() {
 	if baseParams.IRWavPath == "" {
 		baseParams.IRWavPath = piano.DefaultIRWavPath
 	}
+	// --no-resonance is an optimization-speed knob, not a model change: it
+	// silences the sympathetic resonance while candidates are scored but must
+	// not leak into the written preset. Remember the preset's own setting and
+	// restore it before the outputs are written, otherwise a staged pipeline
+	// that disables resonance for the cheap early stages would hand every
+	// later stage a preset with resonance permanently switched off.
+	presetResonance := baseParams.ResonanceEnabled
 	if *noResonance {
 		baseParams.ResonanceEnabled = false
 	}
@@ -215,6 +222,10 @@ func main() {
 	result, err := runOptimization(cfg)
 	if err != nil {
 		die("optimization failed: %v", err)
+	}
+
+	if *noResonance && result.bestParams != nil {
+		result.bestParams.ResonanceEnabled = presetResonance
 	}
 
 	if err := writeOutputs(

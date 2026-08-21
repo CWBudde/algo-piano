@@ -241,7 +241,10 @@ fit-c4-stages time_budget="600":
         "max_evals=5000" \
         "resume=false" \
         "extra=--no-resonance"
-    echo "=== Stage 4/5: piano,body-ir,room-ir,mix (joint refinement) ==="
+    # Stages 1-3 pass --no-resonance purely to make evaluation cheaper. That
+    # override is not written into the stage presets, so dropping the flag here
+    # is enough to bring resonance back for the joint and final stages.
+    echo "=== Stage 4/5: piano,body-ir,room-ir,mix (joint refinement, resonance back on) ==="
     just fit-c4 \
         "preset=$out_dir/stage3.json" \
         "output_preset=$out_dir/stage4.json" \
