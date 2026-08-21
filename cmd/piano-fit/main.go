@@ -10,6 +10,7 @@ import (
 	"runtime/pprof"
 	"strings"
 
+	"github.com/cwbudde/algo-piano/analysis"
 	fitcommon "github.com/cwbudde/algo-piano/internal/fitcommon"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
@@ -73,6 +74,9 @@ func main() {
 
 	passFlag := flag.String("pass", "none", "Per-aspect fitting pass: none|attack|sustain|inharmonicity. Restricts which knobs may move and "+
 		"which part of the signal is compared; orthogonal to --optimize")
+	profileFlag := flag.String("profile", "", "Weighting profile used to score candidates (empty = the pass default: "+
+		"legacy-v1 for --pass none, attack-v1/decay-v1/inharmonicity-v1 for the three passes). "+
+		"NOTE: scores are only comparable within one profile")
 	passWindowFlag := flag.String("pass-window", "", "Compare window \"start:end\" in seconds (empty = whole signal). "+
 		"NOTE: the window is applied BEFORE analysis.Compare, so trimLeadingSilence, normalizeRMS and lag estimation all "+
 		"re-run inside the window; windowed scores are NOT comparable to full-signal scores")
@@ -122,6 +126,14 @@ func main() {
 	passSpecification.Window, err = parseWindow(*passWindowFlag)
 	if err != nil {
 		die("invalid --pass-window: %v", err)
+	}
+	passSpecification, err = passSpecification.withProfile(*profileFlag)
+	if err != nil {
+		die("invalid --profile: %v", err)
+	}
+	passScore, err := passScorer(passSpecification)
+	if err != nil {
+		die("invalid scoring profile: %v", err)
 	}
 	referencePaths, err := resolveReferences(notes, refMap, *referencePath)
 	if err != nil {
@@ -244,7 +256,10 @@ func main() {
 		if len(defs) == 0 {
 			die("--pass %s leaves no knobs to optimize with --optimize %s", passSpecification.Name, *optimize)
 		}
-		fmt.Printf("Pass %s: %d of the active knobs may move\n", passSpecification.Name, len(defs))
+		fmt.Printf("Pass %s: %d of the active knobs may move, scored with profile %s\n",
+			passSpecification.Name, len(defs), passSpecification.profileName())
+	} else if passSpecification.profileName() != analysis.ProfileLegacyV1 {
+		fmt.Printf("Scoring with profile %s (scores are not comparable to legacy-v1 runs)\n", passSpecification.profileName())
 	}
 
 	polishIndices := []int(nil)
@@ -300,7 +315,7 @@ func main() {
 		referencePath:    referencePaths[0],
 		presetPath:       *presetPath,
 
-		scorer: passScorer(passSpecification),
+		scorer: passScore,
 		pass:   passSpecification.Name,
 
 		polish:            *polish,
@@ -358,6 +373,7 @@ func main() {
 		perNote:           result.bestNotes,
 		aggregate:         aggregate,
 		pass:              passSpecification.Name,
+		scoreProfile:      passSpecification.profileName(),
 		passWindow:        passWindow,
 		rendersPerEval:    len(targets),
 		polish:            result.polish,

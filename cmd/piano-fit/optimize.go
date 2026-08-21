@@ -31,9 +31,10 @@ type topCandidate struct {
 // stages can be unit-tested without rendering audio.
 type candidateEvaluator func(cand candidate, scratchPath string, settings evalSettings) (optimizationEval, error)
 
-// scorer compares a reference against a rendered candidate. A nil scorer falls
-// back to analysis.Compare.
-type scorer func(reference, candidate []float64, sampleRate int) analysis.Metrics
+// scorer compares a reference against a rendered candidate. midiNote is the
+// note being rendered, so partial analysis can pin the fundamental instead of
+// estimating it. A nil scorer falls back to the default legacy comparison.
+type scorer func(reference, candidate []float64, sampleRate, midiNote int) analysis.Metrics
 
 type optimizationConfig struct {
 	targets          []noteTarget
@@ -93,12 +94,17 @@ type optimizationConfig struct {
 }
 
 // score compares reference and candidate audio using cfg.scorer, defaulting to
-// analysis.Compare when no scorer is configured.
-func (cfg *optimizationConfig) score(reference, cand []float64, sampleRate int) analysis.Metrics {
+// the legacy profile when no scorer is configured.
+//
+// The default path pins the fundamental from the MIDI note rather than letting
+// it be estimated off the reference. That only sharpens the partial metrics,
+// which carry weight 0 in the legacy profile, so the reported Score stays
+// bit-identical to every score recorded so far.
+func (cfg *optimizationConfig) score(reference, cand []float64, sampleRate, midiNote int) analysis.Metrics {
 	if cfg.scorer != nil {
-		return cfg.scorer(reference, cand, sampleRate)
+		return cfg.scorer(reference, cand, sampleRate, midiNote)
 	}
-	return analysis.Compare(reference, cand, sampleRate)
+	return analysis.CompareWithOptions(reference, cand, sampleRate, analysis.Options{MIDINote: midiNote})
 }
 
 type evalSettings struct {
@@ -656,7 +662,7 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchPath stri
 		if err != nil {
 			return optimizationEval{}, err
 		}
-		m := cfg.score(referenceFor(t, settings), mono, settings.sampleRate)
+		m := cfg.score(referenceFor(t, settings), mono, settings.sampleRate, t.note)
 		reports = append(reports, noteReport{
 			Note:          t.note,
 			ReferencePath: t.referencePath,

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/cwbudde/algo-piano/analysis"
 	"github.com/cwbudde/algo-piano/piano"
 )
 
@@ -205,8 +206,12 @@ func TestWindowSliceBounds(t *testing.T) {
 }
 
 func TestPassScorerWindowsBothSignals(t *testing.T) {
-	if passScorer(passSpec{Name: passNone}) != nil {
-		t.Fatal("the none pass must leave the scorer on analysis.Compare")
+	none, err := passScorer(passSpec{Name: passNone})
+	if err != nil {
+		t.Fatalf("passScorer(none): %v", err)
+	}
+	if none != nil {
+		t.Fatal("an unrestricted legacy-profile run must leave the scorer on the default")
 	}
 
 	const sampleRate = 8000
@@ -217,11 +222,11 @@ func TestPassScorerWindowsBothSignals(t *testing.T) {
 		cand[i] = 0
 	}
 
-	full := passScorer(passSpec{Name: passSustain})
-	windowed := passScorer(passSpec{Name: passSustain, Window: windowSpec{StartSec: 0.2, EndSec: 0.5}})
+	full := mustPassScorer(t, passSpec{Name: passSustain})
+	windowed := mustPassScorer(t, passSpec{Name: passSustain, Window: windowSpec{StartSec: 0.2, EndSec: 0.5}})
 
-	fullScore := full(ref, cand, sampleRate).Score
-	windowedScore := windowed(ref, cand, sampleRate).Score
+	fullScore := full(ref, cand, sampleRate, 60).Score
+	windowedScore := windowed(ref, cand, sampleRate, 60).Score
 	if math.Abs(fullScore-windowedScore) < 1e-9 {
 		t.Fatalf("windowing had no effect: %v vs %v", fullScore, windowedScore)
 	}
@@ -316,5 +321,109 @@ func TestPassSeedsRenderControlsFromReport(t *testing.T) {
 	}
 	if math.Abs(float64(params.HighFreqDamping)-0.31) > 1e-6 {
 		t.Fatalf("high_freq_damping = %v, want the resumed 0.31", params.HighFreqDamping)
+	}
+}
+
+func mustPassScorer(t *testing.T, spec passSpec) scorer {
+	t.Helper()
+	s, err := passScorer(spec)
+	if err != nil {
+		t.Fatalf("passScorer(%q): %v", spec.Name, err)
+	}
+	if s == nil {
+		t.Fatalf("passScorer(%q) returned no scorer", spec.Name)
+	}
+	return s
+}
+
+// Each pass must score with the profile that describes the aspect it fits.
+// Pairing the attack knob allowlist with a full-signal legacy score would let
+// the optimizer buy tail accuracy with attack accuracy, which is precisely
+// what a pass exists to prevent.
+func TestPassesCarryTheirWeightingProfile(t *testing.T) {
+	want := map[string]string{
+		passNone:          analysis.ProfileLegacyV1,
+		passAttack:        analysis.ProfileAttackV1,
+		passSustain:       analysis.ProfileDecayV1,
+		passInharmonicity: analysis.ProfileInharmonicityV1,
+	}
+	for name, profile := range want {
+		spec, err := parsePass(name)
+		if err != nil {
+			t.Fatalf("parsePass(%q): %v", name, err)
+		}
+		if got := spec.profileName(); got != profile {
+			t.Fatalf("pass %q scores with profile %q, want %q", name, got, profile)
+		}
+	}
+}
+
+// The profile a pass scores with must actually reach analysis, otherwise the
+// allowlist is the only thing a pass does.
+func TestPassScorerAppliesTheProfileWeights(t *testing.T) {
+	const sampleRate = 8000
+	ref := syntheticReference(t, 60, sampleRate, 1.5)
+	cand := syntheticReference(t, 60, sampleRate, 1.5)
+	for i := range cand {
+		cand[i] *= 1.0 + 0.35*float64(i)/float64(len(cand))
+	}
+
+	for _, name := range []string{passAttack, passSustain, passInharmonicity} {
+		spec, err := parsePass(name)
+		if err != nil {
+			t.Fatalf("parsePass(%q): %v", name, err)
+		}
+		m := mustPassScorer(t, spec)(ref, cand, sampleRate, 60)
+		if m.ScoreProfile != spec.profileName() {
+			t.Fatalf("pass %q reported profile %q, want %q", name, m.ScoreProfile, spec.profileName())
+		}
+		if math.IsNaN(m.Score) || m.Score < 0 || m.Score > 1 {
+			t.Fatalf("pass %q produced score %v, want a finite value in [0,1]", name, m.Score)
+		}
+	}
+}
+
+// --profile overrides the pass default, and an unknown name is rejected rather
+// than silently falling back to a profile the user did not ask for.
+func TestWithProfileOverridesAndValidates(t *testing.T) {
+	spec, err := parsePass(passAttack)
+	if err != nil {
+		t.Fatalf("parsePass: %v", err)
+	}
+	overridden, err := spec.withProfile(" Balanced-V2 ")
+	if err != nil {
+		t.Fatalf("withProfile: %v", err)
+	}
+	if overridden.profileName() != analysis.ProfileBalancedV2 {
+		t.Fatalf("override = %q, want %q", overridden.profileName(), analysis.ProfileBalancedV2)
+	}
+	if spec.profileName() != analysis.ProfileAttackV1 {
+		t.Fatalf("withProfile mutated the receiver: %q", spec.profileName())
+	}
+	if kept, err := spec.withProfile(""); err != nil || kept.profileName() != analysis.ProfileAttackV1 {
+		t.Fatalf("empty override = %q, %v; want the pass default", kept.profileName(), err)
+	}
+	if _, err := spec.withProfile("does-not-exist"); err == nil {
+		t.Fatal("unknown profile must be rejected")
+	}
+}
+
+// An unrestricted run scored with a named profile still needs a scorer: the
+// profile is orthogonal to the knob allowlist.
+func TestProfileWithoutPassStillScores(t *testing.T) {
+	spec, err := parsePass(passNone)
+	if err != nil {
+		t.Fatalf("parsePass: %v", err)
+	}
+	spec, err = spec.withProfile(analysis.ProfileBalancedV2)
+	if err != nil {
+		t.Fatalf("withProfile: %v", err)
+	}
+	s, err := passScorer(spec)
+	if err != nil {
+		t.Fatalf("passScorer: %v", err)
+	}
+	if s == nil {
+		t.Fatal("a non-legacy profile must install a scorer even with --pass none")
 	}
 }
