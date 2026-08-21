@@ -256,3 +256,19 @@ func writeTempIRWav(t *testing.T, left []float32, right []float32, sampleRate in
 	t.Cleanup(func() { _ = os.Remove(f.Name()) })
 	return f.Name()
 }
+
+// removeDCOffset applies a one-pole DC blocker (cutoff ~7.6 Hz at 48 kHz).
+// Waveguide output carries a large, slowly decaying DC component, which makes
+// zero-crossing pitch measurement report 0 Hz; blocking DC restores it.
+func removeDCOffset(s []float32) []float32 {
+	const pole = 0.999
+	out := make([]float32, len(s))
+	var prevIn, prevOut float64
+	for i, v := range s {
+		x := float64(v)
+		y := x - prevIn + pole*prevOut
+		prevIn, prevOut = x, y
+		out[i] = float32(y)
+	}
+	return out
+}

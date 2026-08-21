@@ -20,7 +20,7 @@ down into silence.
 | CPU            | 12th Gen Intel Core i7-1255U (12 threads, AVX2, no AVX-512) |
 | OS             | Linux 6.8.0 amd64                                           |
 | Go             | 1.26.5                                                      |
-| Date           | 2026-08-16                                                  |
+| Date           | 2026-08-16; convolver and idle sections 2026-08-21          |
 | `algo-vecmath` | v0.1.3                                                      |
 
 Note that `algo-vecmath` v0.1.3 has **no arm64 NEON `RotateDecay*` kernel**
@@ -78,6 +78,72 @@ a sustained group never deactivates, so they stall there indefinitely.
 
 Cost was previously a function of how long the run had been going, which also
 made every earlier modal benchmark unreliable.
+
+## Convolver cost
+
+`BenchmarkSoundboardConvolverIRLength` / `BenchmarkBodyConvolverIRLength`, one
+128-frame block per iteration at the production partition size of 128 — the
+shape of a single audio callback. The realtime budget for that block at 48 kHz
+is **2.67 ms**.
+
+| IR length     | Room (stereo) | Body (mono) |
+| ------------- | ------------- | ----------- |
+| 128 (2.7 ms)  | 10 µs         | 10 µs       |
+| 1024 (21 ms)  | 86 µs         | 77 µs       |
+| 8192 (170 ms) | 0.69 ms       | 0.40 ms     |
+| 48000 (1 s)   | 5.3 ms        | 1.5 ms      |
+| 192000 (4 s)  | 61 ms         | 16 ms       |
+
+Cost grows linearly with IR length, as uniform partitioning implies. The
+practical consequence: **the stereo room convolver already exceeds the whole
+128-frame realtime budget at a one-second IR** (5.3 ms against 2.67 ms), and a
+four-second room IR costs roughly 23x the budget. Long room IRs are not viable
+at `partSize = 128`.
+
+`BenchmarkSoundboardConvolverPartitionSize` / `BenchmarkBodyConvolverPartitionSize`
+render a fixed 4096 frames per iteration so every partition size does the same
+acoustic work. Room IR is 1 s, body IR is 8192 taps. The right-hand columns
+normalize to one 128-frame block for comparison against the budget above.
+
+| Partition | Room / 4096 fr | Room / 128 fr | Body / 4096 fr | Body / 128 fr |
+| --------- | -------------- | ------------- | -------------- | ------------- |
+| 64        | 229 ms         | 7.2 ms        | 86 ms          | 2.7 ms        |
+| 128       | 123 ms         | 3.9 ms        | 33 ms          | 1.0 ms        |
+| 256       | 42 ms          | 1.3 ms        | 14 ms          | 0.43 ms       |
+| 512       | 41 ms          | 1.3 ms        | 5.3 ms         | 0.16 ms       |
+| 1024      | 48 ms          | 1.5 ms        | 5.7 ms         | 0.18 ms       |
+
+Partition size, not IR length, is the lever that brings the room convolver back
+inside budget: moving from 128 to 256 cuts its cost by about 3x and is the
+difference between over and under the 2.67 ms line at a one-second IR. Returns
+flatten past 256 for the room path while the mono body path keeps improving to 512. The cost is latency — one partition of it.
+
+**Caveat on absolute values.** These figures were taken on a machine carrying a
+load average of 15-25 from unrelated work, and repeat runs of the same case
+spread by up to 2x. The scaling shape (linear in IR length, sharply falling in
+partition size) reproduced across four runs; the absolute milliseconds should be
+re-measured on a quiet machine before being adopted as a budget. Reproduce with:
+
+```bash
+go test ./piano/ -run='^$' -bench='Convolver' -benchmem -benchtime=50x -count=5
+```
+
+## Idle string bank
+
+`BenchmarkStringBankIdle`: the full persistent 88-key bank, physical coupling
+configured, nothing struck. This is PLAN.md 9.6's "idle full-string-bank cost".
+
+| Core  | Pedal up | Pedal down |
+| ----- | -------- | ---------- |
+| DWG   | 245 ns   | 182 ns     |
+| Modal | 128 ns   | 199 ns     |
+
+Roughly 0.1-0.25 µs per 128-frame block against a 2.67 ms budget, i.e. about
+0.01% of realtime, with zero allocations. Owning the whole bank costs nothing
+when nothing is sounding: `StringBank.Process` short-circuits on an empty active
+set, and a held sustain pedal does not by itself put groups into that set. The
+pedal state therefore does not matter here, and the small differences in the
+table are noise.
 
 ## Polyphony scaling
 
