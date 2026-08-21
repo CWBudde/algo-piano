@@ -200,6 +200,96 @@ The answer the benchmark exists to give is therefore: **owning the whole 88-key
 persistent bank costs nothing measurable when nothing is sounding.** Any future
 regression here would mean the empty-active-set short circuit stopped working.
 
+## Excitation shape cache
+
+_Measured 2026-08-21, Go 1.26.5, same machine as above._
+
+`injectAtPosition` evaluated `math.Sin` once per mode per call to get the mode
+shape at the strike position. Every excitation path went through it: the hammer
+during contact, each coupling edge, and — by far the heaviest — sympathetic
+resonance, which with the sustain pedal down drives all 128 groups once per
+sample.
+
+The shape vector depends only on `(order[], strikePos)`, and `order` is fixed at
+construction, so it is now cached per group: one precomputed slot for each of the
+two compile-time strike positions (resonance 0.82, coupling 0.9) plus a
+one-entry cache for the hammer position, keyed on the _clamped_ value. Steady
+state evaluates no transcendental at all. The vectors are carved out of the
+group's existing `soaBuf`, so the path stays allocation-free, and they are
+deliberately group-owned rather than arena-backed: they are static, and the arena
+only compacts state that evolves.
+
+`BenchmarkModalInjectAtPosition`, one mid-register group (~24 modes), one
+excitation call per iteration, `benchstat` over 12 interleaved runs:
+
+| Path                    | Before | After   | Change                     |
+| ----------------------- | ------ | ------- | -------------------------- |
+| `resonance` (pos 0.82)  | 303 ns | 47.1 ns | **−84.5%** (p=0.000, n=12) |
+| `coupling` (pos 0.9)    | 337 ns | 42.4 ns | **−87.4%** (p=0.000, n=12) |
+| `hammer_fixedPos`       | 344 ns | 41.5 ns | **−87.9%** (p=0.000, n=12) |
+| `hammer_alternatingPos` | 360 ns | 304 ns  | ~ (p=0.219, n=12)          |
+
+`hammer_alternatingPos` is the worst case for the single hammer slot: a normal
+and a soft-pedal-shifted strike position in strict alternation, so the cache
+refills on every call. It is not a regression — the refill costs what the old
+inline computation cost — and it only occurs while two strikes with different
+positions overlap on the same note.
+
+At block level, `BenchmarkModalResonanceInjection` (8 keys, sustain held, all 128
+groups undamped targets, physical coupling), the same interleaved comparison
+over 10 runs:
+
+| Config                    | Before  | After   | Change                     |
+| ------------------------- | ------- | ------- | -------------------------- |
+| `perNoteFilter` (default) | 6.12 ms | 1.78 ms | **−70.9%** (p=0.000, n=10) |
+| `flatDrive`               | 5.77 ms | 1.48 ms | **−74.4%** (p=0.000, n=10) |
+
+With resonance **disabled** the change is not measurable above this machine's
+noise. `BenchmarkModalPolyphonyScaling` (all 10 sub-benchmarks) and
+`BenchmarkStringBankCouplingModes` (all 30) report `~`.
+
+`BenchmarkModalKernels` should be read as **no result**, not as a small win. Two
+independent paired runs disagree with each other about which variant moved:
+
+| Variant           | Run 1 (loaded) | Run 2 (quiet)    |
+| ----------------- | -------------- | ---------------- |
+| `arena`           | ~ (p=0.052)    | ~ (p=0.219)      |
+| `pergroup_scalar` | ~ (p=0.052)    | ~ (p=0.977)      |
+| `pergroup_accum`  | ~ (p=0.219)    | −21.2% (p=0.045) |
+| `pergroup_rotate` | ~ (p=0.068)    | −47.4% (p=0.002) |
+
+Run-to-run spreads are ±31–69%, and a −47% swing in `pergroup_rotate` is not
+physically plausible for a change that only touches the excitation path. These
+are sampling artefacts of a noisy machine, and the p-values that cross 0.05 are
+not evidence of anything. Do not quote them.
+
+The flat result is expected: coupling injection runs once per edge rather than
+once per note per sample, and `BenchmarkStringBankCouplingModes` uses the DWG
+core, which never touches this code. Resonance is where the cost was.
+
+Output is **bit-exact** against the previous implementation, verified by hashing
+full renders (three configurations × scalar and arena kernels) before and after.
+The division by the partial order is deliberately _not_ folded into the table:
+folding it reassociates `force*sg*modeScale*shape/order` and was measured to
+change the float32 rounding of the render. Only the `math.Sin` and the
+inaudible-mode branch move into the table.
+
+### A note on measuring this
+
+The figures above were taken by building two test binaries (baseline and
+change), then alternating them round by round rather than running all of one and
+then all of the other. The machine was under heavy concurrent load, and a
+straight before-then-after run produced obvious artefacts — including a −49%
+"improvement" in a DWG benchmark this change cannot touch. Interleaving cancels
+the drift; the per-run spread stays wide, but the paired comparison is sound.
+
+The whole comparison was then repeated once the machine went quiet. The
+microbenchmark reproduced closely (−86.3%, −87.5%, −85.5%, and `~` for the
+alternating case), which is what makes those figures trustworthy.
+`BenchmarkModalKernels` did _not_ reproduce — see above. Repeating a paired run
+end to end, and requiring it to agree with itself, is worth more here than any
+single p-value.
+
 ## Polyphony scaling
 
 `BenchmarkModalPolyphonyScaling`, sustain held, **coupling disabled**. Coupling

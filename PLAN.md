@@ -618,9 +618,12 @@ cut sustained-decay cost from 4.2 ms to 0.59 ms — a larger win than the SIMD w
 
 **Follow-ups not in scope here:**
 
-- `injectAtPosition` calls `math.Sin` per mode per sample during hammer contact
-  (`piano/modal_group.go`), likely costlier than the rotate loop. Cache the shape
-  vector keyed on `strikePos`.
+- [x] `injectAtPosition` called `math.Sin` per mode per excitation call
+      (`piano/modal_group.go`). **Done:** the shape vector is now cached per group
+      — one precomputed slot for each of the two fixed strike positions
+      (resonance 0.82, coupling 0.9) plus a one-entry cache for the hammer
+      position — so the steady-state excitation path evaluates no transcendental
+      at all. Output stays bit-exact; see BENCHMARKS.md "Excitation shape cache".
 - Revisit if `algo-dsp` Phase 41 ships, or if `VEC-306` lands and arm64 becomes
   a target.
 

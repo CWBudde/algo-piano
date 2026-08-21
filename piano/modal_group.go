@@ -6,7 +6,19 @@ const modalMaxPartials = 8
 
 // soaFieldCount is the number of parallel float32 mode arrays carved out of
 // the single backing allocation in newModalStringGroup.
-const soaFieldCount = 9
+const soaFieldCount = 12
+
+// Fixed strike positions used by the non-hammer excitation paths. Their shape
+// vectors are precomputed once per group, so the steady-state injection path
+// evaluates no transcendental at all.
+const (
+	modalResonanceStrikePos = float32(0.82)
+	modalCouplingStrikePos  = float32(0.9)
+)
+
+// modalNoStrikePos is a sentinel outside the clamped strike-position range, so
+// the hammer shape cache always misses on its first use.
+const modalNoStrikePos = float32(-1)
 
 // ModalStringGroup is a low-CPU per-note ringing model using damped sinusoidal modes.
 //
@@ -29,6 +41,18 @@ type ModalStringGroup struct {
 	gain          []float32
 	acc           []float32 // per-sample scratch; all-zero between samples
 	soaBuf        []float32
+
+	// Cached excitation shape vectors, one entry per mode, holding
+	// modalShape(order, strikePos) with inaudible modes zeroed. They are
+	// group-owned and never repointed at the modal arena: unlike the evolving
+	// mode state they are static, and the arena only compacts what changes.
+	shapeRes    []float32 // strike position modalResonanceStrikePos
+	shapeCoup   []float32 // strike position modalCouplingStrikePos
+	shapeHammer []float32 // strike position hammerShapePos, filled on demand
+
+	// hammerShapePos is the clamped strike position shapeHammer was filled for,
+	// or modalNoStrikePos when it holds nothing.
+	hammerShapePos float32
 
 	order     []int32 // partial order per mode, for modalShape
 	modeStart []int32 // len == stringCount+1, monotonically non-decreasing
@@ -135,15 +159,21 @@ func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringG
 		decayDamped:   soaBuf[6*n : 7*n : 7*n],
 		gain:          soaBuf[7*n : 8*n : 8*n],
 		acc:           soaBuf[8*n : 9*n : 9*n],
-		soaBuf:        soaBuf,
-		order:         make([]int32, n),
-		modeStart:     modeStart,
-		gains:         append([]float32(nil), gains...),
-		partials:      maxPartials,
-		gainExp:       gainExp,
-		excitation:    excitation,
-		undampedK:     undampedK,
-		dampedK:       dampedK,
+		shapeRes:      soaBuf[9*n : 10*n : 10*n],
+		shapeCoup:     soaBuf[10*n : 11*n : 11*n],
+		shapeHammer:   soaBuf[11*n : 12*n : 12*n],
+
+		hammerShapePos: modalNoStrikePos,
+
+		soaBuf:     soaBuf,
+		order:      make([]int32, n),
+		modeStart:  modeStart,
+		gains:      append([]float32(nil), gains...),
+		partials:   maxPartials,
+		gainExp:    gainExp,
+		excitation: excitation,
+		undampedK:  undampedK,
+		dampedK:    dampedK,
 	}
 
 	// Pass 2: fill the mode parameters.
@@ -175,6 +205,9 @@ func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringG
 			g.decayDamped[idx] = modalDecay(lossGain, partialF, order, true, dampedK, highFreqDamping)
 		}
 	}
+
+	g.fillShapeVector(g.shapeRes, modalResonanceStrikePos)
+	g.fillShapeVector(g.shapeCoup, modalCouplingStrikePos)
 
 	g.initResonanceFilters(sampleRate)
 	g.updateDamperState()
@@ -217,6 +250,55 @@ func modalDecay(lossGain float32, freq float32, order int, damped bool, scale fl
 
 func modalShape(order int, strikePos float32) float32 {
 	return float32(math.Sin(math.Pi * float64(order) * float64(strikePos)))
+}
+
+// clampStrikePos keeps a strike position away from the string ends, where every
+// mode shape vanishes and the excitation would be silent.
+func clampStrikePos(strikePos float32) float32 {
+	if strikePos < 0.01 {
+		return 0.01
+	}
+	if strikePos > 0.99 {
+		return 0.99
+	}
+	return strikePos
+}
+
+// fillShapeVector precomputes the per-mode shape factors for one strike
+// position, with the inaudible-mode cutoff folded in as a zero so the injection
+// loop needs no branch.
+//
+// The division by the partial order is deliberately left in the injection loop:
+// folding it in here would reassociate the product and change the float32
+// rounding, which the modal render is required to reproduce bit-for-bit.
+//
+// strikePos must already be clamped.
+func (g *ModalStringGroup) fillShapeVector(dst []float32, strikePos float32) {
+	for idx, order := range g.order {
+		shape := modalShape(int(order), strikePos)
+		if shape > -1e-6 && shape < 1e-6 {
+			shape = 0
+		}
+		dst[idx] = shape
+	}
+}
+
+// shapeVector returns the cached shape weights for a clamped strike position,
+// refilling the single hammer slot when it holds a different position. The two
+// fixed positions have dedicated slots so alternating between them and a hammer
+// strike never thrashes the cache.
+func (g *ModalStringGroup) shapeVector(strikePos float32) []float32 {
+	switch strikePos {
+	case modalResonanceStrikePos:
+		return g.shapeRes
+	case modalCouplingStrikePos:
+		return g.shapeCoup
+	}
+	if strikePos != g.hammerShapePos {
+		g.fillShapeVector(g.shapeHammer, strikePos)
+		g.hammerShapePos = strikePos
+	}
+	return g.shapeHammer
 }
 
 func (g *ModalStringGroup) initResonanceFilters(sampleRate int) {
@@ -316,26 +398,12 @@ func (g *ModalStringGroup) injectAtPosition(force float32, strikePos float32, mo
 		return
 	}
 	force *= g.excitation
-	if strikePos < 0.01 {
-		strikePos = 0.01
-	}
-	if strikePos > 0.99 {
-		strikePos = 0.99
-	}
+	shape := g.shapeVector(clampStrikePos(strikePos))
 	for si := 0; si+1 < len(g.modeStart); si++ {
-		sg := float32(1.0)
-		if si < len(g.gains) {
-			sg = g.gains[si]
-		}
+		amp := force * g.stringGain(si) * modeScale
 		lo, hi := int(g.modeStart[si]), int(g.modeStart[si+1])
 		for idx := lo; idx < hi; idx++ {
-			order := g.order[idx]
-			shape := modalShape(int(order), strikePos)
-			if shape > -1e-6 && shape < 1e-6 {
-				continue
-			}
-			amp := force * sg * modeScale * shape / float32(order)
-			g.re[idx] += amp
+			g.re[idx] += amp * shape[idx] / float32(g.order[idx])
 		}
 	}
 	g.active = true
@@ -346,7 +414,7 @@ func (g *ModalStringGroup) injectResonance(energy float32) {
 	if energy == 0 {
 		return
 	}
-	g.injectAtPosition(energy, 0.82, 0.55)
+	g.injectAtPosition(energy, modalResonanceStrikePos, 0.55)
 	g.resonanceEnergized = true
 }
 
@@ -365,7 +433,7 @@ func (g *ModalStringGroup) injectHammerForce(force float32, strikePos float32) {
 }
 
 func (g *ModalStringGroup) injectCouplingForce(force float32) {
-	g.injectAtPosition(force, 0.9, 0.45)
+	g.injectAtPosition(force, modalCouplingStrikePos, 0.45)
 }
 
 func (g *ModalStringGroup) processSample(unisonCrossfeed float32) float32 {
