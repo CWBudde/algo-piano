@@ -45,7 +45,7 @@ bench:
     go test -run=^$ -bench=. -benchmem ./...
 
 # Run all checks (formatting, linting, tests, tidiness)
-ci: check-formatted test lint check-tidy
+ci: check-formatted test lint check-tidy gate-c4
 
 # Clean build artifacts
 clean:
@@ -115,6 +115,65 @@ distance-c4 reference="reference/c4.wav" preset="assets/presets/default.json" ou
         --release-after "$release_after" \
         --max-duration 30 \
         "${extra_write_candidate[@]}"
+
+# Skips (exit 0) when the reference is absent: reference/*.wav is gitignored by
+# design, so a fresh clone has no reference and `just ci` must still be green.
+# C4 regression gate - fail when a distance metric exceeds its calibrated cap
+gate-c4 reference="reference/c4.wav" preset="assets/presets/fitted-c4-mayfly.json" thresholds="assets/thresholds/c4.json" velocity="118" release_after="3.5":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # just passes recipe arguments positionally, so `name=value` arrives as a raw
+    # string in whatever slot it landed in. Strip the `name=` prefix and route the
+    # value to the parameter it names, so arguments may be given in any order.
+    names=(reference preset thresholds velocity release_after)
+    raw=("{{reference}}" "{{preset}}" "{{thresholds}}" "{{velocity}}" "{{release_after}}")
+    defaults=("reference/c4.wav" "assets/presets/fitted-c4-mayfly.json" "assets/thresholds/c4.json" "118" "3.5")
+    declare -A arg=()
+    for i in "${!names[@]}"; do
+        arg["${names[$i]}"]="${defaults[$i]}"
+    done
+    for i in "${!raw[@]}"; do
+        key="${raw[$i]%%=*}"
+        if [[ "${raw[$i]}" != *=* ]] || [[ " ${names[*]} " != *" ${key} "* ]]; then
+            arg["${names[$i]}"]="${raw[$i]}"
+        fi
+    done
+    for i in "${!raw[@]}"; do
+        key="${raw[$i]%%=*}"
+        if [[ "${raw[$i]}" == *=* ]] && [[ " ${names[*]} " == *" ${key} "* ]]; then
+            arg["$key"]="${raw[$i]#*=}"
+        fi
+    done
+    reference="${arg[reference]}"
+    preset="${arg[preset]}"
+    thresholds="${arg[thresholds]}"
+    velocity="${arg[velocity]}"
+    release_after="${arg[release_after]}"
+    if [ ! -f "$reference" ]; then
+        echo "gate: SKIP - reference \"$reference\" not found (reference WAVs are gitignored; supply one to enable the gate)"
+        exit 0
+    fi
+    if [ ! -f "$thresholds" ]; then
+        echo "gate: SKIP - thresholds \"$thresholds\" not found"
+        exit 0
+    fi
+    # Build rather than `go run`: go run collapses any non-zero exit into 1, and
+    # the gate's exit 2 is the whole point.
+    bin="$(mktemp -d)/piano-distance"
+    trap 'rm -rf "$(dirname "$bin")"' EXIT
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go build -o "$bin" ./cmd/piano-distance
+    "$bin" \
+        --reference "$reference" \
+        --preset "$preset" \
+        --thresholds "$thresholds" \
+        --note 60 \
+        --velocity "$velocity" \
+        --sample-rate 48000 \
+        --decay-dbfs -90 \
+        --decay-hold-blocks 6 \
+        --min-duration 2.0 \
+        --release-after "$release_after" \
+        --max-duration 30
 
 # Synthesize a stereo IR WAV for soundboard/body convolution
 ir-synth output="assets/ir/synth_96k.wav" sample_rate="96000" duration="2.0" modes="128" seed="1":
