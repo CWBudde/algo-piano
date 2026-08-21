@@ -8,7 +8,7 @@ import (
 type ringingGroup interface {
 	resonanceTarget
 	setKeyDown(down bool)
-	setSustain(down bool)
+	setSustainAmount(amount float32)
 	injectHammerForce(force float32, strikePos float32)
 	injectCouplingForce(force float32)
 	processSample(unisonCrossfeed float32) float32
@@ -26,10 +26,10 @@ type RingingStringGroup struct {
 	gains      []float32
 	resFilters []noteResonator
 
-	keyDown     bool
-	sustainDown bool
-	active      bool
-	quietBlocks int
+	keyDown       bool
+	sustainAmount float32
+	active        bool
+	quietBlocks   int
 }
 
 type couplingEdge struct {
@@ -125,24 +125,33 @@ func (g *RingingStringGroup) setKeyDown(down bool) {
 	}
 }
 
-func (g *RingingStringGroup) setSustain(down bool) {
-	g.sustainDown = down
+func (g *RingingStringGroup) setSustainAmount(amount float32) {
+	g.sustainAmount = clampf(amount, 0, 1)
 	g.updateDamperState()
-	if down {
+	if g.sustainAmount > 0 {
 		g.active = true
 		g.quietBlocks = 0
 	}
 }
 
 func (g *RingingStringGroup) updateDamperState() {
-	engageDamper := !g.keyDown && !g.sustainDown
+	damping := g.damperAmount()
 	for _, s := range g.strings {
-		s.SetDamper(engageDamper)
+		s.SetDamperAmount(damping)
 	}
 }
 
+// damperAmount is how firmly the damper rests on the string: a held key lifts
+// it completely, otherwise the pedal lifts it in proportion to its depth.
+func (g *RingingStringGroup) damperAmount() float32 {
+	if g.keyDown {
+		return 0
+	}
+	return 1 - g.sustainAmount
+}
+
 func (g *RingingStringGroup) isUndamped() bool {
-	return g.keyDown || g.sustainDown
+	return g.keyDown || g.sustainAmount > 0
 }
 
 func (g *RingingStringGroup) isActive() bool {
@@ -697,12 +706,22 @@ func (sb *StringBank) SetKeyDown(note int, down bool) {
 }
 
 func (sb *StringBank) SetSustain(down bool) {
+	if down {
+		sb.SetSustainAmount(1)
+		return
+	}
+	sb.SetSustainAmount(0)
+}
+
+// SetSustainAmount applies a continuous pedal depth in [0,1] to every group in
+// the persistent bank, including notes that have not been struck yet.
+func (sb *StringBank) SetSustainAmount(amount float32) {
 	for note := sb.minNote; note <= sb.maxNote; note++ {
 		g := sb.activeGroup(note)
 		if g == nil {
 			continue
 		}
-		g.setSustain(down)
+		g.setSustainAmount(amount)
 	}
 }
 
@@ -919,6 +938,14 @@ func (r *RingingState) SetSustain(down bool) {
 		return
 	}
 	r.bank.SetSustain(down)
+}
+
+// SetSustainAmount applies a continuous sustain pedal depth in [0,1].
+func (r *RingingState) SetSustainAmount(amount float32) {
+	if r == nil || r.bank == nil {
+		return
+	}
+	r.bank.SetSustainAmount(amount)
 }
 
 func (r *RingingState) Process(numFrames int, hammer *HammerExciter) []float32 {

@@ -36,6 +36,7 @@ func main() {
 	js.Global().Set("wasmKeyDown", js.FuncOf(wasmKeyDown))
 	js.Global().Set("wasmNoteOff", js.FuncOf(wasmNoteOff))
 	js.Global().Set("wasmSetSustain", js.FuncOf(wasmSetSustain))
+	js.Global().Set("wasmSetSustainAmount", js.FuncOf(wasmSetSustainAmount))
 	js.Global().Set("wasmSetCouplingMode", js.FuncOf(wasmSetCouplingMode))
 	js.Global().Set("wasmSetStringModel", js.FuncOf(wasmSetStringModel))
 	js.Global().Set("wasmLoadIR", js.FuncOf(wasmLoadIR))
@@ -103,6 +104,16 @@ func wasmSetSustain(this js.Value, args []js.Value) interface{} {
 	}
 	down := args[0].Bool()
 	globalPiano.SetSustainPedal(down)
+	return nil
+}
+
+// wasmSetSustainAmount sets continuous sustain pedal depth in [0,1], mapping a
+// half-pedal onto physical damper contact rather than a release timer.
+func wasmSetSustainAmount(this js.Value, args []js.Value) interface{} {
+	if len(args) < 1 || globalPiano == nil {
+		return nil
+	}
+	globalPiano.SetSustainPedalAmount(float32(args[0].Float()))
 	return nil
 }
 

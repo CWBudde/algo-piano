@@ -40,7 +40,7 @@ Main struct owns:
 - `BodyConvolver` (mono IR)
 - `SoundboardConvolver` (stereo IR)
 - optional `ResonanceEngine`
-- pedal states (`sustainPedal`, `softPedal`)
+- pedal states (`sustainAmount` in `[0,1]`, `softPedal`)
 
 Important behavior:
 
@@ -50,6 +50,21 @@ Important behavior:
   - last velocities
   - sustain/soft pedal state
 - Model switch does **not** preserve existing string internal energy; it reinitializes the ringing engine.
+
+Sustain pedal semantics:
+
+- `SetSustainPedalAmount(a)` takes a continuous pedal depth in `[0,1]` and is the
+  primitive; `SetSustainPedal(down)` is the `1.0` / `0.0` case of it.
+- The depth is applied instrument-wide to **every** group in the persistent
+  bank, including notes that have never been struck, so sympathetic resonance
+  and coupling see the same damper state as the struck notes.
+- Per group, damper contact is `0` while the key is held and `1 - amount`
+  otherwise. There is no timer anywhere in the release path: `NoteOff` only
+  clears the key, and the string keeps ringing exactly as long as its current
+  damping allows.
+- A group counts as undamped (and is therefore a valid resonance/coupling
+  target) whenever the key is down or the pedal depth is greater than zero, so a
+  half-pedal still rings sympathetically.
 
 ### 2.2 `RingingState` and `StringBank`
 
@@ -62,7 +77,7 @@ Important behavior:
 
 Each group implements a shared interface with:
 
-- key/sustain damping control
+- key/sustain damping control (continuous damper amount, not a boolean)
 - hammer force injection
 - coupling force injection
 - per-sample processing
@@ -83,7 +98,7 @@ Per string state:
 
 - fractional delay line (pitch via `delayLength = fs/f0`)
 - loop reflection gain (`baseReflection`)
-- damper reflection override (`damperReflection`)
+- damper reflection override (`damperReflection`), blended in by `damperAmount`
 - one-pole loop lowpass (`lowpassCoeff`, `loopState`)
 - simple dispersion allpass chain (`dispersionCoeff`, 2-stage state)
 
@@ -142,7 +157,10 @@ Key knobs:
 Damper semantics:
 
 - Key up + no sustain -> use damped decay
-- Key down or sustain down -> use undamped decay
+- Key down or sustain fully down -> use undamped decay
+- Partial pedal -> per-mode lerp between the damped and undamped decay tables
+  (the `0` and `1` cases stay exact table copies, so full-pedal output is
+  bit-identical to the boolean behavior)
 
 ## 4. Shared Subsystems (Both Modes)
 
@@ -246,7 +264,7 @@ Invalid `string_model` values are rejected (`must be one of dwg|modal`).
 `cmd/piano-wasm` exports JS-callable functions:
 
 - init and render: `wasmInit`, `wasmProcessBlock`
-- note and pedal control: `wasmNoteOn`, `wasmKeyDown`, `wasmNoteOff`, `wasmSetSustain`
+- note and pedal control: `wasmNoteOn`, `wasmKeyDown`, `wasmNoteOff`, `wasmSetSustain`, `wasmSetSustainAmount`
 - model/coupling control: `wasmSetStringModel`, `wasmSetCouplingMode`
 
 Frontend (`web/main.js`) responsibilities:

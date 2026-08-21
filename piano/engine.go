@@ -10,7 +10,7 @@ type Piano struct {
 	bodyConvolver *BodyConvolver
 	roomConvolver *SoundboardConvolver
 	resonance     *ResonanceEngine
-	sustainPedal  bool
+	sustainAmount float32
 	softPedal     bool
 }
 
@@ -74,9 +74,23 @@ func (p *Piano) NoteOff(note int) {
 }
 
 // SetSustainPedal sets sustain pedal state (true = down, false = up).
+// It is the fully-up / fully-down case of SetSustainPedalAmount.
 func (p *Piano) SetSustainPedal(down bool) {
-	p.sustainPedal = down
-	p.ringing.SetSustain(down)
+	if down {
+		p.SetSustainPedalAmount(1)
+		return
+	}
+	p.SetSustainPedalAmount(0)
+}
+
+// SetSustainPedalAmount sets continuous sustain pedal depth in [0,1]. The depth
+// maps directly onto the physical damper contact of every string in the bank:
+// 0 seats all dampers, 1 lifts them completely, and intermediate values model a
+// half-pedal where the dampers only rest partly on the strings.
+func (p *Piano) SetSustainPedalAmount(amount float32) {
+	amount = clampf(amount, 0, 1)
+	p.sustainAmount = amount
+	p.ringing.SetSustainAmount(amount)
 }
 
 // SetSoftPedal sets una corda / soft pedal state (true = down, false = up).
@@ -122,7 +136,7 @@ func (p *Piano) SetStringModel(model StringModel) bool {
 		held = p.keys.keyDown
 		velocity = p.keys.lastVelocity
 	}
-	sustain := p.sustainPedal
+	sustain := p.sustainAmount
 	soft := p.softPedal
 
 	p.params.StringModel = model
@@ -130,7 +144,7 @@ func (p *Piano) SetStringModel(model StringModel) bool {
 	p.hammerExciter = NewHammerExciter(p.sampleRate, p.params)
 	p.hammerExciter.SetSoftPedal(soft)
 	p.ringing = NewRingingState(p.sampleRate, p.params)
-	p.ringing.SetSustain(sustain)
+	p.ringing.SetSustainAmount(sustain)
 	for note := 0; note < 128; note++ {
 		if !held[note] {
 			continue

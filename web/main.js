@@ -10,14 +10,11 @@ const heldNotes = new Set();
 const latchedNotes = new Set();
 const latchedReleaseArmed = new Set();
 const mousePressedNotes = new Set();
-const sustainedNotes = new Set();
-const sustainReleaseTimers = new Map();
 let wasmReady = false;
 let audioReady = false;
 let sustainPedalDown = false;
 let damperEngaged = true;
 let sustainLevel = 50;
-let sustainReleaseMs = 1800;
 let noteVelocity = 96;
 let couplingMode = 'static';
 let stringModel = 'dwg';
@@ -335,16 +332,6 @@ function attachKeyboardListeners() {
         sustainLevelSlider.style.background = `linear-gradient(90deg, rgba(222, 189, 126, 0.9) 0%, rgba(222, 189, 126, 0.42) ${pct}, rgba(31, 34, 41, 0.85) ${pct}, rgba(31, 34, 41, 0.85) 100%)`;
     }
 
-    function updateSustainReleaseFromLevel(value) {
-        const normalized = Math.max(0, Math.min(100, value)) / 100;
-        if (normalized >= 0.999) {
-            sustainReleaseMs = Infinity;
-            return;
-        }
-        // 0% -> near-immediate release, 100% -> hold until pedal-up.
-        sustainReleaseMs = Math.round(30 + Math.pow(normalized, 1.7) * 6000);
-    }
-
     function syncPedalUI() {
         sustainButton.classList.toggle('active', sustainPedalDown);
         sustainButton.setAttribute('aria-pressed', String(sustainPedalDown));
@@ -369,7 +356,6 @@ function attachKeyboardListeners() {
     sustainLevel = parseInt(sustainLevelSlider.value, 10) || 50;
     sustainLevelValue.textContent = `${sustainLevel}%`;
     updateSliderFill(sustainLevel);
-    updateSustainReleaseFromLevel(sustainLevel);
     syncPedalUI();
     setCouplingMode(couplingModeSelect ? couplingModeSelect.value : couplingMode);
     setStringModel(stringModelSelect ? stringModelSelect.value : stringModel);
@@ -486,13 +472,7 @@ function attachKeyboardListeners() {
         sustainLevel = parseInt(event.target.value, 10) || 50;
         sustainLevelValue.textContent = `${sustainLevel}%`;
         updateSliderFill(sustainLevel);
-        updateSustainReleaseFromLevel(sustainLevel);
-
-        if (sustainPedalDown) {
-            for (const note of sustainedNotes) {
-                scheduleSustainRelease(note);
-            }
-        }
+        pushSustainToEngine();
     });
 
     if (couplingModeSelect) {
@@ -545,56 +525,16 @@ function attachKeyboardListeners() {
     });
 }
 
-function clearSustainReleaseTimer(note) {
-    const timer = sustainReleaseTimers.get(note);
-    if (timer !== undefined) {
-        clearTimeout(timer);
-        sustainReleaseTimers.delete(note);
-    }
-}
-
-function releaseNote(note) {
-    clearSustainReleaseTimer(note);
-    sustainedNotes.delete(note);
+// Pushes the current pedal state to the engine. The slider is the pedal's
+// travel depth, so it only takes effect while the pedal is engaged.
+function pushSustainToEngine() {
     if (!audioReady) return;
 
-    if (typeof wasmNoteOff !== 'undefined') {
-        wasmNoteOff(note);
-    }
-}
-
-function scheduleSustainRelease(note) {
-    clearSustainReleaseTimer(note);
-    if (!Number.isFinite(sustainReleaseMs)) {
-        return;
-    }
-
-    const timer = setTimeout(() => {
-        sustainReleaseTimers.delete(note);
-        if (!sustainPedalDown) {
-            return;
-        }
-        if (heldNotes.has(note)) {
-            return;
-        }
-        releaseNote(note);
-    }, sustainReleaseMs);
-    sustainReleaseTimers.set(note, timer);
-}
-
-function flushSustainedNotes() {
-    const notesToRelease = [];
-    for (const note of sustainedNotes) {
-        if (!heldNotes.has(note)) {
-            notesToRelease.push(note);
-        } else {
-            clearSustainReleaseTimer(note);
-            sustainedNotes.delete(note);
-        }
-    }
-
-    for (const note of notesToRelease) {
-        releaseNote(note);
+    const amount = sustainPedalDown ? sustainLevel / 100 : 0;
+    if (typeof wasmSetSustainAmount !== 'undefined') {
+        wasmSetSustainAmount(amount);
+    } else if (typeof wasmSetSustain !== 'undefined') {
+        wasmSetSustain(sustainPedalDown);
     }
 }
 
@@ -684,9 +624,7 @@ async function initAudio() {
         audioReady = true;
         setCouplingMode(couplingMode);
         setStringModel(stringModel);
-        if (sustainPedalDown && typeof wasmSetSustain !== 'undefined') {
-            wasmSetSustain(sustainPedalDown);
-        }
+        pushSustainToEngine();
         updateStatus(`Ready! Sample rate: ${audioContext.sampleRate} Hz`);
 
         // Try to load IR
@@ -716,8 +654,6 @@ function handleNoteOn(note, velocityNormalized = noteVelocity / 127) {
     }
     heldNotes.add(note);
     const midiVelocity = midiVelocityFromNormalized(velocityNormalized);
-    clearSustainReleaseTimer(note);
-    sustainedNotes.delete(note);
 
     if (!audioReady) {
         pendingNotes.set(note, midiVelocity);
@@ -744,30 +680,16 @@ function handleNoteOff(note) {
     heldNotes.delete(note);
     if (!audioReady) return;
 
-    if (sustainPedalDown) {
-        sustainedNotes.add(note);
-        scheduleSustainRelease(note);
-        return;
+    // The engine owns the release: the string keeps ringing exactly as long as
+    // the current damper setting allows.
+    if (typeof wasmNoteOff !== 'undefined') {
+        wasmNoteOff(note);
     }
-
-    releaseNote(note);
 }
 
 function handleSustain(down) {
     sustainPedalDown = down;
-    if (!down) {
-        flushSustainedNotes();
-    } else if (Number.isFinite(sustainReleaseMs)) {
-        for (const note of sustainedNotes) {
-            scheduleSustainRelease(note);
-        }
-    }
-
-    if (!audioReady) return;
-
-    if (typeof wasmSetSustain !== 'undefined') {
-        wasmSetSustain(down);
-    }
+    pushSustainToEngine();
 }
 
 async function loadIR() {
