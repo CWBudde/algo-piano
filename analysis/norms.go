@@ -46,13 +46,16 @@ func LegacyNorms() Norms {
 
 // CalibratedNorms returns the scales used by every profile other than
 // legacy-v1. They were picked from the measured spread of the tracked preset
-// population, not guessed: 11 renders against reference/c4.wav (note 60,
-// velocity 118, release after 3.5 s, 48 kHz, decay-dbfs -90, hold 6,
-// min-duration 2.0, max-duration 30) covering the seven presets in
+// population, not guessed. Twelve presets were rendered against
+// reference/c4.wav (note 60, velocity 118, release after 3.5 s, 48 kHz,
+// decay-dbfs -90, hold 6, min-duration 2.0, max-duration 30): all eight in
 // assets/presets plus the four per-aspect pass outputs under out/passes*.
-// assets/presets/modal-calibrated.json is excluded as degenerate - it measures
-// 172 dB spectral, 883 dB/s decay and 204 dB envelope, which is a broken
-// preset rather than a population member, and letting it set the scale would
+//
+// Eleven of those twelve form the population the scales below are fitted to.
+// The twelfth, assets/presets/modal-calibrated.json, was rendered and measured
+// like the rest and then excluded as degenerate - it comes in at 172 dB
+// spectral, 883 dB/s decay and 204 dB envelope, which is a broken preset
+// rather than a population member, and letting it set the scale would
 // re-saturate everything else.
 //
 // Measured 2026-08-21 on the post-#14 renderer. The DWG treble-collapse fix
@@ -95,6 +98,41 @@ func CalibratedNorms() Norms {
 		AttackRise:     50.0,
 		AttackCentroid: 2.0,
 		DecaySegment:   NormDecaySegment,
+	}
+}
+
+// Norm generations. A profile name alone does not determine the score formula:
+// the norms a profile carries can be recalibrated, and when they are, a name
+// like "decay-v1" silently means something new. Two reports both stamped
+// decay-v1 would then look comparable while resting on different scales.
+//
+// Every scored Metrics therefore records which generation of norms produced it
+// alongside the profile name, and the pair - not the name alone - is what makes
+// two numbers comparable. A report with no ScoreNorms at all predates this and
+// was produced under NormsLegacy for legacy-v1, or under the pre-calibration
+// scales for any other profile; either way, re-measure rather than compare.
+//
+// Recalibrating again means adding a generation, not editing one.
+const (
+	// NormsLegacy is the frozen legacy-v1 scale. It must never be redefined.
+	NormsLegacy = "legacy"
+	// NormsCalibrated is the population-calibrated scale introduced on
+	// 2026-08-21; see CalibratedNorms for the measurements behind it.
+	NormsCalibrated = "calibrated-2026-08-21"
+	// NormsCustom marks norms that match no named generation, which happens
+	// when a caller builds Weights by hand rather than via WeightsForProfile.
+	NormsCustom = "custom"
+)
+
+// NormsGeneration names the generation a resolved Norms belongs to.
+func NormsGeneration(n Norms) string {
+	switch n.resolve() {
+	case LegacyNorms():
+		return NormsLegacy
+	case CalibratedNorms():
+		return NormsCalibrated
+	default:
+		return NormsCustom
 	}
 }
 

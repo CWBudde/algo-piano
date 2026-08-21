@@ -74,6 +74,7 @@ type Metrics struct {
 	DecaySegmentSaturated bool `json:"decay_segment_saturated,omitempty"`
 
 	ScoreProfile string  `json:"score_profile"` // weighting profile used for Score
+	ScoreNorms   string  `json:"score_norms"`   // norm generation the profile resolved to
 	Score        float64 `json:"score"`
 	Similarity   float64 `json:"similarity"`
 }

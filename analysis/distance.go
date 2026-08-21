@@ -85,6 +85,7 @@ func CompareWithOptions(reference []float64, candidate []float64, sampleRate int
 		ReferenceFrames: len(reference),
 		CandidateFrames: len(candidate),
 		ScoreProfile:    w.Name,
+		ScoreNorms:      NormsGeneration(w.Norms),
 	}
 	m.markExtendedUndefined()
 

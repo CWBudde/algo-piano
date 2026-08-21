@@ -198,6 +198,61 @@ func TestLegacySpectralStillSaturates(t *testing.T) {
 	}
 }
 
+// TestScoreNormsDistinguishesRecalibratedProfiles is the guard against the
+// failure mode that makes a profile name untrustworthy: recalibrating the norms
+// behind a name like "decay-v1" changes what its score means while every report
+// keeps claiming the same profile. Metrics carries the norm generation as well,
+// so the two are distinguishable after the fact.
+func TestScoreNormsDistinguishesRecalibratedProfiles(t *testing.T) {
+	ref, cand := normsProbeSignals()
+
+	for _, tc := range []struct {
+		profile string
+		want    string
+	}{
+		{ProfileLegacyV1, NormsLegacy},
+		{ProfileBalancedV2, NormsCalibrated},
+		{ProfileAttackV1, NormsCalibrated},
+		{ProfileDecayV1, NormsCalibrated},
+		{ProfileInharmonicityV1, NormsCalibrated},
+	} {
+		w, err := WeightsForProfile(tc.profile)
+		if err != nil {
+			t.Fatalf("profile %q: %v", tc.profile, err)
+		}
+		m := CompareWithWeights(ref, cand, 48000, w)
+		if m.ScoreProfile != tc.profile {
+			t.Errorf("profile %q: ScoreProfile = %q", tc.profile, m.ScoreProfile)
+		}
+		if m.ScoreNorms != tc.want {
+			t.Errorf("profile %q: ScoreNorms = %q, want %q", tc.profile, m.ScoreNorms, tc.want)
+		}
+	}
+
+	// Hand-built weights that match no named generation must say so rather
+	// than borrowing a label they did not earn.
+	custom := DefaultWeights()
+	custom.Norms = Norms{Spectral: 55.0}
+	if got := NormsGeneration(custom.Norms); got != NormsCustom {
+		t.Errorf("hand-built norms reported generation %q, want %q", got, NormsCustom)
+	}
+}
+
+// normsProbeSignals returns a reference/candidate pair that is good enough to
+// score - the values do not matter here, only the stamped labels do.
+func normsProbeSignals() (ref, cand []float64) {
+	const n = 48000
+	ref = make([]float64, n)
+	cand = make([]float64, n)
+	for i := range ref {
+		t := float64(i) / 48000.0
+		env := math.Exp(-3.0 * t)
+		ref[i] = env * math.Sin(2*math.Pi*261.63*t)
+		cand[i] = env * math.Sin(2*math.Pi*263.0*t) * 0.9
+	}
+	return ref, cand
+}
+
 func findComponent(t *testing.T, comps []Component, name string) Component {
 	t.Helper()
 	for _, c := range comps {

@@ -62,6 +62,14 @@ type Weights struct {
 // observed value of each metric and fails if any component a non-legacy profile
 // weights turns out to be saturated.
 //
+// Recalibrating a profile's norms redefines its score formula without changing
+// its name, which would make a report from before the change look comparable to
+// one from after it. Every scored Metrics therefore also carries ScoreNorms,
+// the norm generation the profile resolved to (see NormsGeneration): the pair
+// (ScoreProfile, ScoreNorms) is what makes two numbers comparable, not the
+// profile name on its own. Recalibrate again by adding a generation, never by
+// editing one.
+//
 // Profile names.
 const (
 	ProfileLegacyV1         = "legacy-v1"

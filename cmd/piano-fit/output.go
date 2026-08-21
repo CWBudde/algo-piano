@@ -44,7 +44,13 @@ type runReport struct {
 	// ScoreProfile names the analysis weighting profile best_score was
 	// produced with. Scores from different profiles are not comparable, so an
 	// unlabelled report is a legacy-v1 report.
-	ScoreProfile   string `json:"score_profile,omitempty"`
+	ScoreProfile string `json:"score_profile,omitempty"`
+	// ScoreNorms names the norm generation that profile resolved to. The
+	// profile name alone does not pin the score formula - norms can be
+	// recalibrated under an unchanged name - so two reports are comparable
+	// only when this field agrees too. Omitted for the frozen legacy scale,
+	// which the profile name already determines.
+	ScoreNorms     string `json:"score_norms,omitempty"`
 	RendersPerEval int    `json:"renders_per_eval,omitempty"`
 
 	// Polish carries the deterministic polish-stage summary, when it ran.
@@ -162,6 +168,12 @@ func writeOutputs(req outputRequest) error {
 	if scoreProfile == analysis.ProfileLegacyV1 {
 		scoreProfile = ""
 	}
+	// Same reasoning for the norm generation, and it is the field that keeps
+	// two same-named profiles from looking comparable across a recalibration.
+	scoreNorms := req.bestMetrics.ScoreNorms
+	if scoreNorms == analysis.NormsLegacy {
+		scoreNorms = ""
+	}
 
 	rep := runReport{
 		ReferencePath:   req.referencePath,
@@ -187,6 +199,7 @@ func writeOutputs(req outputRequest) error {
 		Pass:            pass,
 		PassWindow:      req.passWindow,
 		ScoreProfile:    scoreProfile,
+		ScoreNorms:      scoreNorms,
 		RendersPerEval:  rendersPerEval,
 
 		Polish:            req.polish,
