@@ -904,6 +904,9 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
 - [ ] Define shipping rule:
   - [ ] “low CPU” profile defaults to modal core
   - [ ] “high accuracy” profile defaults to DWG core
+  - Still open, and `PIANO-406` below holds the current state of the evidence.
+    One thing about the rule's shape is now settled by measurement: a “low
+    CPU” profile must **not** be implemented by lowering `modal_partials`.
 
 ### 12.5 — Upstream SIMD integration follow-up (`algo-dsp` + `algo-vecmath`)
 
@@ -944,12 +947,49 @@ package in v0.7.0. `algo-piano` therefore calls `algo-vecmath` directly.
       benchmarked (caveat under `PIANO-406`), results recorded in
       `BENCHMARKS.md` with machine, Go version and date.
 - [ ] `PIANO-406` — Shipping profile decision refresh.
-  - [ ] **Blocked on a real finding:** the modal core is _not_ currently cheaper
-        than DWG at the default 8 partials — the two are within noise across the
-        polyphony sweep. The "low CPU profile defaults to modal" rule in 12.4
-        cannot be adopted on the assumption that modal is faster.
-  - [ ] determine how far `modal_partials` can drop before quality suffers, then
+  - [ ] **Blocked on a real finding, and the finding itself is now in doubt:**
+        the recorded polyphony sweep has the modal core _not_ cheaper than DWG
+        at the default 8 partials — 6% to 25% more expensive, which is why the
+        "low CPU profile defaults to modal" rule in 12.4 could not be adopted.
+        Re-measuring that same unmodified benchmark on 2026-08-22 on a quiet
+        machine (load average 1.3-4.2, median of seven independent invocations)
+        reverses it: modal is **36% to 39% cheaper** than DWG at 16, 32, 64 and
+        130 voices. The recorded run was taken at load average 8 to 13, and
+        under that much load the benchmark demonstrably cannot resolve a 25%
+        effect — twelve busy loops pinned against it produce an 8x spread inside
+        a single case. So the recorded conclusion is not supported by the
+        conditions it was taken in. What is _not_ explained is why the sign
+        flips rather than merely blurring; load alone should inflate both cores
+        similarly. Until that is understood, this box stays open: reversing a
+        shipping rule on a number whose disagreement with the previous number is
+        unexplained is not better than leaving the rule unadopted. See
+        BENCHMARKS.md "Modal partials: quality vs CPU", last subsection.
+  - [x] determine how far `modal_partials` can drop before quality suffers, then
         re-evaluate the mapping on measured numbers
+        (**Measured 2026-08-22**, `TestModalPartialsQualityCurve` in
+        `piano/modal_partials_test.go` and `BenchmarkModalPartialsSweep` in
+        `piano/modal_bench_test.go`, both sweeping 1/2/3/4/5/6/8/12/16/24
+        partials; tabulated in BENCHMARKS.md "Modal partials: quality vs CPU".
+        **Answer: it cannot drop at all without a measurable cost, and the
+        mapping does not need it to.** The quality curve is smooth and monotone
+        all the way down — there is no knee below the shipped default of 8 and
+        no partial count that is free. Dropping 8 to 4 buys 19% (uncoupled) or
+        23% (coupled) of the string-bank block cost and costs 13.8 dB of
+        `partial_level_rmse_db` at C4 against the same core at 32 partials; 8 to
+        1 buys 38-40% and costs 26.9 dB. For scale, the whole remaining envelope
+        headroom of the C4 gate is 0.84 dB. The CPU curve is _not_ flat in
+        `modal_partials` — it is roughly affine, about 28 ns per active string
+        per block per partial on a ~280 ns floor, so ~55% of the cost at 8
+        partials is fixed and no reduction can reach it. Two limits on this
+        result, both real: the "quality" axis is distance from the same core at
+        32 partials, not absolute quality — nothing here says the 32-partial
+        render is right; and `analysis` tracks at most 16 harmonics
+        (`analysis/features.go`), so whether the default of 8 is too _low_ is a
+        question these tools cannot answer at all. The DWG-referenced score was
+        measured too, as 12.4 asks, and is useless for this: it moves 0.004
+        across a 24x change in partial count because it saturates spectrally,
+        and at C2 it gets _worse_ as partials are added, since a richer modal
+        spectrum diverges further from DWG's sparse impulse train.)
   - [ ] keep DWG profile as high-accuracy reference for regression checks
   - **Retained heap is now measured** (2026-08-22,
     `BenchmarkStringBankRetainedHeap`, BENCHMARKS.md "Retained heap"), so the
@@ -958,7 +998,22 @@ package in v0.7.0. `algo-piano` therefore calls `algo-vecmath` directly.
     linear in `modal_partials`. That is `HeapAlloc` after a forced GC, not RSS,
     so it compares the two cores rather than sizing a plugin budget — but the
     gap between them is small on either reading, so memory does not decide the
-    profile. This item stays open on the quality question above.
+    profile. Re-run on 2026-08-22 for the partials sweep and reproduced exactly.
+  - **Where the 12.4 shipping rule stands after this.** Not adopted, and the
+    reason has changed. It is no longer blocked on "modal might be slower":
+    on every measurement taken on a quiet machine modal is the cheaper core, by
+    36-39% uncoupled and by 37% with coupling on at 8 partials. It is blocked on
+    the fact that this contradicts the figure recorded a day earlier and the
+    contradiction is unexplained. The quality half of the question is closed and
+    it settles one thing about the rule's _shape_: a "low CPU" profile must not
+    be implemented by lowering `modal_partials`. If the rule is adopted it is
+    adopted as "low CPU ⇒ modal core at the default 8 partials", with the
+    partial count left alone.
+    - [ ] follow-up: re-measure "Voice cost per block and polyphony sweep" in
+          BENCHMARKS.md under the same discipline used for the partials sweep
+          (separate invocations, quiet machine, load average recorded) and
+          either correct the recorded table or explain the disagreement. That is
+          the one remaining input to the profile decision.
 
 **Lesson worth keeping.** Calling `algo-vecmath` once _per note_ was measured
 **slower** than the scalar loop it replaced (+8% to +11% at high polyphony): one

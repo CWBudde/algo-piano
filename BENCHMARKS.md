@@ -655,10 +655,217 @@ What the numbers say:
   sized by pitch, averaging 1.7 kB across the compass.
 
 This closes the last missing input to `PIANO-406` on the memory side. It does
-not settle the profile decision, which remains blocked on how far
-`modal_partials` can drop before quality suffers: the retained-heap curve says a
-low partial count is cheap, but says nothing about whether it still sounds like
-a piano.
+not settle the profile decision. The retained-heap curve says a low partial
+count is cheap, but says nothing about whether it still sounds like a piano —
+that question is answered in "Modal partials: quality vs CPU" below, and the
+answer is that a low partial count is not cheap in the way that matters.
+
+## Modal partials: quality vs CPU
+
+_Measured 2026-08-22, Go 1.26.5, same machine as the `## Machine` section above
+(12th Gen Intel Core i7-1255U, 12 threads, Linux 6.8.0 amd64). CPU figures are
+the median of **seven independent `go test` invocations**, not `-count=7` inside
+one invocation — with `-count=N` Go runs all N repetitions of a case
+back to back, so a case measured while background load happens to be high is
+biased as a whole, and the sweep then reads as a curve when it is really a load
+trace. Separate invocations interleave the cases over time instead. Load average
+during these runs was 1.3 to 4.2. Quality figures are deterministic renders and
+carry no run-to-run spread at all._
+
+This section closes the open input to `PIANO-406`: **how far can
+`modal_partials` drop before quality suffers, and what does dropping it buy?**
+The two halves are `TestModalPartialsQualityCurve`
+(`piano/modal_partials_test.go`) and `BenchmarkModalPartialsSweep`
+(`piano/modal_bench_test.go`), which sweep the same partial counts. The
+retained-heap column is `BenchmarkStringBankRetainedHeap`, re-run for this
+section and reproducing its recorded figures exactly (331,424 B DWG;
+176,096 / 224,752 / 288,192 / 385,408 / 537,424 B modal at 1/4/8/16/32
+partials).
+
+### What "quality" is measured against, and what it cannot be
+
+Each partial count is scored twice by `analysis.Compare` under the default
+`legacy-v1` profile.
+
+**Against DWG at the same note**, the cross-core reference PLAN.md 12.4 already
+uses. This turned out to answer almost nothing, and that is itself the finding:
+the overall score moves by **0.004 across a 24x change in partial count** and is
+flat to four decimals above 4 partials. Two reasons, both already documented
+elsewhere in the tree. The score saturates spectrally — at these distances the
+spectral component is far past `analysis.NormSpectral = 30.0`, `clamp01` pins it
+at 1.0, and it contributes a constant with no gradient (the "SPECTRAL CAVEAT" in
+`assets/thresholds/c4.json`). And the DWG reference is itself a sparse impulse
+train (see `TestDWGModalDistanceIsBounded`), so the cross-core distance is
+dominated by that defect and barely notices the modal spectrum changing
+underneath it. **The overall score does not show the knee and cannot be used to
+locate one.**
+
+**Against the modal core at 32 partials**, the top of the valid `[1,32]` range.
+This reference was added because the DWG one cannot answer the question that was
+asked. It asks it directly: holding everything else fixed, how much does the
+render change when partials are taken away? It is _not_ an absolute quality
+measure — nothing here establishes that the 32-partial render is correct — but
+it is a well-conditioned difference signal, and it is the column the decision
+below is read from.
+
+One measurement ceiling has to be read with the numbers: `analysis` tracks at
+most 16 harmonics (`analysis/features.go`, `maxPartials = 16`), so
+`partial_level_rmse_db` is blind above the 16th partial. Every reading at 16 and
+24 partials sits on that ceiling and must **not** be read as "no difference".
+At C6 the 24-partial row is 0.00 dB on every metric for a second reason: 1046 Hz
+runs out of Nyquist headroom before 32 partials, so 24 and 32 admit the same
+mode count and the two renders are bit-identical.
+
+### Quality, single held note, 750 blocks (2.0 s) at 48 kHz, sustain held, resonance and coupling off
+
+`partial_level` / `spectral` / `spectral_high` are `partial_level_rmse_db`,
+`spectral_rmse_db` and the 2 kHz-and-up band `spectral_high_rmse_db`, in dB.
+
+Against the internal reference (modal at 32 partials) — the column with a real
+gradient:
+
+| Partials | C2 (36) partial_level | C2 spectral | C2 spec_high | C4 (60) partial_level | C4 spectral | C4 spec_high | C6 (84) partial_level | C6 spectral | C6 spec_high |
+| -------- | --------------------- | ----------- | ------------ | --------------------- | ----------- | ------------ | --------------------- | ----------- | ------------ |
+| 1        | 43.69                 | 6.02        | 5.61         | 46.16                 | 5.73        | 5.13         | 35.56                 | 4.72        | 4.52         |
+| 2        | 40.51                 | 5.43        | 5.24         | 40.28                 | 5.07        | 4.84         | 29.83                 | 3.72        | 3.65         |
+| 3        | 40.25                 | 5.21        | 5.15         | 37.90                 | 4.77        | 4.70         | 23.61                 | 3.23        | 3.22         |
+| 4        | 40.52                 | 4.62        | 4.56         | 33.01                 | 4.63        | 4.69         | 16.54                 | 2.90        | 2.91         |
+| 5        | 38.98                 | 3.96        | 3.85         | 29.66                 | 4.54        | 4.65         | 12.54                 | 2.85        | 2.89         |
+| 6        | 37.35                 | 3.75        | 3.63         | 26.76                 | 4.55        | 4.70         | 10.55                 | 2.77        | 2.82         |
+| **8**    | **29.45**             | **2.80**    | **2.63**     | **19.24**             | **4.45**    | **4.67**     | **2.55**              | **2.55**    | **2.64**     |
+| 12       | 18.39                 | 2.15        | 1.99         | 9.26                  | 4.21        | 4.45         | 1.68                  | 2.43        | 2.57         |
+| 16       | 0.00 ᶜ                | 0.77        | 0.25         | 0.08 ᶜ                | 4.25        | 4.53         | 1.08 ᶜ                | 2.28        | 2.43         |
+| 24       | 0.00 ᶜ                | 0.46        | 0.25         | 0.15 ᶜ                | 4.09        | 4.37         | 0.00 ᴺ                | 0.00 ᴺ      | 0.00 ᴺ       |
+
+ᶜ on the 16-harmonic analysis ceiling — blind, not equal. ᴺ Nyquist-limited to
+the same mode count as the reference — genuinely bit-identical.
+
+Against DWG, for completeness and to show why it cannot be used (score, then the
+same three sub-metrics at C4):
+
+| Partials | C2 score | C4 score | C6 score | C4 partial_level | C4 spectral | C4 spec_high |
+| -------- | -------- | -------- | -------- | ---------------- | ----------- | ------------ |
+| 1        | 0.860297 | 0.841694 | 0.846816 | 105.96           | 101.22      | 95.67        |
+| 2        | 0.857665 | 0.839031 | 0.845962 | 101.98           | 101.03      | 95.49        |
+| 4        | 0.856234 | 0.838576 | 0.845842 | 97.45            | 100.89      | 95.35        |
+| **8**    | 0.856240 | 0.838576 | 0.845837 | 86.13            | 100.87      | 95.34        |
+| 16       | 0.856246 | 0.838578 | 0.845838 | 70.91            | 100.90      | 95.38        |
+| 24       | 0.856245 | 0.838578 | 0.845836 | 70.86            | 100.86      | 95.34        |
+
+The score is non-increasing in partial count to four decimals; past saturation it
+wobbles upward by at most 3.4e-05, which is what the tolerance in
+`TestModalPartialsQualityCurve` allows for. Note the direction of
+`spectral_rmse_db` against DWG at C2: it gets **worse** as partials are added
+(103.35 dB at 1 partial, 106.53 dB at 8). A richer modal spectrum diverges
+further from a sparse impulse train. That is a statement about the DWG
+reference, not about modal quality, and it is the clearest single reason the
+cross-core score is the wrong instrument here.
+
+### CPU, one 128-frame block at 48 kHz, 64 held strings (MIDI 36-69), sustain held
+
+`BenchmarkModalPartialsSweep`. Both coupling arms are measured because they
+answer different questions. **Coupling off** is the regime the "Voice cost per
+block and polyphony sweep" section above measures, so the 8-partial row is
+directly comparable with its 64-voice row. **Coupling on** enrols the whole
+compass through sympathetic injection; the active set settles at 88 notes / 196
+strings, measured and identical for both cores and every partial count, so the
+columns still compare like with like. In that arm `ns/voice-block` divides by
+the 64 _held_ strings while 196 are sounding, so it is a cost per held key; the
+`ns/active-string` column below divides by 196 instead.
+
+| Partials | Off: sec/op | Off: % budget | Off: ns/active-string | On: sec/op | On: % budget | On: ns/active-string | Retained heap |
+| -------- | ----------- | ------------- | --------------------- | ---------- | ------------ | -------------------- | ------------- |
+| DWG      | 155 µs      | 5.8%          | 789                   | 522 µs     | 19.6%        | 2662                 | 324 KiB       |
+| 1        | 60.3 µs     | 2.3%          | 308                   | 199 µs     | 7.5%         | 1014                 | 172 KiB       |
+| 2        | 64.6 µs     | 2.4%          | 329                   | 213 µs     | 8.0%         | 1089                 | —             |
+| 3        | 76.5 µs     | 2.9%          | 390                   | 243 µs     | 9.1%         | 1241                 | —             |
+| 4        | 79.2 µs     | 3.0%          | 404                   | 254 µs     | 9.5%         | 1296                 | 219 KiB       |
+| 5        | 79.3 µs     | 3.0%          | 404                   | 273 µs     | 10.2%        | 1393                 | —             |
+| 6        | 91.8 µs     | 3.4%          | 469                   | 302 µs     | 11.3%        | 1541                 | —             |
+| **8**    | **97.3 µs** | **3.6%**      | **497**               | **330 µs** | **12.4%**    | **1684**             | **281 KiB**   |
+| 12       | 129 µs      | 4.8%          | 659                   | 401 µs     | 15.0%        | 2044                 | —             |
+| 16       | 140 µs      | 5.2%          | 714                   | 447 µs     | 16.7%        | 2278                 | 376 KiB       |
+| 24       | 187 µs      | 7.0%          | 956                   | 546 µs     | 20.5%        | 2785                 | —             |
+
+Retained-heap figures are per full 88-key bank from the "Retained heap" section;
+they are a property of the constructed bank, not of this 64-key load, and are
+repeated here only so the three axes sit in one table. Blank cells are partial
+counts that section does not sweep.
+
+**The CPU curve is not flat in `modal_partials`.** It is close to affine in the
+partial count with a large fixed base: uncoupled, about 28 ns per active string
+per block per partial on a ~280 ns floor, so roughly **55% of the cost at the
+default 8 partials is fixed overhead** that no partial reduction can touch.
+Concretely, from 8 partials:
+
+| Drop to | CPU saved (off) | CPU saved (on) | `partial_level` cost at C4 |
+| ------- | --------------- | -------------- | -------------------------- |
+| 6       | −6%             | −8%            | +7.5 dB                    |
+| 4       | −19%            | −23%           | +13.8 dB                   |
+| 2       | −34%            | −35%           | +21.0 dB                   |
+| 1       | −38%            | −40%           | +26.9 dB                   |
+
+### What the two curves say together
+
+- **There is no knee below the default.** The quality curve is smooth and
+  monotone all the way down; nothing in it marks a partial count below 8 as
+  "free". Every partial removed costs measurable spectral content, and the cost
+  is steepest exactly where the CPU saving is largest. Dropping 8 to 4 buys 19%
+  of the string-bank cost for 14 dB of partial-level error at C4. For scale, the
+  entire remaining envelope headroom of the C4 gate is 0.84 dB (10.83 dB
+  measured against an 11.67 dB threshold). **`modal_partials` is not a viable
+  low-CPU knob.**
+- **The largest quality cliffs are at the bottom.** 1 to 2 partials is worth 6 dB
+  at C4 and 2 partials is not a piano note by any reading; the sweep includes 1
+  and 2 to bound the axis, not because they are candidates.
+- **`modal_partials` above 8 is not measurable with the tools in this repo.**
+  The 16-harmonic ceiling in `analysis` means the 12-to-32 range can only be
+  compared spectrally, and against DWG not at all. Whether the shipped default
+  of 8 is too low is a question this measurement cannot answer; it can only say
+  that going lower is expensive.
+
+### An unexplained disagreement with the recorded polyphony numbers
+
+The seven invocations behind the table above also re-ran
+`BenchmarkStringBankVoiceCostPerBlock` unmodified, in the same processes, so the
+8-partial coupling-off row has a direct anchor. It agrees with itself
+exactly — 97.3 µs in the sweep against 97.0 µs in the polyphony benchmark at 64
+voices — and **disagrees with the figures recorded in "Voice cost per block and
+polyphony sweep" above**, in magnitude and in sign:
+
+| Voices | DWG recorded 2026-08-21 | DWG re-measured | Modal recorded 2026-08-21 | Modal re-measured |
+| ------ | ----------------------- | --------------- | ------------------------- | ----------------- |
+| 16     | 63.7 µs                 | 37.9 µs         | 72.0 µs                   | 23.2 µs           |
+| 32     | 121 µs                  | 78.8 µs         | 133 µs                    | 48.5 µs           |
+| 64     | 265 µs                  | 153 µs          | 330 µs                    | 97.0 µs           |
+| 130    | 546 µs                  | 302 µs          | 614 µs                    | 194 µs            |
+
+The recorded run has modal 6% to 25% _more_ expensive than DWG. The re-measured
+run has it 36% to 39% _less_ expensive, at every polyphony point, with the
+repository's own unmodified benchmark.
+
+What can be said about the difference is that the recorded run was taken "at load
+average 8 to 13" and that this benchmark cannot resolve a 25% effect under that
+load. Re-running `BenchmarkStringBankVoiceCostPerBlock` at `-count=3` with twelve
+busy-loop processes pinned against it (load average 12) inflated every case by
+3x to 20x and produced readings spanning **8x within a single case**: the
+64-voice modal case read 264 µs, 510 µs and 2109 µs on its three consecutive
+repetitions, against 97 µs quiet. A ±25% conclusion drawn from that regime is
+not supported by it.
+
+What **cannot** be said is why the sign flips rather than merely blurring. Load
+alone should inflate both cores similarly. This section does not explain the
+discrepancy and does not edit the earlier table; it records that the two
+disagree, that the newer one was taken on a quiet machine and self-anchored, and
+that resolving it is the remaining step before the 12.4 shipping rule can be
+adopted. See `PIANO-406` in PLAN.md.
+
+Re-measure with:
+
+```bash
+go test ./piano/ -run='TestModalPartials' -v
+go test ./piano/ -run='^$' -bench='BenchmarkModalPartialsSweep|BenchmarkStringBankRetainedHeap' -benchmem
+```
 
 ## Reproducing the before/after comparison
 
