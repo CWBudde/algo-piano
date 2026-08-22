@@ -176,10 +176,10 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         gain of only 0.005. The sweep shows the region is non-empty, not that it
         is large or that a re-fit will beat #17.
         **Constrained re-fit built 2026-08-22, box stays open**
-        (`just fit-sustain-constrained-c4`, i.e. `piano-fit --pass sustain
-    --score-constraint legacy-v1:<floor>`: a secondary-profile ceiling
-        checked on the same rendered buffer, so the search optimises `decay-v1`
-        while `legacy-v1` may not regress).
+        (`just fit-sustain-constrained-c4`, i.e. `piano-fit --pass sustain`
+        with `--score-constraint legacy-v1:<floor>`: a secondary-profile
+        ceiling checked on the same rendered buffer, so the search optimises
+        `decay-v1` while `legacy-v1` may not regress).
         First, the renderer moved twice: #23/#26/#29 and then #30's relative
         auto-stop, so every number above the line is stale. Re-measured on the
         post-#30 renderer, the baseline `attack.json` is `decay-v1 0.4948` /

@@ -67,8 +67,18 @@ type runReport struct {
 	BestConstraintScores map[string]float64 `json:"best_constraint_scores,omitempty"`
 
 	// OutputGainMatched is the closed-form multiplier applied to
-	// piano.OutputGain after the search finished. It is score-invariant, so it
-	// is reported separately instead of being folded into best_knobs.
+	// piano.OutputGain after the search finished. It is reported separately
+	// instead of being folded into best_knobs because output_gain is not a
+	// searched dimension when the match is active.
+	//
+	// The multiplier is score-invariant under the default relative auto-stop:
+	// analysis.Compare RMS-normalises both signals, and the stop threshold sits
+	// a fixed distance below the render's own peak, so the render length no
+	// longer depends on the absolute level either. Under --decay-relative=false
+	// it is NOT invariant — the stop threshold is absolute, so a louder render
+	// is scored over a longer window. That is why the winner is re-rendered and
+	// re-scored after the match in both modes: every score and metric in this
+	// report describes the preset that was actually written.
 	OutputGainMatched float64 `json:"output_gain_matched,omitempty"`
 }
 

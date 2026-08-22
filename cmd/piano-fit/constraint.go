@@ -44,6 +44,16 @@ type scoreConstraint struct {
 // infeasible one.
 const constraintPenaltyBase = 1e6
 
+// worstCaseScore is the score an unmeasurable render is treated as having. It
+// matches analysis.Metrics.Sanitized(), which maps a non-finite Score to 1.0,
+// the maximum distance the profiles can express.
+const worstCaseScore = 1.0
+
+// isFiniteScore reports whether a profile score is usable in a comparison.
+func isFiniteScore(s float64) bool {
+	return !math.IsNaN(s) && !math.IsInf(s, 0)
+}
+
 // stringListFlag collects a repeatable string flag.
 type stringListFlag []string
 
@@ -139,6 +149,15 @@ func formatConstraintScores(cs []scoreConstraint, scores map[string]float64) str
 // to `just distance-c4`, and a windowed compare re-runs trimLeadingSilence,
 // normalizeRMS and lag estimation inside the window, producing a score that is
 // comparable to nothing.
+//
+// Every result is Sanitized() before it leaves this function, and that is a
+// correctness requirement rather than cosmetics. A constraint is enforced as
+// `score > max`, which is FALSE for a NaN score — so an undefined comparison
+// would pass the ceiling silently and let a degenerate candidate through the
+// one check that exists to stop it. Sanitized() maps a non-finite Score to
+// 1.0, the maximum distance, so an unmeasurable render breaches every ceiling
+// below 1.0 instead of clearing all of them. It also keeps the numbers written
+// into best_constraint_scores finite and printable.
 func scoreConstraintMetrics(
 	cs []scoreConstraint,
 	reference, cand []float64,
@@ -152,7 +171,7 @@ func scoreConstraintMetrics(
 		out[c.Profile] = analysis.CompareWithOptions(reference, cand, sampleRate, analysis.Options{
 			Weights:  c.weights,
 			MIDINote: midiNote,
-		})
+		}).Sanitized()
 	}
 	return out
 }
@@ -181,6 +200,15 @@ func applyScoreConstraints(
 	for _, c := range cs {
 		s, ok := scores[c.Profile]
 		if !ok {
+			continue
+		}
+		// A non-finite score must never clear a ceiling. scoreConstraintMetrics
+		// already sanitises, so this is the second line of defence at the one
+		// place the comparison actually happens: `s > c.Max` is false for NaN,
+		// so without the explicit test an undefined score would read as a pass.
+		if !isFiniteScore(s) {
+			ev.constraintScores[c.Profile] = worstCaseScore
+			violation += worstCaseScore - c.Max
 			continue
 		}
 		ev.constraintScores[c.Profile] = s

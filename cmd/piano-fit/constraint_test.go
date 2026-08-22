@@ -495,3 +495,75 @@ func TestPostMatchEval(t *testing.T) {
 		}
 	})
 }
+
+// TestApplyScoreConstraintsTreatsNonFiniteAsBreach pins the one comparison the
+// constraint machinery cannot get wrong. A ceiling is enforced as
+// `score > max`, which evaluates to FALSE for NaN, so an undefined score would
+// otherwise clear every ceiling and hand back a degenerate preset from the one
+// check that exists to prevent exactly that.
+func TestApplyScoreConstraintsTreatsNonFiniteAsBreach(t *testing.T) {
+	cs := legacyConstraint(t, 0.5121)
+
+	for _, tc := range []struct {
+		name  string
+		score float64
+	}{
+		{"NaN", math.NaN()},
+		{"PosInf", math.Inf(1)},
+		{"NegInf", math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var rejects atomic.Int64
+			ev := optimizationEval{aggregate: 0.20}
+			got := applyScoreConstraints(cs, ev, map[string]float64{analysis.ProfileLegacyV1: tc.score}, &rejects)
+
+			if !got.constraintViolated {
+				t.Fatalf("a %s constrained score must be treated as a breach, not a pass", tc.name)
+			}
+			if got.aggregate <= constraintPenaltyBase {
+				t.Fatalf("aggregate = %v, want the search penalty > %v", got.aggregate, constraintPenaltyBase)
+			}
+			if rejects.Load() != 1 {
+				t.Fatalf("rejects = %d, want 1", rejects.Load())
+			}
+			if recorded := got.constraintScores[analysis.ProfileLegacyV1]; recorded != worstCaseScore {
+				t.Fatalf("recorded constraint score = %v, want the worst case %v so the report stays finite", recorded, worstCaseScore)
+			}
+		})
+	}
+}
+
+// TestScoreConstraintMetricsSanitizesADivergedRender pins that the metrics
+// leaving scoreConstraintMetrics are finite even when the candidate render has
+// diverged.
+//
+// This is not hypothetical. The repo has a history of resonance loops running
+// away to +Inf (PLAN.md Phase 9.6), and since the auto-stop was made relative
+// to the render's own peak a diverged render deliberately runs to its full
+// max-duration instead of being truncated into a short file. A finite
+// reference against an infinite candidate makes analysis.Compare return
+// Score=NaN, and NaN clears every `score > max` ceiling. Sanitized() turns it
+// into the worst case instead.
+func TestScoreConstraintMetricsSanitizesADivergedRender(t *testing.T) {
+	cs := legacyConstraint(t, 0.5121)
+
+	const n = 4096
+	reference := make([]float64, n)
+	diverged := make([]float64, n)
+	for i := range reference {
+		reference[i] = math.Sin(2 * math.Pi * 262 * float64(i) / 48000)
+		diverged[i] = math.Inf(1)
+	}
+
+	out := scoreConstraintMetrics(cs, reference, diverged, 48000, 60)
+	m, ok := out[analysis.ProfileLegacyV1]
+	if !ok {
+		t.Fatalf("no metrics for the constrained profile: %v", out)
+	}
+	if math.IsNaN(m.Score) || math.IsInf(m.Score, 0) {
+		t.Fatalf("Score = %v, want a finite value after Sanitized()", m.Score)
+	}
+	if m.Score != worstCaseScore {
+		t.Fatalf("Score = %v, want the worst case %v so the ceiling is breached, not cleared", m.Score, worstCaseScore)
+	}
+}
