@@ -231,13 +231,31 @@ func measureResonanceLoopDecay(t *testing.T, params *Params, sampleRate int, sec
 // maxResonanceLoopGain is the bound both probes assert.
 //
 // The loop is linear, so gain >= 1 forfeits the small-gain stability guarantee.
-// Half of that leaves room for the hottest measured configuration - the DWG
-// core at note 21 per-note (0.411) - without admitting a marginal one.
+// Half of that leaves room for the hottest measured configuration without
+// admitting a marginal one.
+//
+// CAVEAT, measured 2026-08-22: these probes read a TRANSIENT, not a steady
+// state, so what they report is a LOWER BOUND on the loop gain and this bound
+// is not by itself a proof of stability. An undamped piano string has a T60 of
+// tens of seconds; measureResonanceLoopGain warms up for 0.5 s. Driving the
+// same DWG configuration (ResonanceGain 0.0014, all 88 groups undamped) with
+// progressively longer warmups gives:
+//
+//	warmup   0.5 s   2 s     8 s     30 s
+//	pnf=true 0.1968  0.3189  0.7903  1.7135
+//
+// The reading was still climbing at 30 s, and that configuration does diverge
+// in a long render. A probe long enough to settle would cost minutes per row,
+// so the probes are kept as a cheap early warning and the actual stability
+// assertion lives in TestDWGResonanceLongRenderDecays, which closes the loop
+// through Piano.Process for 45 s. Treat a number here as "at least this hot",
+// never as "this is the loop gain".
 const maxResonanceLoopGain = 0.5
 
 // resonanceProbeNotes spans the register where the loop is hottest; above note
-// 84 every measured gain is below 1e-3.
-var resonanceProbeNotes = []int{21, 36, 48, 60, 72, 84}
+// 84 every measured gain is below 5e-3. Note 33 is included because it, not the
+// bottom of the keyboard, is where the DWG per-note gain peaks.
+var resonanceProbeNotes = []int{21, 33, 36, 48, 60, 72, 84}
 
 // TestResonanceLoopGainIsBoundedAcrossCores pins the per-note open-loop gain of
 // the sympathetic resonance path below unity, with margin.
@@ -250,12 +268,21 @@ var resonanceProbeNotes = []int{21, 36, 48, 60, 72, 84}
 // probed on the modal core it pins in string_model, with its own resonance
 // gain, 20 partials, excitation 4 and undamped loss 0.4.
 //
-// Measured on 2026-08-22 (48 kHz, per-note, hottest note of each row):
+// Re-measured on 2026-08-22 after the noteResonator unity-peak normalisation
+// (48 kHz, per-note, hottest note of each row). The "before" column is the same
+// probe on the unnormalised resonator bank; ResonanceGain is unchanged on both
+// sides, so the whole move is the normalisation:
 //
-//	params             core    gain    note
-//	default            modal   0.0083  36
-//	default            dwg     0.4110  21
-//	modal-calibrated   modal   0.1062  36
+//	params             core    before  after     note
+//	default            modal   0.0083  0.000161  36
+//	default            dwg     0.4110  0.009118  33
+//	modal-calibrated   modal   0.1062  0.002082  48
+//
+// Note 33, not note 21, is where the DWG per-note gain peaks. It was outside
+// the probed set before, and it measured 0.5445 pre-fix - already over the
+// bound this test asserts.
+//
+// Read these as lower bounds; see the caveat on maxResonanceLoopGain.
 func TestResonanceLoopGainIsBoundedAcrossCores(t *testing.T) {
 	const sampleRate = 48000
 
@@ -289,13 +316,6 @@ func TestResonanceLoopGainIsBoundedAcrossCores(t *testing.T) {
 	}
 }
 
-// dwgAggregateDefect marks the rows this probe cannot assert yet. See the
-// Phase 9.6 follow-up in PLAN.md.
-const dwgAggregateDefect = "known defect: the DWG core's aggregate resonance loop grows with the sustain pedal held " +
-	"(measured 2026-08-22: peak 11 at 1 s to 6.2e8 at 40 s through Piano.Process). " +
-	"It predates this change - the fix here is modal-only - and repairing it moves DWG output, " +
-	"so it needs its own change and a gate-c4 re-baseline. See the Phase 9.6 follow-up in PLAN.md."
-
 // TestAggregateResonanceLoopIsBounded is the full-bank counterpart of the
 // per-note probe.
 //
@@ -314,37 +334,47 @@ const dwgAggregateDefect = "known defect: the DWG core's aggregate resonance loo
 // The open-loop gain is only sufficient, not necessary, for stability, so each
 // row also runs the loop closed and requires it to decay.
 //
-// Measured on 2026-08-22 (48 kHz, all 88 groups undamped, hottest probe note):
+// Re-measured on 2026-08-22 after the noteResonator unity-peak normalisation
+// (48 kHz, all 88 groups undamped, hottest probe note). The "before" column is
+// the same probe on the unnormalised resonator bank:
 //
-//	params             core    perNoteFilter   aggregate gain   closed loop
-//	default            modal   true            0.0164           decays to 0
-//	default            modal   false           0.0006           decays to 0
-//	modal-calibrated   modal   true            0.1208           decays to 0
-//	modal-calibrated   modal   false           0.0060           decays to 0
-//	default            dwg     true            1.4276           grows 14x / 6 s
-//	default            dwg     false           0.0315           decays
-//	modal-calibrated   dwg     true            1.9828           grows 52x / 6 s
+//	params             core    perNoteFilter   before   after    closed loop
+//	default            modal   true            0.0164   0.0002   decays to 0
+//	default            modal   false           0.0006   0.0006   decays to 0
+//	modal-calibrated   modal   true            0.1208   0.0016   decays to 0
+//	modal-calibrated   modal   false           0.0060   0.0059   decays to 0
+//	default            dwg     true            1.4276   0.0237   decays
+//	default            dwg     false           0.0315   0.0315   decays
+//	modal-calibrated   dwg     true            1.9828   0.0329   decays
+//	modal-calibrated   dwg     false           0.0438   0.0438   decays
 //
-// The modal aggregate stays a factor of four under the bound even with the
-// hottest tracked preset, so the fix in modal_group.go holds for the summed
-// loop and not just per note. The DWG rows are a separate, pre-existing defect;
-// see dwgAggregateDefect.
+// The DWG rows were skipped against a known defect until 2026-08-22: with the
+// unnormalised resonator bank the summed loop was above unity, and through the
+// public Piano.Process a 40 s render grew from a peak of 3.2 at 1 s to 1.2e7.
+//
+// The normalisation alone answers the question the skip left open. It brings
+// the hottest DWG aggregate down 60x (1.4276 -> 0.0237) with no change to
+// ResonanceGain, so the AGGREGATION across undamped targets does not need a
+// normalisation of its own: what made the sum exceed unity was the 1/f0 tilt
+// of the per-note filters, not the summing. The perNoteFilter=false rows do not
+// move at all, because that path never goes through the resonator bank - which
+// is exactly why it was the one configuration the defect spared.
+//
+// The modal rows also confirm PR #23's conclusion still holds: the modal
+// aggregate was already bounded and only gets further from the bound.
 func TestAggregateResonanceLoopIsBounded(t *testing.T) {
 	const sampleRate = 48000
 	const closedLoopSeconds = 3.0
 
 	// The aggregate loop is hottest in the bass; above note 48 every measured
 	// aggregate gain is an order of magnitude down.
-	aggregateNotes := []int{21, 28, 36, 48}
+	aggregateNotes := []int{21, 28, 33, 36, 48}
 
 	for _, set := range resonanceProbeParamSets() {
 		for _, model := range []StringModel{StringModelModal, StringModelDWG} {
 			for _, perNoteFilter := range []bool{true, false} {
 				name := set.name + "/" + string(model) + "/perNoteFilter=" + strconv.FormatBool(perNoteFilter)
 				t.Run(name, func(t *testing.T) {
-					if model == StringModelDWG {
-						t.Skip(dwgAggregateDefect)
-					}
 					params := set.build(t)
 					params.StringModel = model
 					params.ResonanceEnabled = true

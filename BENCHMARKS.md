@@ -326,6 +326,13 @@ machine's noise, and both still allocation-free. The absolute numbers differ
 from the table above because of the shorter `-benchtime`; only the paired
 comparison is meaningful.
 
+Re-checked 2026-08-22 after the `noteResonator` unity-peak normalisation, which
+`filterResonanceDrive` runs on this path in both cores: 0.77 ms
+(`perNoteFilter`) and 0.61 ms (`flatDrive`) at `-benchtime 2s`, unchanged within
+noise against the figures in the paragraph above. The normalisation only changes
+`b0`, which `newNoteResonator` computes once at construction, so the per-sample
+work is identical and nothing here needed re-baselining.
+
 With resonance **disabled** the change is not measurable above this machine's
 noise. `BenchmarkModalPolyphonyScaling` (all 10 sub-benchmarks) and
 `BenchmarkStringBankCouplingModes` (all 30) report `~`.

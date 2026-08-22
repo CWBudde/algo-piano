@@ -65,6 +65,8 @@ This maps each split source file to its direct and indirect test coverage.
 - `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — `resonanceForceScale`
 - `TestAggregateResonanceLoopIsBounded` (`modal_resonance_test.go`) — the same loop with the
   whole bank sustained, so every undamped group sums into one bridge signal
+- `TestDWGResonanceLongRenderDecays` (`resonance_normalisation_test.go`) — the DWG counterpart,
+  45 s rather than 6 s
 
 ## `modal_kernel.go`
 
@@ -108,14 +110,32 @@ assert equality with no tolerance.
 
 - `TestSympatheticResonanceEnergizesSilentHeldString` (`resonance_test.go`)
 - `TestPerNoteResonanceFilterIsFrequencySelective` (`resonance_test.go`)
+- `TestNoteResonatorHasUnityPeakGain` (`resonance_normalisation_test.go`) — the two-pole
+  resonator `filterResonanceDrive` is built from must peak at exactly one, checked both
+  analytically from the coefficients and against a driven sine, at 44.1/48/96 kHz across
+  notes 21-108 and all three bandwidths. It used to peak at roughly `1/(2*sin(w0))`, and
+  that 1/f0 tilt is what made the DWG resonance loop diverge
+- `TestResonanceDriveBankGainIsRegisterIndependent` (`resonance_normalisation_test.go`) — the
+  bank-level statement of the same property in both cores: the summed peak of a group's three
+  resonators is 1.85 (the partial weights) at every note, where it used to run 183.1 at note
+  21 against 2.6 at note 96
+- `TestDWGResonanceLongRenderDecays` (`resonance_normalisation_test.go`) — 45 s through the
+  public `Piano.Process` with the DWG core, resonance on and the sustain pedal held; no
+  five-second window may exceed 1.5x the first sustain window. This is the assertion the
+  divergence escaped: it stayed finite for well over 40 s, so the 4 s
+  `TestLongRenderHasNoNaNOrInf` rows never saw it
 - `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — per-note open-loop
   gain of the bridge-injection loop, notes 21-84, on both cores at the defaults and on the
-  modal core with the knobs of `assets/presets/modal-calibrated.json`; the loop is linear, so
-  a gain below 1 is sufficient for stability
+  modal core with the knobs of `assets/presets/modal-calibrated.json`
 - `TestAggregateResonanceLoopIsBounded` (`modal_resonance_test.go`) — the same loop with all 88
   groups undamped, both `ResonancePerNoteFilter` settings, plus a closed-loop run that must
-  decay. The DWG rows are skipped: that core's aggregate loop grows, a pre-existing defect
-  tracked as a Phase 9.6 follow-up in `PLAN.md`
+  decay. The DWG rows asserted again on 2026-08-22 when the resonator normalisation brought
+  that core's aggregate loop from 1.43 down to 0.02
+
+Both open-loop probes warm up for 0.5 s, which is far short of an undamped string's steady
+state, so their numbers are **lower bounds** on the loop gain and the 0.5 bound they assert is
+not a proof of stability — see the caveat on `maxResonanceLoopGain` and the Phase 9.6 follow-up
+in `PLAN.md`. `TestDWGResonanceLongRenderDecays` is what actually pins the loop.
 
 ## `convolver.go`
 
