@@ -301,7 +301,7 @@ Key commands:
 
 - `cmd/piano-render`: offline note rendering
 - `cmd/piano-distance`: objective reference/candidate comparison (`analysis.Compare`)
-- `cmd/piano-modal-fit`: calibrates modal knobs against DWG reference renders and writes modal preset/report
+- `cmd/piano-modal-fit`: calibrates modal knobs against DWG reference renders and writes modal preset/report (`--no-resonance` silences sympathetic resonance for the calibration renders only; the written preset keeps the input preset's `resonance_enabled`)
 - `cmd/piano-fit`: broader optimization workflow
 - `cmd/ir-synth`: synthetic IR generation (body/room style IR assets)
 

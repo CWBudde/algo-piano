@@ -20,6 +20,11 @@ The idea: alternate between piano-only and IR stages so each builds on the previ
 ### Key flags
 
 - `--no-resonance`: Disables the resonance engine during optimization. Use for stages 1-3 to avoid the CPU cost of sympathetic resonance (27x speedup). Only enable resonance for final polish stages.
+  It is a fitting-speed knob, not a model change: the written preset keeps the
+  input preset's own `resonance_enabled`, so a staged pipeline never hands the
+  next stage a preset with resonance permanently switched off. `cmd/piano-modal-fit`
+  accepts the same flag with the same semantics — there it silences resonance on
+  both sides of the match, the DWG references and the modal candidates alike.
 - `--cpuprofile <file>`: Write CPU profile for performance analysis.
 - `--sweep`: Replaces the optimizer with a deterministic sensitivity + Pareto
   sweep over whatever knobs the current `--pass`/`--optimize` selection leaves

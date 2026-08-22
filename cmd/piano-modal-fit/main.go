@@ -38,19 +38,29 @@ type noteCalibration struct {
 }
 
 type calibrationReport struct {
-	ProfileVersion string            `json:"profile_version"`
-	TimestampUTC   string            `json:"timestamp_utc"`
-	BasePreset     string            `json:"base_preset"`
-	OutputPreset   string            `json:"output_preset"`
-	SampleRate     int               `json:"sample_rate"`
-	Velocity       int               `json:"velocity"`
-	ReleaseAfter   float64           `json:"release_after_seconds"`
-	Notes          []int             `json:"notes"`
-	Evaluations    int               `json:"evaluations"`
-	BestScore      float64           `json:"best_score"`
-	BestKnobs      knobSet           `json:"best_knobs"`
-	PerNote        []noteCalibration `json:"per_note"`
-	ElapsedSec     float64           `json:"elapsed_seconds"`
+	ProfileVersion string  `json:"profile_version"`
+	TimestampUTC   string  `json:"timestamp_utc"`
+	BasePreset     string  `json:"base_preset"`
+	OutputPreset   string  `json:"output_preset"`
+	SampleRate     int     `json:"sample_rate"`
+	Velocity       int     `json:"velocity"`
+	ReleaseAfter   float64 `json:"release_after_seconds"`
+	Notes          []int   `json:"notes"`
+	// FittingResonanceEnabled is the ResonanceEnabled the scores below were
+	// produced under, and OutputResonanceEnabled is the one the written preset
+	// carries. Under --no-resonance they differ, and then BestScore and PerNote
+	// do NOT describe the named output preset: re-rendering that preset turns
+	// the sympathetic path back on and yields different metrics. Both are
+	// recorded without omitempty so a false is stated rather than dropped, which
+	// is what makes a resonance-on run distinguishable from a resonance-off one
+	// after the fact.
+	FittingResonanceEnabled bool              `json:"fitting_resonance_enabled"`
+	OutputResonanceEnabled  bool              `json:"output_resonance_enabled"`
+	Evaluations             int               `json:"evaluations"`
+	BestScore               float64           `json:"best_score"`
+	BestKnobs               knobSet           `json:"best_knobs"`
+	PerNote                 []noteCalibration `json:"per_note"`
+	ElapsedSec              float64           `json:"elapsed_seconds"`
 }
 
 type renderSettings struct {
@@ -96,6 +106,7 @@ func main() {
 	iters := flag.Int("iters", 120, "Evaluation budget for Mayfly objective before local refinement")
 	mayflyVariant := flag.String("mayfly-variant", "desma", "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
 	mayflyPop := flag.Int("mayfly-pop", 10, "Male/female population size per Mayfly run")
+	noResonance := flag.Bool("no-resonance", false, "Disable sympathetic resonance during calibration (faster evals)")
 	seed := flag.Int64("seed", 1, "Random seed")
 	flag.Parse()
 
@@ -135,6 +146,19 @@ func main() {
 	base, err := preset.LoadJSON(*basePreset)
 	if err != nil {
 		die("load preset: %v", err)
+	}
+	// --no-resonance is a calibration-speed knob, not a model change: it
+	// silences the sympathetic resonance on both sides of the match — the DWG
+	// references and the modal candidates are rendered from the same base
+	// params — but must not leak into the written preset. Remember the
+	// preset's own setting and restore it before the output is written,
+	// otherwise a staged pipeline that disables resonance for the cheap early
+	// stages would hand every later stage a preset with resonance permanently
+	// switched off. This mirrors cmd/piano-fit exactly; the two fitting tools
+	// are meant to share these semantics.
+	presetResonance := base.ResonanceEnabled
+	if *noResonance {
+		base.ResonanceEnabled = false
 	}
 
 	rs := renderSettings{
@@ -230,9 +254,7 @@ func main() {
 		die("final evaluation failed: %v", err)
 	}
 
-	outParams := cloneParams(base)
-	applyModalKnobs(outParams, best)
-	outParams.StringModel = piano.StringModelModal
+	outParams := finalizeOutputParams(base, best, presetResonance)
 
 	if err := writePreset(*outputPreset, outParams); err != nil {
 		die("write output preset: %v", err)
@@ -250,11 +272,15 @@ func main() {
 		Velocity:       *velocity,
 		ReleaseAfter:   *releaseAfter,
 		Notes:          notes,
-		Evaluations:    evals,
-		BestScore:      bestScore,
-		BestKnobs:      best,
-		PerNote:        perNote,
-		ElapsedSec:     time.Since(start).Seconds(),
+		// base carries the fitting setting (--no-resonance already applied);
+		// outParams carries the restored one.
+		FittingResonanceEnabled: base.ResonanceEnabled,
+		OutputResonanceEnabled:  outParams.ResonanceEnabled,
+		Evaluations:             evals,
+		BestScore:               bestScore,
+		BestKnobs:               best,
+		PerNote:                 perNote,
+		ElapsedSec:              time.Since(start).Seconds(),
 	}
 	if err := writeJSON(*reportPath, report); err != nil {
 		die("write report: %v", err)
@@ -674,6 +700,18 @@ func cloneParams(src *piano.Params) *piano.Params {
 		d.PerNote[k] = &nv
 	}
 	return &d
+}
+
+// finalizeOutputParams builds the preset that gets written: the fitted modal
+// knobs on top of the base params, the modal string model selected, and
+// presetResonance — the input preset's own ResonanceEnabled — restored, so a
+// run under --no-resonance never writes resonance off into the output.
+func finalizeOutputParams(base *piano.Params, knobs knobSet, presetResonance bool) *piano.Params {
+	out := cloneParams(base)
+	applyModalKnobs(out, knobs)
+	out.StringModel = piano.StringModelModal
+	out.ResonanceEnabled = presetResonance
+	return out
 }
 
 func writePreset(path string, p *piano.Params) error {

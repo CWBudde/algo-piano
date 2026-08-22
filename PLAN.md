@@ -693,23 +693,82 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         level back needs a change to the loop itself — wider resonator
         bandwidths, more partials, or per-target injection scaling — not more
         gain.
-  - [ ] follow-up: **the open-loop probes in `piano/modal_resonance_test.go`
-        read a transient, not a steady state.** An undamped string has a T60 of
-        tens of seconds; `measureResonanceLoopGain` warms up for 0.5 s, so its
-        numbers are lower bounds. Measured 2026-08-22 on a configuration that
-        does diverge (DWG, `ResonanceGain` 0.0014): the same probe reports
-        0.1968 at 0.5 s of warmup, 0.3189 at 2 s, 0.7903 at 8 s and 1.7135 at
-        30 s, still climbing. Every recorded number in that file, before and
-        after this change, is understated by that factor, and the 0.5 bound is
-        not a stability criterion. A settled probe costs minutes per row, so the
-        real assertion currently lives in `TestDWGResonanceLongRenderDecays`;
-        replacing the probe with something both cheap and sound is open.
-  - [ ] follow-up: make `cmd/piano-modal-fit` disable resonance during fitting
+  - [x] follow-up: **the open-loop probes in `piano/modal_resonance_test.go`
+        read a transient, not a steady state.** Fixed 2026-08-22 by replacing
+        the 0.5 s warmup and the cumulative average with a windowed probe:
+        `measureResonanceLoopGain` now reports the mean of the LAST second of
+        drive, stops as soon as that mean moves by less than 0.2% against the
+        second before it, and returns whether it settled or ran out of its 24 s
+        budget. An unsettled reading is labelled a lower bound in the log line
+        and in the recorded tables, so the file no longer claims a steady state
+        it did not measure.
+        **Ground truth.** The diverging row (DWG, `ResonanceGain` 0.0014, all 88
+        groups undamped, per-note filter on, note 33) was driven for 400 s: the
+        windowed reading is 0.535 at 5 s, 1.027 at 20 s, 1.117 at 24 s, 1.532 at
+        100 s and then flat, averaging **1.5299** over the last 50 s. So the
+        settled loop gain of a configuration that does diverge is above unity,
+        as the small-gain condition requires, and the 24 s budget recovers 0.73
+        of it. The loop is linear in `resonance_gain`, so the settled gain is
+        1093 × `resonance_gain` and unity falls at **0.00092** — between the
+        0.0007 that only creeps up and the 0.0014 that reaches 91.5 in a 120 s
+        render. The probe's unity crossing and the renderer's divergence are the
+        same event.
+        `TestResonanceProbeSeesKnownDivergingLoop` now pins that calibration in
+        the suite: it runs the probe on that configuration and fails below 1.0.
+        The old probe reported 0.1968 there, which is what made it useless.
+        **Every recorded figure re-measured** (48 kHz, hottest note per row,
+        0.5 s warmup → 24 s windowed): per-note default/modal 0.000161 →
+        0.000161 (settled), default/dwg 0.009118 → 0.165995, calibrated/modal
+        0.002082 → 0.002396 (settled); aggregate default/modal 0.0002 →
+        0.000190 and 0.0006 → 0.000617, calibrated/modal 0.0016 → 0.001888 and
+        0.0059 → 0.005993, default/dwg 0.0237 → 0.143659 and 0.0315 → 0.155013,
+        calibrated/dwg 0.0329 → 0.199527 and 0.0438 → 0.215297. The modal rows
+        settle inside the budget; the DWG rows do not and stand for settled
+        gains of 0.20 to 0.30. The hottest per-note DWG reading also moves from
+        note 33 to note 36 once the probe is driven properly.
+        **The bound stays at 0.5** and is now justified rather than asserted:
+        read through the 0.73 recovery it stands for a settled gain of 0.68,
+        under the small-gain limit of 1, and it leaves the hottest covered
+        configuration (0.2153) a factor of 2.3.
+        **Cost.** The probe subtests were made parallel, which pays for most of
+        the longer drive. Back to back on a 12-core machine, `go test ./piano/`
+        goes from 107.7 s wall / 104.7 s CPU to 109.5 s wall / 244.2 s CPU:
+        **+1.8 s wall, +140 s CPU**. An earlier pair on a quieter machine
+        measured 40 s → 75 s wall, so the wall cost is between two and thirty-five
+        seconds depending on how many cores are free; the CPU cost is the honest
+        figure and it is 2.3x.
+        **What did not work.** Aitken extrapolation of the growth curve, the
+        cheap alternative, is unusable below about 15 s of drive: the residual
+        is not a single decaying exponential until the fast modes have gone, so
+        triples taken at 1-10 s extrapolate to -0.61, 0.90 and 14.39 against a
+        true 1.53. Deriving the gain analytically was not attempted - the loop
+        runs through `StringBank.Process` and the transfer function is not
+        reachable from the coefficients.
+  - [x] follow-up: make `cmd/piano-modal-fit` disable resonance during fitting
         the way `cmd/piano-fit/main.go:212-214` does.
         `assets/presets/modal-calibrated.json` was very likely fitted against
         diverging renders, which would explain why `analysis/norms.go:55`
         excludes it as a degenerate outlier.
-
+        `cmd/piano-modal-fit` now takes the same `--no-resonance` flag with the
+        same save/restore semantics as `cmd/piano-fit`: it silences resonance on
+        both sides of the match (the DWG references and the modal candidates are
+        rendered from the same base params) while `finalizeOutputParams`
+        restores the input preset's own `ResonanceEnabled` before the preset is
+        written, so a staged run cannot leak resonance-off into the output. The
+        default is `false`, matching `cmd/piano-fit`: with the divergence
+        defects fixed (#23, #26) a resonance-on fit is sound again, and a
+        differing default between the two fitting tools is exactly the drift
+        this follow-up was about. Pinned by
+        `TestFinalizeOutputParamsRestoresPresetResonance` and
+        `TestWritePresetResonanceRoundTrip` in
+        `cmd/piano-modal-fit/main_test.go`.
+  - [ ] follow-up: **re-fit `assets/presets/modal-calibrated.json`.** The tool is
+        now capable of a clean fit, but the shipped preset is still the one
+        produced against diverging resonance renders, and `analysis/norms.go:55`
+        still has to exclude it as a degenerate outlier. Re-fitting it is its
+        own piece of work: the new preset changes the norm corpus, so the
+        exclusion and the normalisation constants have to be re-derived together
+        with it. The exclusion stays exactly as it is until then.
 - [ ] Add benchmarks:
   - [x] DWG vs modal CPU at fixed block size/sample rate
         (`BenchmarkStringBankStringModels` in `piano/modal_bench_test.go` runs
