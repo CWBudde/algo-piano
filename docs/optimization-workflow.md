@@ -367,46 +367,44 @@ Two caveats that will bite otherwise:
   from a pass report alone would seed it with a partial knob set; feed the
   previous stage's **output preset** forward instead (and pass `--resume=false`).
 
-### Measured results (2026-08-21, 180 s per pass, from `fitted-c4-mayfly.json`)
+### Measured results (2026-08-22, 180 s per pass, from `fitted-c4-mayfly.json`)
 
-> **Superseded — measured on the pre-#14 renderer.** Every number in this
-> section was produced before the DWG treble-collapse fix, which changed every
-> render (the baseline alone moved 0.5194 → 0.5330). The relative story below
-> still reads correctly, but do not quote these figures as current. Re-running
-> the three passes on the current renderer, under the calibrated norms, is the
-> open follow-up.
+Re-measured on the post-#14 renderer under `analysis.CalibratedNorms()`. Judged
+the only honest way — by re-running the full `legacy-v1` compare on each pass's
+output preset, so the column is comparable across passes and against the C4
+baseline:
 
-Judged the only honest way — by re-running the full `legacy-v1` compare on each
-pass's output preset:
+| Stage                            | legacy score | what its own profile did                |
+| -------------------------------- | ------------ | --------------------------------------- |
+| baseline (`fitted-c4-mayfly`)    | 0.5330       | —                                       |
+| after `attack`                   | **0.5214**   | attack centroid 0.545 → 0.130 oct       |
+| after `attack` → `inharmonicity` | 0.5234       | partial-freq RMSE unmoved at 36.6 cents |
+| `sustain`, chained from `attack` | 0.5436       | decay diff 5.2 → 2.8 dB/s               |
 
-| Stage                     | legacy score | what its own profile did                |
-| ------------------------- | ------------ | --------------------------------------- |
-| baseline                  | 0.5194       | —                                       |
-| after `attack`            | **0.5117**   | attack centroid 0.440 → 0.084 oct       |
-| after `sustain` (chained) | 0.5581       | segmented decay RMSE 14.58 → 12.84 dB/s |
-| after `inharmonicity`     | 0.5691       | partial-frequency RMSE barely moved     |
+The `attack` pass is still the only net win, and it is now a bigger one: at
+0.5214 it beats the shipping preset and clears every threshold in
+`assets/thresholds/c4.json`.
 
-Only the `attack` pass is currently a net win. Both others improve exactly the
-metric their profile weights and pay for it elsewhere — the `sustain` pass buys
-1.7 dB/s of segmented-decay accuracy with 9 dB of spectral RMSE (58.0 → 66.9)
-and 13 dB of partial-level RMSE (14.0 → 27.4).
+**The `sustain` pass still regresses, and the earlier explanation was only half
+right.** The old diagnosis was that `NormSpectral = 30.0` was saturated, so
+`decay-v1` could not see a spectral degradation and had no restoring force
+against it. `decay-v1` now uses `CalibratedNorms()` with `Spectral = 80.0`, that
+blind spot is genuinely gone — and the pass makes the same trade anyway. It buys
+decay diff (5.2 → 2.8 dB/s) and envelope (10.1 → 9.3 dB), and pays with time
+RMSE (0.0978 → 0.1299), spectral (51.7 → 56.0 dB) and partial level (11.3 → 19.0
+dB). The time RMSE alone breaches the gate's `0.112`, so the result could not
+ship regardless of the score.
 
-That was not a flaw in the pass machinery, it was `NormSpectral = 30.0` being
-saturated. At 58 dB and at 67 dB the spectral component normalised to exactly
-1.0, so it contributed a _constant_ to `decay-v1` and supplied no restoring
-force at all against a spectral degradation of that size. Partial level carries
-weight 0 in `decay-v1`, so nothing objected there either.
-
-`decay-v1` now uses `analysis.CalibratedNorms()`, where `Spectral = 80.0`, so
-that particular blind spot is gone — a 58 → 67 dB degradation now normalises
-0.73 → 0.84 and the profile can see it. **The pass has not been re-run since,
-so it is still not chained into a shipping preset**; run it in isolation and
-check `just gate-c4` on the result until a re-measurement says otherwise.
+So this is a **model** finding, not a harness finding: at C4 the model cannot be
+pulled onto the reference decay without pulling its spectrum off. Keep the pass
+out of the shipping chain, and treat closing that conflict as string-model work
+rather than as more fitting.
 
 Run `inharmonicity` from the attack-pass preset rather than the sustain-pass
-preset — done that way it is score-neutral (0.5117 → 0.5121) and nudges
-partial-frequency RMSE from 34.9 to 34.5 cents. Its three knobs simply have
-little leverage at C4.
+preset. Done that way it is very slightly negative (0.5214 → 0.5234) and leaves
+partial-frequency RMSE at 36.6 cents. Its three knobs simply have too little
+leverage at C4 — which is why the recipe's chained artifact is marginally worse
+than the attack pass on its own.
 
 ## Multi-Note Fitting
 

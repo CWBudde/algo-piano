@@ -123,28 +123,39 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
       `attack` → `inharmonicity` and leaves the regressing `sustain` pass out.
       Measurements below.)
   - [x] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
-        (measured pre-#14, see the boundary note above; 180 s from
-        `fitted-c4-mayfly.json`, `--pass-window 0:0.35`: legacy score
-        `0.5194` → `0.5117`, attack centroid error `0.440` → `0.084` octaves. The
-        one pass that is a net win today.)
+        (re-measured 2026-08-22 on the post-#14 renderer under
+        `analysis.CalibratedNorms()`; 180 s from `fitted-c4-mayfly.json`,
+        `--pass-window 0:0.35`: legacy score `0.5330` → **`0.5214`**, attack
+        centroid error `0.545` → `0.130` octaves. Still the one pass that is a
+        net win, and it now beats the shipping preset outright — see the re-fit
+        follow-up below.)
   - [ ] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
-        (**runs and converges, but regresses the comparable score — do not chain
-        it into a shipping preset yet.** It improves exactly what `decay-v1`
-        weights, segmented decay RMSE `14.58` → `12.84` dB/s, and pays with
-        spectral RMSE `58.0` → `66.9` dB and partial-level RMSE `14.0` → `27.4` dB,
-        for a legacy score of `0.5581`. Cause was the saturated `NormSpectral`,
-        not the pass machinery: at both 58 dB and 67 dB the spectral term
-        normalised to exactly 1.0, so it was a constant in `decay-v1` and exerted
-        no restoring force, while partial level carries weight 0 there.
-        `analysis.CalibratedNorms()` has since removed that saturation, and these
-        numbers additionally predate the #14 renderer change — so the box is now
-        waiting on a re-run, not on the norms.)
+        (**re-run 2026-08-22 on the post-#14 renderer under the calibrated norms.
+        It still regresses the comparable score — it stays out of the shipping
+        chain.** Chained from the attack preset, legacy score `0.5214` →
+        **`0.5436`**, worse than even the unfitted `0.5330` baseline. The trade
+        has the same shape as before: it buys exactly what `decay-v1` weights —
+        decay diff `5.2` → `2.8` dB/s and envelope `10.1` → `9.3` dB — and pays
+        with time RMSE `0.0978` → `0.1299`, spectral `51.7` → `56.0` dB and
+        partial level `11.3` → `19.0` dB. Note the time RMSE alone would breach
+        `assets/thresholds/c4.json` (max `0.112`), so this preset could not ship
+        even if the score had held.
+        The earlier diagnosis was that saturated norms let this happen unseen.
+        That was only half right: `CalibratedNorms()` did remove the saturation
+        from `decay-v1`, and the pass still makes the same trade, so the cause is
+        not purely a blind objective. What the pass optimises genuinely conflicts
+        with the rest of the metric at C4 — the model cannot currently match the
+        reference decay without breaking its spectrum. That is a model finding,
+        not a fitting-harness finding, and it is what the box is now waiting on.)
   - [ ] Inharmonicity pass: fit dispersion/inharmonicity via partial-frequency error
-        (runs; score-neutral from the attack-pass preset, `0.5117` → `0.5121`,
-        partial-frequency RMSE `34.9` → `34.5` cents. Its three knobs have too
-        little leverage at C4 to close a 35-cent gap — the knob bound/scaling
-        issue recorded in the Phase 8B design notes still needs addressing before
-        this can be ticked.)
+        (re-run 2026-08-22: still no leverage, and now marginally negative rather
+        than neutral. From the attack preset, legacy score `0.5214` → `0.5234`,
+        partial-frequency RMSE unmoved at `36.6` cents. Its three knobs still
+        cannot close a ~37-cent gap at C4, so the knob bound/scaling issue
+        recorded in the Phase 8B design notes remains the blocker. Because it
+        does not help, the `attack` → `inharmonicity` chain that
+        `just fit-c4-passes` produces (`0.5234`) is very slightly worse than the
+        attack pass alone (`0.5214`).)
 - [x] Strengthen distance metrics for piano realism
       (`Compare` stays **bit-identical**: the new metrics carry weight 0 in the
       default `legacy-v1` profile. Named profiles `balanced-v2`, `attack-v1`,
@@ -207,10 +218,27 @@ population spread rather than guessed. `legacy-v1` deliberately keeps
 and `assets/thresholds/c4.json` mean what it says. The gate checks the raw dB
 value, which is a real regression signal either way.
 
-**Still open:** the sustain and inharmonicity passes have not been re-run since.
-Every recorded pass number predates both the calibration and the #14 renderer
-change, so the two unticked boxes above are waiting on a measurement, not on a
-missing mechanism.
+**Re-run done (2026-08-22).** All three passes were re-measured on the post-#14
+renderer under the calibrated norms; the numbers in the boxes above are from that
+run and are all `legacy-v1`, so they are comparable with each other and with the
+`0.5330` C4 baseline. The measurement changed one conclusion and confirmed two:
+
+| Preset                                   | legacy-v1 score | vs baseline |
+| ---------------------------------------- | --------------- | ----------- |
+| `fitted-c4-mayfly.json` (shipping)       | 0.5330          | —           |
+| attack pass                              | **0.5214**      | −0.0116     |
+| attack → inharmonicity (recipe artifact) | 0.5234          | −0.0096     |
+| sustain pass (not chained)               | 0.5436          | +0.0106     |
+
+- **Confirmed:** the sustain pass still regresses, so it stays out of the chain.
+  The norm saturation was not the whole story — see the box above.
+- **Confirmed:** the inharmonicity pass still has no leverage at C4.
+- **Changed:** the attack pass alone now beats the shipping preset by 0.0116,
+  and clears every threshold in `assets/thresholds/c4.json`. That is direct
+  evidence for the re-fit follow-up that `assets/thresholds/c4.json` already
+  names ("the honest fix for the two loosened numbers is to re-fit the C4 preset
+  against the corrected core"). Re-fitting and re-baselining the gate is
+  deliberately **not** part of this measurement, because it moves the CI fence.
 
 ---
 
