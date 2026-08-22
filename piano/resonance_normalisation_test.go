@@ -239,3 +239,101 @@ func TestDWGResonanceLongRenderDecays(t *testing.T) {
 		}
 	}
 }
+
+// TestNoteResonatorPeakIsUnityAcrossSpectrum bounds the resonator's response
+// over the WHOLE spectrum, not just at the partial it is tuned to.
+//
+// newNoteResonator normalises at w0, so |H(w0)| is exactly 1 by construction and
+// the centre-frequency test above cannot see the response anywhere else. |D| is
+// really minimised at cos(wMax) = ((1+r^2)/(2r))*cos(w0), which drops below w0
+// once the bandwidth is comparable to f0, leaving a shoulder slightly above
+// unity between the partials in the bottom octave. Measured 2026-08-22 at
+// 48 kHz: A0/35 Hz peaks at 1.0494 at 21.2 Hz, A0/55 Hz at 1.0308, C4/35 Hz at
+// 1.0006. The shoulder shrinks as f0 rises and is gone by the middle register.
+//
+// The bound is therefore NOT 1.0. Normalising at wMax instead would cap the
+// response at one, but it would make the gain at the partials register-
+// dependent (0.953 at A0 against 1.0 in the treble), which is the very property
+// whose absence let the sympathetic loop diverge — see
+// TestResonanceDriveBankGainIsRegisterIndependent. This test exists to stop the
+// shoulder GROWING unnoticed, which is what a return to an unnormalised or
+// mis-normalised b0 would do: the pre-fix filter reached 183x here.
+func TestNoteResonatorPeakIsUnityAcrossSpectrum(t *testing.T) {
+	// 1.06 clears the worst shoulder the bank can actually produce (1.0494, at
+	// A0's first partial) with room for float32 coefficient quantisation, and is
+	// nearly two orders of magnitude below the 183x the defect produced.
+	const maxSpectralPeak = 1.06
+
+	// The (multiplier, bandwidth) pairs initResonanceFilters builds, so this
+	// covers the configurations that exist rather than arbitrary combinations.
+	// Pairing a 80 Hz bandwidth with a 39 Hz centre, for instance, is not a
+	// resonator the bank ever creates and its peak is legitimately at DC.
+	partials := []struct {
+		mult float64
+		bw   float32
+	}{{1, 35}, {2, 55}, {3, 80}}
+
+	for _, sampleRate := range []int{44100, 48000, 96000} {
+		for _, note := range []int{21, 27, 33, 48, 60, 72, 84, 96, 108} {
+			f0 := float64(midiNoteToFreq(note))
+			for i, p := range partials {
+				center := f0 * p.mult
+				if center > 0.49*float64(sampleRate) {
+					continue // initResonanceFilters drops these
+				}
+				name := strconv.Itoa(sampleRate) + "/note" + strconv.Itoa(note) +
+					"/partial" + strconv.Itoa(i+1)
+				t.Run(name, func(t *testing.T) {
+					res := newNoteResonator(sampleRate, float32(center), p.bw, 1)
+
+					peak, peakHz := noteResonatorSpectralPeak(res, float64(sampleRate))
+					if peak > maxSpectralPeak {
+						t.Fatalf("peak magnitude %.6f at %.2f Hz (centre %.2f Hz, bw %.0f Hz) exceeds %.2f; the drive filter is amplifying again",
+							peak, peakHz, center, p.bw, maxSpectralPeak)
+					}
+					// The peak must also not sit far below unity, or the
+					// resonator has simply been scaled away and the sympathetic
+					// path is silent rather than safe.
+					if peak < 1-5e-3 {
+						t.Fatalf("peak magnitude %.6f at %.2f Hz (centre %.2f Hz) is below unity by more than 5e-3",
+							peak, peakHz, center)
+					}
+				})
+			}
+		}
+	}
+}
+
+// noteResonatorSpectralPeak returns the largest |H| over the whole spectrum and
+// the frequency it occurs at, found by a logarithmic coarse sweep from DC to
+// Nyquist followed by a golden-section refinement around the best bin.
+func noteResonatorSpectralPeak(r noteResonator, sampleRate float64) (float64, float64) {
+	nyquist := sampleRate / 2
+	const coarse = 20000
+	best, bestHz := noteResonatorMagnitude(r, 0, sampleRate), 0.0
+	for i := 1; i <= coarse; i++ {
+		// Logarithmic from 1 Hz so the bass, where the shift lives, is
+		// resolved far finer than a linear grid of the same size would.
+		hz := math.Exp(math.Log(1) + (math.Log(nyquist)-math.Log(1))*float64(i)/coarse)
+		if m := noteResonatorMagnitude(r, hz, sampleRate); m > best {
+			best, bestHz = m, hz
+		}
+	}
+	// Refine on a linear bracket one coarse step wide either side.
+	stepRatio := math.Exp((math.Log(nyquist) - math.Log(1)) / coarse)
+	lo, hi := bestHz/stepRatio, bestHz*stepRatio
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > nyquist {
+		hi = nyquist
+	}
+	const refine = 4000
+	for i := 0; i <= refine; i++ {
+		hz := lo + (hi-lo)*float64(i)/refine
+		if m := noteResonatorMagnitude(r, hz, sampleRate); m > best {
+			best, bestHz = m, hz
+		}
+	}
+	return best, bestHz
+}

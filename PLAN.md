@@ -589,7 +589,7 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         (**improved**, and close to the 0.5240 the same preset scores with
         resonance switched off entirely), `time_rmse` 0.1022 → 0.1019,
         `envelope_rmse_db` 10.801 → 10.156 and `decay_diff_db_per_s` 5.428 →
-        4.800 all improved, but `spectral_rmse_db` 52.89 → **62.236 against a
+        4.800 all improved, but `spectral_rmse_db` 52.89 → **62.287 against a
         cap of 57.50**. The spectral component saturates under the frozen
         legacy-v1 norms, which is why `score` improves while the raw metric
         breaches. `spectral_rmse_db` was therefore LOOSENED 57.5 → 67.0 (7.7%

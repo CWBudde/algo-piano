@@ -109,17 +109,43 @@ func newNoteResonator(sampleRate int, centerHz float32, bandwidthHz float32, gai
 	w0 := 2.0 * math.Pi * f0 / fs
 	a1 := float32(2.0 * r * math.Cos(w0))
 	a2 := float32(-(r * r))
-	// Unity peak gain. The denominator of H(z) = b0 / (1 - a1 z^-1 - a2 z^-2)
-	// factors at the centre frequency as
+	// Unity peak gain, normalised at the response's true maximum.
 	//
-	//	1 - 2r*cos(w0)*e^-jw0 + r^2*e^-2jw0 = (1-r) * (1 - r*e^-2jw0)
+	// H(z) = b0 / (1 - a1 z^-1 - a2 z^-2) with poles at r*e^(+-j*w0), so
+	// |H(e^jw)| = b0 / |D(w)| with
 	//
-	// so |H(e^jw0)| = b0 / ((1-r) * sqrt(1 - 2r*cos(2w0) + r^2)). Setting b0 to
-	// that denominator makes the peak exactly one at every centre frequency.
-	// The naive b0 = 1-r instead peaks at roughly 1/(2*sin(w0)), a 1/f0 law
-	// that reached 183x at A0 and pushed the summed sympathetic loop past
-	// unity in the bass; see the Phase 9.6 notes in PLAN.md.
-	b0 := float32((1.0 - r) * math.Sqrt(1.0-2.0*r*math.Cos(2.0*w0)+r*r))
+	//	|D(w)|^2 = (1 - a1*cos(w) - a2*cos(2w))^2 + (a1*sin(w) + a2*sin(2w))^2
+	//
+	// Setting b0 to |D| at the frequency where it is smallest makes the peak
+	// exactly one. The naive b0 = 1-r instead peaks at roughly 1/(2*sin(w0)),
+	// a 1/f0 law that reached 183x at A0 and pushed the summed sympathetic
+	// loop past unity in the bass; see the Phase 9.6 notes in PLAN.md.
+	//
+	// Normalisation is at w0 — the partial the resonator is tuned to — and
+	// deliberately NOT at the response's true maximum.
+	//
+	// |D| is actually minimised at cos(wMax) = ((1+r^2)/(2r))*cos(w0), which
+	// sits below w0 once the bandwidth is comparable to f0: at A0 with the
+	// 35 Hz bandwidth the true peak is at 21.2 Hz and reaches 1.049 (+0.42 dB),
+	// against +0.005 dB at C4. Normalising there instead would cap the response
+	// at exactly one everywhere, but it would also pull the gain AT the partials
+	// down to 0.953 in the bass while leaving it at 1.0 in the treble — turning
+	// the summed drive bank back into a register-dependent 1.778-at-A0 against
+	// 1.85 elsewhere. Register independence at the partials is the property that
+	// stops the sympathetic loop diverging, so it wins; a +0.42 dB shoulder
+	// between partials in the bottom octave does not. See
+	// TestNoteResonatorPeakIsUnityAcrossSpectrum, which bounds that shoulder.
+	//
+	// |D| is evaluated from the float32 coefficients the filter will actually
+	// run, not from their float64 originals. In the bass |D| is a near-total
+	// cancellation — at A0 / 96 kHz, a1 is within 1e-5 of 2 — so rounding a1 to
+	// float32 moves it by several percent relatively. Normalising against the
+	// rounded coefficients cancels that mismatch exactly, because process()
+	// divides by precisely this quantity.
+	a1f, a2f := float64(a1), float64(a2)
+	dRe := 1.0 - a1f*math.Cos(w0) - a2f*math.Cos(2.0*w0)
+	dIm := a1f*math.Sin(w0) + a2f*math.Sin(2.0*w0)
+	b0 := float32(math.Hypot(dRe, dIm))
 	return noteResonator{a1: a1, a2: a2, b0: b0, gain: gain}
 }
 
