@@ -65,6 +65,8 @@ This maps each split source file to its direct and indirect test coverage.
 - `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — `resonanceForceScale`
 - `TestAggregateResonanceLoopIsBounded` (`modal_resonance_test.go`) — the same loop with the
   whole bank sustained, so every undamped group sums into one bridge signal
+- `TestResonanceProbeSeesKnownDivergingLoop` (`modal_resonance_test.go`) — the calibration of
+  the two probes above against a configuration known to diverge
 - `TestDWGResonanceLongRenderDecays` (`resonance_normalisation_test.go`) — the DWG counterpart,
   45 s rather than 6 s
 
@@ -126,16 +128,25 @@ assert equality with no tolerance.
   `TestLongRenderHasNoNaNOrInf` rows never saw it
 - `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — per-note open-loop
   gain of the bridge-injection loop, notes 21-84, on both cores at the defaults and on the
-  modal core with the knobs of `assets/presets/modal-calibrated.json`
+  modal core with the knobs of `assets/presets/modal-calibrated.json`. Subtests run in
+  parallel; each drives for up to 24 s
 - `TestAggregateResonanceLoopIsBounded` (`modal_resonance_test.go`) — the same loop with all 88
   groups undamped, both `ResonancePerNoteFilter` settings, plus a closed-loop run that must
   decay. The DWG rows asserted again on 2026-08-22 when the resonator normalisation brought
   that core's aggregate loop from 1.43 down to 0.02
+- `TestResonanceProbeSeesKnownDivergingLoop` (`modal_resonance_test.go`) — runs the same probe
+  on the DWG core at `resonance_gain` 0.0014 with the pedal held, a configuration whose 120 s
+  render peaks at 91.5 and climbs, and requires the probe to report at least 1.0. Without it
+  the two bounded-loop probes above are unfalsifiable: the 0.5 s-warmup probe they replace
+  reported 0.1968 for exactly this configuration
 
-Both open-loop probes warm up for 0.5 s, which is far short of an undamped string's steady
-state, so their numbers are **lower bounds** on the loop gain and the 0.5 bound they assert is
-not a proof of stability — see the caveat on `maxResonanceLoopGain` and the Phase 9.6 follow-up
-in `PLAN.md`. `TestDWGResonanceLongRenderDecays` is what actually pins the loop.
+Both open-loop probes drive until the reading stops moving, up to a 24 s budget, and report
+whether it did. A **settled** reading is the steady-state loop gain; an **unsettled** one is a
+**lower bound**, because an undamped string's transient runs for minutes — the diverging
+reference row needs 100 s of drive to flatten and reaches only 0.73 of its limit at 24 s. The
+modal rows settle; the DWG rows do not. The 0.5 bound is read through that shortfall (see
+`maxResonanceLoopGain`), and `TestDWGResonanceLongRenderDecays` remains what pins the loop
+end to end.
 
 ## `convolver.go`
 
