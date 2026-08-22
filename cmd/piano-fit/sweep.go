@@ -598,6 +598,11 @@ func paretoFront(points []sweepPoint, primary string, secondary string) []sweepP
 		usable = append(usable, scored{point: p, a: a, b: b})
 	}
 
+	// The lowest-index guarantee above is only real if the scan meets the
+	// duplicates in index order, which is not something a caller's point
+	// ordering can be trusted to provide.
+	sort.SliceStable(usable, func(i, j int) bool { return usable[i].point.Index < usable[j].point.Index })
+
 	front := make([]sweepParetoEntry, 0, 8)
 	seen := make(map[[2]float64]bool, len(usable))
 	for i, cand := range usable {
@@ -632,12 +637,25 @@ func paretoFront(points []sweepPoint, primary string, secondary string) []sweepP
 	return front
 }
 
-// constrainedBest returns the lowest-primary point whose secondary score is no
-// worse than secondaryCap, plus how many points satisfy that constraint.
+// constrainedBest returns the best point that improves the primary objective
+// without regressing the secondary one, plus how many points satisfy the
+// secondary constraint.
+//
+// Both constraints matter and they are not the same: a point qualifies for
+// constrainedBest only if its secondary score is no worse than secondaryCap
+// AND its primary score is strictly better than primaryCap (both baseline
+// scores). Without the primary test a run in which every non-regressing sample
+// is *worse* on the primary objective would still return the least-bad one,
+// and the report and console read a non-nil result as "a non-regressing
+// improvement region exists" — a false positive.
+//
+// The returned count keeps the documented secondary-only meaning ("how many
+// sampled points hold the secondary line"); it is a property of the sampled
+// set, not of the answer.
 //
 // This is the headline number: "did anything buy decay without paying in
 // legacy?" A nil result means nothing in the sampled set did.
-func constrainedBest(points []sweepPoint, primary string, secondary string, secondaryCap float64) (*sweepParetoEntry, int) {
+func constrainedBest(points []sweepPoint, primary string, secondary string, primaryCap, secondaryCap float64) (*sweepParetoEntry, int) {
 	var best *sweepPoint
 	count := 0
 	for i := range points {
@@ -654,6 +672,11 @@ func constrainedBest(points []sweepPoint, primary string, secondary string, seco
 			continue
 		}
 		count++
+		// The count above is the secondary-only tally; only a strict primary
+		// improvement makes a point eligible to be the answer.
+		if a >= primaryCap {
+			continue
+		}
 		if best == nil {
 			best = &points[i]
 			continue
@@ -789,7 +812,8 @@ func runSweep(cfg sweepRunConfig) (*sweepReport, error) {
 		}
 		report.Pareto = paretoFront(all, primary, secondary)
 		secondaryCap := baseline.Scores[secondary]
-		report.ConstrainedBest, report.ConstrainedCount = constrainedBest(all, primary, secondary, secondaryCap)
+		primaryCap := baseline.Scores[primary]
+		report.ConstrainedBest, report.ConstrainedCount = constrainedBest(all, primary, secondary, primaryCap, secondaryCap)
 	}
 
 	report.ElapsedSeconds = time.Since(start).Seconds()
@@ -813,7 +837,11 @@ func writeSweepReport(path string, report *sweepReport) error {
 // printSweepReport writes the human-readable summary to stdout.
 func printSweepReport(report *sweepReport) {
 	primary := report.PrimaryProfile
-	secondary := ""
+	// With a single requested profile there is no second objective. Falling
+	// back to primary keeps the sensitivity table honest — an empty name would
+	// print a blank column header and a column of 0.0000 spans read out of a
+	// missing map entry.
+	secondary := primary
 	for _, p := range report.Profiles {
 		if p != primary {
 			secondary = p
@@ -856,7 +884,8 @@ func printSweepReport(report *sweepReport) {
 			}
 			fmt.Printf("  #%-6d %s=%.4f %s=%.4f\n", e.Index, primary, e.Scores[primary], secondary, e.Scores[secondary])
 		}
-		fmt.Printf("\nConstrained best (%s <= baseline %.4f): ", secondary, report.Baseline.Scores[secondary])
+		fmt.Printf("\nConstrained best (%s < baseline %.4f and %s <= baseline %.4f): ",
+			primary, report.Baseline.Scores[primary], secondary, report.Baseline.Scores[secondary])
 		if report.ConstrainedBest == nil {
 			fmt.Printf("none — no sampled point improves %s without regressing %s\n", primary, secondary)
 		} else {
@@ -864,7 +893,8 @@ func printSweepReport(report *sweepReport) {
 				primary, report.ConstrainedBest.Scores[primary],
 				secondary, report.ConstrainedBest.Scores[secondary])
 		}
-		fmt.Printf("Constrained count: %d of %d sampled points\n", report.ConstrainedCount, report.Evals-1)
+		fmt.Printf("Constrained count: %d of %d sampled points hold %s <= baseline\n",
+			report.ConstrainedCount, report.Evals-1, secondary)
 	}
 	fmt.Printf("\nEvals=%d errors=%d deduped=%d elapsed=%.1fs\n",
 		report.Evals, report.Errors, report.Deduped, report.ElapsedSeconds)

@@ -154,8 +154,8 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         settings; report in `out/sweep/sustain-note60.json`). **A non-regressing
         region exists**, so the trade-off is a property of the search, not of
         the knob set or of the string model. Baseline `decay-v1 0.4380` /
-        `legacy-v1 0.5189`; `constrained_best` is sample #17 at `decay-v1
-    0.3508` / `legacy-v1 0.5141`, reached by moving a single knob
+        `legacy-v1 0.5189`; `constrained_best` is sample #17 at
+        `decay-v1 0.3508` / `legacy-v1 0.5141`, reached by moving a single knob
         (`unison_detune_scale 0.774` → `1.75`) and with time RMSE `0.0958` →
         `0.0947`, inside the gate's `0.112`. `constrained_count` is 22 of 2092
         sampled points, 12 of which also clear the gate cap. The two knobs with

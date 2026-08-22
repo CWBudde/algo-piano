@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
+	"os"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -309,6 +312,23 @@ func TestParetoFront(t *testing.T) {
 		}
 	})
 
+	// The lowest-index guarantee must not depend on the caller handing the
+	// points over in index order.
+	t.Run("exact duplicates collapse regardless of input order", func(t *testing.T) {
+		pts := []sweepPoint{
+			paretoTestPoint(9, 0.40, 0.50),
+			paretoTestPoint(2, 0.40, 0.50),
+			paretoTestPoint(7, 0.40, 0.50),
+		}
+		got := paretoFront(pts, primary, secondary)
+		if len(got) != 1 {
+			t.Fatalf("got %d entries, want 1", len(got))
+		}
+		if got[0].Index != 2 {
+			t.Fatalf("kept index %d, want the lowest-index representative 2", got[0].Index)
+		}
+	})
+
 	t.Run("hand-computed six-point set", func(t *testing.T) {
 		pts := []sweepPoint{
 			paretoTestPoint(1, 0.50, 0.50), // dominated by 4
@@ -332,13 +352,16 @@ func TestParetoFront(t *testing.T) {
 
 func TestConstrainedBest(t *testing.T) {
 	const primary, secondary = "decay-v1", "legacy-v1"
+	// A generous primary cap so the pre-existing cases keep exercising only
+	// the secondary constraint; the primary requirement gets its own cases.
+	const anyPrimary = 1.0
 
 	t.Run("nil when nothing qualifies", func(t *testing.T) {
 		pts := []sweepPoint{
 			paretoTestPoint(1, 0.20, 0.60),
 			paretoTestPoint(2, 0.10, 0.70),
 		}
-		best, count := constrainedBest(pts, primary, secondary, 0.50)
+		best, count := constrainedBest(pts, primary, secondary, anyPrimary, 0.50)
 		if best != nil {
 			t.Fatalf("got %+v, want nil", best)
 		}
@@ -353,7 +376,7 @@ func TestConstrainedBest(t *testing.T) {
 			paretoTestPoint(2, 0.30, 0.50),
 			paretoTestPoint(3, 0.10, 0.51),
 		}
-		best, count := constrainedBest(pts, primary, secondary, 0.50)
+		best, count := constrainedBest(pts, primary, secondary, anyPrimary, 0.50)
 		if count != 2 {
 			t.Fatalf("count = %d, want 2", count)
 		}
@@ -367,12 +390,57 @@ func TestConstrainedBest(t *testing.T) {
 			paretoTestPoint(9, 0.30, 0.40),
 			paretoTestPoint(4, 0.30, 0.45),
 		}
-		best, count := constrainedBest(pts, primary, secondary, 0.50)
+		best, count := constrainedBest(pts, primary, secondary, anyPrimary, 0.50)
 		if count != 2 {
 			t.Fatalf("count = %d, want 2", count)
 		}
 		if best == nil || best.Index != 4 {
 			t.Fatalf("got %+v, want the lowest index 4", best)
+		}
+	})
+
+	// The regression this guards: with only the secondary cap, a run where
+	// every non-regressing sample is WORSE on the primary objective still
+	// returned the least-bad one, and both the report and the console read a
+	// non-nil constrained_best as "a non-regressing improvement region
+	// exists".
+	t.Run("nil when the secondary cap holds but the primary never improves", func(t *testing.T) {
+		pts := []sweepPoint{
+			paretoTestPoint(1, 0.45, 0.48),
+			paretoTestPoint(2, 0.60, 0.40),
+		}
+		best, count := constrainedBest(pts, primary, secondary, 0.40, 0.50)
+		if best != nil {
+			t.Fatalf("got %+v, want nil: no sample improves the primary", best)
+		}
+		// The count keeps its secondary-only meaning.
+		if count != 2 {
+			t.Fatalf("count = %d, want 2", count)
+		}
+	})
+
+	t.Run("primary improvement must be strict", func(t *testing.T) {
+		pts := []sweepPoint{paretoTestPoint(1, 0.40, 0.45)}
+		best, count := constrainedBest(pts, primary, secondary, 0.40, 0.50)
+		if best != nil {
+			t.Fatalf("got %+v, want nil: equalling the baseline is not an improvement", best)
+		}
+		if count != 1 {
+			t.Fatalf("count = %d, want 1", count)
+		}
+	})
+
+	t.Run("skips a better-primary point that breaches the secondary cap", func(t *testing.T) {
+		pts := []sweepPoint{
+			paretoTestPoint(1, 0.10, 0.90), // best primary, but regresses secondary
+			paretoTestPoint(2, 0.35, 0.45), // the honest answer
+		}
+		best, count := constrainedBest(pts, primary, secondary, 0.40, 0.50)
+		if count != 1 {
+			t.Fatalf("count = %d, want 1", count)
+		}
+		if best == nil || best.Index != 2 {
+			t.Fatalf("got %+v, want index 2", best)
 		}
 	})
 }
@@ -728,5 +796,107 @@ func TestSweepSustainPassSelectsTheExpectedKnobs(t *testing.T) {
 	}
 	if _, err := generateJointSamples(got, 8, 64, 8); err != nil {
 		t.Fatalf("the sustain knob set must fit the joint stage: %v", err)
+	}
+}
+
+// captureStdout runs fn with os.Stdout redirected and returns what it wrote.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	fn()
+	os.Stdout = saved
+	if err := w.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	out := <-done
+	if err := r.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	return out
+}
+
+// TestPrintSweepReportSingleProfile pins the one-profile rendering: Pareto
+// extraction is skipped with a clear message rather than panicking, and the
+// sensitivity table must not fall back to an empty secondary profile name —
+// that printed a blank column header over a column of 0.0000 spans read out of
+// a missing map entry.
+func TestPrintSweepReportSingleProfile(t *testing.T) {
+	cfg := sweepRunFixture(t, 1, nil, nil)
+	profiles := []string{analysis.ProfileDecayV1}
+	cfg.profiles = profiles
+	cfg.primary = analysis.ProfileDecayV1
+	cfg.eval = syntheticEvaluator(cfg.defs, profiles, func(profile string, pos []float64) float64 {
+		sum := 0.0
+		for _, v := range pos {
+			sum += v
+		}
+		return sum / float64(len(pos))
+	}, nil, nil)
+
+	report, err := runSweep(cfg)
+	if err != nil {
+		t.Fatalf("a single-profile sweep must still run: %v", err)
+	}
+	if len(report.Pareto) != 0 {
+		t.Fatalf("pareto = %d entries, want 0 with one profile", len(report.Pareto))
+	}
+	if report.ConstrainedBest != nil {
+		t.Fatalf("constrained_best = %+v, want nil with one profile", report.ConstrainedBest)
+	}
+
+	out := captureStdout(t, func() { printSweepReport(report) })
+
+	if !strings.Contains(out, "Pareto: skipped (needs two profiles") {
+		t.Fatalf("the skipped-Pareto message is missing:\n%s", out)
+	}
+
+	header := ""
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "knob") && strings.Contains(line, "monotonic") {
+			header = line
+			break
+		}
+	}
+	if header == "" {
+		t.Fatalf("sensitivity header not found:\n%s", out)
+	}
+	// With one profile both score columns name that profile; neither may be
+	// blank.
+	if strings.Count(header, analysis.ProfileDecayV1) != 2 {
+		t.Fatalf("header must name %q in both score columns, got %q", analysis.ProfileDecayV1, header)
+	}
+
+	// The spans must be real numbers from the profile, not zeroes read out of
+	// Profiles[""].
+	sawNonZeroSpan := false
+	for _, s := range report.Sensitivity {
+		if s.Profiles[analysis.ProfileDecayV1].Span != 0 {
+			sawNonZeroSpan = true
+		}
+		if _, ok := s.Profiles[""]; ok {
+			t.Fatal("sensitivity must not carry an empty profile key")
+		}
+	}
+	if !sawNonZeroSpan {
+		t.Fatal("the fixture must move the primary score; the test proves nothing otherwise")
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "  ") || !strings.Contains(line, "per_note.60.loss") {
+			continue
+		}
+		if strings.Contains(line, "0.0000       0.0000") {
+			t.Fatalf("both span columns printed as 0.0000, the blank-secondary bug is back: %q", line)
+		}
 	}
 }

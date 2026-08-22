@@ -16,6 +16,45 @@ import (
 	"github.com/cwbudde/algo-piano/preset"
 )
 
+// optimizerFlags carries the flag values whose validation is specific to the
+// optimizer path.
+type optimizerFlags struct {
+	sweep        bool
+	needsIR      bool
+	outputIR     string
+	outputPreset string
+	maxEvals     int
+	timeBudget   float64
+}
+
+// validateOptimizerFlags rejects flag combinations the optimizer cannot run
+// with.
+//
+// None of these apply in sweep mode: it writes only its JSON report — no
+// preset, no IR, no checkpoint — and it walks a fixed sample plan rather than
+// a budget, which is why it documents --time-budget as ignored. Validating
+// them anyway would force callers to invent a dummy --output-ir just to sweep
+// the body-ir or room-ir groups, and would reject a --time-budget of 0 that
+// the sweep never reads.
+func validateOptimizerFlags(f optimizerFlags) error {
+	if f.sweep {
+		return nil
+	}
+	if f.needsIR && f.outputIR == "" {
+		return errors.New("--output-ir is required when body-ir or room-ir groups are active")
+	}
+	if f.outputPreset == "" {
+		return errors.New("output-preset must not be empty")
+	}
+	if f.maxEvals < 1 {
+		return errors.New("max-evals must be >= 1")
+	}
+	if f.timeBudget <= 0 {
+		return errors.New("time-budget must be > 0")
+	}
+	return nil
+}
+
 func main() {
 	referencePath := flag.String("reference", "reference/c4.wav", "Reference WAV path")
 	presetPath := flag.String("preset", "assets/presets/default.json", "Base preset JSON path")
@@ -153,17 +192,15 @@ func main() {
 		die("%v", err)
 	}
 
-	if needsIRSynthesis(groups) && *outputIR == "" {
-		die("--output-ir is required when body-ir or room-ir groups are active")
-	}
-	if *outputPreset == "" {
-		die("output-preset must not be empty")
-	}
-	if *maxEvals < 1 {
-		die("max-evals must be >= 1")
-	}
-	if *timeBudget <= 0 {
-		die("time-budget must be > 0")
+	if err := validateOptimizerFlags(optimizerFlags{
+		sweep:        *sweep,
+		needsIR:      needsIRSynthesis(groups),
+		outputIR:     *outputIR,
+		outputPreset: *outputPreset,
+		maxEvals:     *maxEvals,
+		timeBudget:   *timeBudget,
+	}); err != nil {
+		die("%v", err)
 	}
 	if *releaseAfter < 0.05 {
 		*releaseAfter = 0.05

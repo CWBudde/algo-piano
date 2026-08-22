@@ -33,7 +33,17 @@ The idea: alternate between piano-only and IR stages so each builds on the previ
 - In `--sweep` mode `--time-budget` and `--resume` are deliberately **ignored**
   (each prints a notice): a wall-clock cutoff would make the report
   irreproducible, and a stale checkpoint would silently move the baseline off
-  `--preset`.
+  `--preset`. For the same reason the optimizer-only flag validation is skipped
+  in sweep mode: `--output-ir`, `--output-preset`, `--max-evals` and a positive
+  `--time-budget` are not required, so `--sweep --optimize body-ir` runs without
+  a dummy output IR and `--time-budget 0` is accepted rather than rejected.
+- `constrained_best` is the lowest-primary sample that **strictly improves** the
+  primary profile over the baseline **and** scores the secondary profile no
+  worse than the baseline. Both halves are required: without the primary test a
+  run in which every non-regressing sample is worse on the primary objective
+  would still report a `constrained_best`, which reads as "a non-regressing
+  improvement region exists". `constrained_count` is the plainer number of
+  sampled points that hold the secondary line, improvement or not.
 
 ## Workflow
 
@@ -484,8 +494,8 @@ Pareto front on (`decay-v1`, `legacy-v1`), both minimised — 7 points:
 | 34    | 0.4404     | 0.4979      | 0.1002    | OAT `per_note.60.loss`    |
 
 **`constrained_best` = sample #17, `constrained_count` = 22 of 2092.** Twenty-two
-sampled points score `legacy-v1` no worse than the baseline; the best of them on
-`decay-v1` is #17, which changes exactly **one** knob:
+sampled points score `legacy-v1` no worse than the baseline; the best of those
+that also improve `decay-v1` is #17, which changes exactly **one** knob:
 
 ```
 unison_detune_scale 0.7743 -> 1.75    (everything else at baseline)
