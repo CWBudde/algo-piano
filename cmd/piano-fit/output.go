@@ -55,9 +55,30 @@ type runReport struct {
 
 	// Polish carries the deterministic polish-stage summary, when it ran.
 	Polish *polishSummary `json:"polish,omitempty"`
+	// ScoreConstraints lists the secondary-profile ceilings the run was
+	// constrained by, ConstraintRejections how many candidates they rejected,
+	// and BestConstraintScores the WINNER's score under each of them. All
+	// three are needed to audit a constrained run: the ceilings say what was
+	// asked, the rejection count says how much of the search space was
+	// infeasible, and the winner's scores say whether the answer honours the
+	// ceilings.
+	ScoreConstraints     []scoreConstraint  `json:"score_constraints,omitempty"`
+	ConstraintRejections int                `json:"constraint_rejections,omitempty"`
+	BestConstraintScores map[string]float64 `json:"best_constraint_scores,omitempty"`
+
 	// OutputGainMatched is the closed-form multiplier applied to
-	// piano.OutputGain after the search finished. It is score-invariant, so it
-	// is reported separately instead of being folded into best_knobs.
+	// piano.OutputGain after the search finished. It is reported separately
+	// instead of being folded into best_knobs because output_gain is not a
+	// searched dimension when the match is active.
+	//
+	// The multiplier is score-invariant under the default relative auto-stop:
+	// analysis.Compare RMS-normalises both signals, and the stop threshold sits
+	// a fixed distance below the render's own peak, so the render length no
+	// longer depends on the absolute level either. Under --decay-relative=false
+	// it is NOT invariant — the stop threshold is absolute, so a louder render
+	// is scored over a longer window. That is why the winner is re-rendered and
+	// re-scored after the match in both modes: every score and metric in this
+	// report describes the preset that was actually written.
 	OutputGainMatched float64 `json:"output_gain_matched,omitempty"`
 }
 
@@ -106,6 +127,10 @@ type outputRequest struct {
 	rendersPerEval    int
 	polish            *polishSummary
 	outputGainMatched float64
+
+	scoreConstraints     []scoreConstraint
+	constraintRejections int
+	bestConstraintScores map[string]float64
 }
 
 func writeOutputs(req outputRequest) error {
@@ -201,6 +226,10 @@ func writeOutputs(req outputRequest) error {
 		ScoreProfile:    scoreProfile,
 		ScoreNorms:      scoreNorms,
 		RendersPerEval:  rendersPerEval,
+
+		ScoreConstraints:     req.scoreConstraints,
+		ConstraintRejections: req.constraintRejections,
+		BestConstraintScores: req.bestConstraintScores,
 
 		Polish:            req.polish,
 		OutputGainMatched: req.outputGainMatched,
