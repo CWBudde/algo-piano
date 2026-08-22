@@ -573,6 +573,36 @@ window, so both profile scores are full-signal and comparable to
 being comparable to anything in this document. The report records `pass_window`
 and the tool prints a warning when it is set.
 
+### First joint sweep over the attack knobs (2026-08-22)
+
+This is a **measurement of the sweep tool**, not a claim about the attack pass:
+nothing here was fitted, applied or gated. It is recorded because it is the
+first `--sweep --pass attack` run with a joint stage that could execute at all —
+before the base table was extended to 32 primes it aborted with
+`halton: 9 dimensions exceed the 8-prime base table`.
+
+```bash
+go run ./cmd/piano-fit --sweep --pass attack \
+    --preset out/passes/attack.json --reference reference/c4.wav \
+    --sweep-out out/sweep/attack-note60.json \
+    --sweep-samples 9 --sweep-joint-evals 2048 --workers auto \
+    --note 60 --velocity 118 --release-after 3.5 --sample-rate 48000 \
+    --decay-dbfs -90 --decay-hold-blocks 6 --min-duration 2.0 --max-duration 30
+```
+
+2130 evaluations, 0 errors, 342 s on a 12-core box: one baseline, a 9-point
+one-at-a-time scan of each of the nine attack knobs, and 2048 Halton points
+filling the **9-D** box (primes 2/3/5/7/11/13/17/19/23, index offset 64).
+Baseline (`out/passes/attack.json`, note 60, velocity 118): `attack-v1 = 0.3923`,
+`legacy-v1 = 0.5121`. The joint stage put 14 points on the (attack-v1,
+legacy-v1) Pareto front and 1893 of 2129 sampled points held
+`legacy-v1 <= baseline`; the constrained best was joint sample #1237 at
+`attack-v1 = 0.3416`, `legacy-v1 = 0.5030`.
+
+Read that as evidence the 9-D stage runs and produces a populated front, nothing
+more. These numbers were measured on `main`'s renderer with its **absolute**
+−90 dBFS auto-stop; any change to the auto-stop moves all of them.
+
 ## Deterministic sweep chain: how the 2026-08-22 C4 re-fit was done
 
 The C4 re-fit that closed the widened `spectral_rmse_db` fence was produced by a
@@ -595,7 +625,9 @@ go run -tags asm ./cmd/piano-fit --sweep --pass none --optimize mix \
     --workers auto --note 60 --velocity 118 --release-after 3.5 --sample-rate 48000 \
     --decay-dbfs -90 --decay-hold-blocks 6 --min-duration 2.0 --max-duration 30
 # then --pass sustain / --pass inharmonicity with --optimize piano,mix,
-# and --pass attack with --sweep-joint-evals 0 (see the 8-dimension cap below).
+# and --pass attack with --sweep-joint-evals 0 — that box could not run joint at
+# the time, because of the 8-dimension cap. It can now; see the attack-pass
+# measurement below.
 ```
 
 Pick the winner with `jq`, filtering on the gate's raw metrics and sorting on
@@ -637,11 +669,14 @@ Four rules that this round paid for:
   searched_). Sweep reports produced before that date were measured under the
   old rule, so compare their fitted presets only after normalising `output_gain`
   to the tracked preset's value — or re-measure them.
-- **The joint stage caps at 8 dimensions.** The `attack` pass exposes 9 knobs,
-  so `--sweep --pass attack` with a joint stage fails with
-  `halton: 9 dimensions exceed the 8-prime base table`, and
-  `--sweep-joint-max-dims 9` does not help. Run that box with
-  `--sweep-joint-evals 0` (one-at-a-time only).
+- **The joint stage used to cap at 8 dimensions** — the `attack` pass exposes 9
+  knobs, so `--sweep --pass attack` with a joint stage failed with
+  `halton: 9 dimensions exceed the 8-prime base table`. The base table now holds
+  the first 32 primes and `--sweep-joint-max-dims` defaults to 16, so the attack
+  box runs joint. The cap is still a deliberate guard: this Halton
+  implementation does not scramble, so the high-base coordinates of a
+  high-dimensional point stay poorly distributed until the sample count grows
+  large. Raise `--sweep-joint-max-dims` knowingly, not reflexively.
 
 **What it found.** The dominant term was the wet level of the legacy single-IR
 stage, not the string model. This preset sets `ir_wav_path`, so `ApplyDefaultRoomIR`

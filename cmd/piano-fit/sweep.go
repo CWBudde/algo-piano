@@ -33,10 +33,22 @@ const (
 const sweepJointSequence = "halton"
 
 // haltonPrimes are the bases of the Halton sequence, one per dimension. The
-// table length is the hard dimensionality ceiling of the joint stage: high
-// Halton bases correlate badly in low sample counts, so there is no point
-// extending it far.
-var haltonPrimes = []int{2, 3, 5, 7, 11, 13, 17, 19}
+// table holds the first 32 primes so that every pass's knob set fits: the
+// `attack` pass alone exposes 9 knobs, which the old 8-prime table refused
+// outright.
+//
+// The table length is not the intended dimensionality limit — `--sweep-joint-max-dims`
+// is. High Halton bases correlate badly at low sample counts, and this
+// implementation does not scramble, so the last coordinates of a
+// high-dimensional point are poorly distributed until the sample count grows
+// large. That is the reason for keeping a deliberate cap on the joint stage,
+// not a reason to keep the base table short.
+var haltonPrimes = []int{
+	2, 3, 5, 7, 11, 13, 17, 19, 23, 29,
+	31, 37, 41, 43, 47, 53, 59, 61, 67, 71,
+	73, 79, 83, 89, 97, 101, 103, 107, 109, 113,
+	127, 131,
+}
 
 // sweepEvaluator renders one candidate and scores it under every requested
 // profile. It is a distinct type from candidateEvaluator on purpose: the sweep

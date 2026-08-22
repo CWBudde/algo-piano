@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -200,6 +201,28 @@ func TestRadicalInverseAndHaltonPoint(t *testing.T) {
 		}
 	}
 
+	// The `attack` pass exposes 9 knobs, so 9 dimensions must be reachable.
+	for idx := 1; idx < 50; idx++ {
+		pt, err := haltonPoint(idx, 9)
+		if err != nil {
+			t.Fatalf("haltonPoint(%d,9): unexpected error: %v", idx, err)
+		}
+		if len(pt) != 9 {
+			t.Fatalf("haltonPoint(%d,9) returned %d coordinates, want 9", idx, len(pt))
+		}
+		for d, v := range pt {
+			if v < 0 || v >= 1 {
+				t.Fatalf("haltonPoint(%d,9)[%d] = %v, want [0,1)", idx, d, v)
+			}
+		}
+	}
+
+	if n := len(haltonPrimes); n != 32 {
+		t.Fatalf("len(haltonPrimes) = %d, want 32", n)
+	}
+	if _, err := haltonPoint(1, 33); err == nil {
+		t.Fatal("expected an error above the 32-prime base table")
+	}
 	if _, err := haltonPoint(1, len(haltonPrimes)+1); err == nil {
 		t.Fatal("expected an error beyond the prime table")
 	}
@@ -228,6 +251,34 @@ func TestGenerateJointSamples(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "--sweep-joint-max-dims") {
 			t.Fatalf("error must name the flag that raises the cap, got %q", err)
+		}
+	})
+
+	t.Run("nine knobs fill the box without duplicates", func(t *testing.T) {
+		// Mirrors the width of the `attack` pass allowlist, which the 8-prime
+		// table used to refuse outright.
+		wide := make([]knobDef, 0, 9)
+		for i := 0; i < 9; i++ {
+			wide = append(wide, knobDef{Name: fmt.Sprintf("k%d", i), Min: 0, Max: 1})
+		}
+		const evals = 128
+		got, err := generateJointSamples(wide, evals, 64, 16)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != evals {
+			t.Fatalf("got %d samples, want %d", len(got), evals)
+		}
+		seen := make(map[string]int, evals)
+		for i, s := range got {
+			if len(s.Pos) != 9 {
+				t.Fatalf("sample %d has %d coordinates, want 9", i, len(s.Pos))
+			}
+			key := candidateKey(s.Cand)
+			if prev, dup := seen[key]; dup {
+				t.Fatalf("sample %d duplicates sample %d (key %q)", i, prev, key)
+			}
+			seen[key] = i
 		}
 	})
 
