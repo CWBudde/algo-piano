@@ -774,11 +774,11 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
 
         | | old preset | re-fit | threshold |
         | - | - | - | - |
-        | score | 0.5738 | 0.5332 | 0.568 |
+        | score | 0.5738 | 0.5335 | 0.568 |
         | time_rmse | 0.1009 | 0.1070 | 0.109 |
-        | envelope_rmse_db | 14.68 | 10.83 | 11.62 |
-        | spectral_rmse_db | 74.70 | 77.38 | 78.3 |
-        | decay_diff_db_per_s | 8.13 | 3.88 | **4.19** |
+        | envelope_rmse_db | 14.68 | 10.86 | 11.62 |
+        | spectral_rmse_db | 74.70 | 77.35 | 78.3 |
+        | decay_diff_db_per_s | 8.13 | 3.90 | **4.19** |
 
         **Nothing was loosened.** `decay_diff_db_per_s` was tightened 4.72 → 4.19
         and the other four stayed where they were, even though their
@@ -787,7 +787,7 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         fence the interleave asked for on an explicit promise of a re-fit was
         honoured at 77.38 without asking for another inch. Un-enforced metrics
         mostly improved sharply: tristimulus 0.230 → 0.098, attack centroid 0.947
-        → 0.252, segmented decay 16.75 → 9.36.
+        → 0.252, segmented decay 16.75 → 9.28.
 
         The re-fit chose `unison_crossfeed` 0.0034, higher than the 0.0025 it
         replaced. That is not the fitter finding the pump again — the corrected
@@ -819,34 +819,42 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
 
         | note | strings | before | after | `c = 0` |
         | - | - | - | - | - |
-        | 33 | 1 | 0.1469 | 0.1469 | 0.1469 |
-        | 45 | 2 | 0.5583 | 0.0036 | 0.0256 |
-        | 52 | 2 | 1.2545 | 0.0003 | 0.0063 |
-        | 60 | 2 | 1.7159 | 0.0000 | 0.0003 |
+        | 33 | 1 | 0.1469 | 0.146883 | 0.146883 |
+        | 45 | 2 | 0.5583 | 0.003556 | 0.025640 |
+        | 52 | 2 | 1.2545 | 0.000326 | 0.006317 |
+        | 60 | 2 | 1.7159 | 0.000003 | 0.000349 |
 
         The fix is two changes, both load-bearing. The force is now
         `c * g_i * (mix - y_i)` — proportional to the **difference** between the
         bridge motion and the string's own contribution to it, which makes the
         term dissipative: with weights summing to one it adds
         `c*(mix^2 - sum(g_i*y_i^2)) <= 0` of energy per sample, by Jensen. And it
-        is injected at `unisonCouplingStrikePos`, the freshest observable slot,
-        so it is read back on the next sample. The difference form **alone was
-        not enough**: at position 0.92 the force returns nearly a full round trip
-        late, at partial _n_ it lags `2*pi*n*0.92`, and once that passes a half
-        cycle the same term is anti-damping. Measured on the chord render:
+        is written with `StringWaveguide.InjectForceNext`, into the slot the
+        interpolating taps read on the very next `Process` call.
 
-        | `unison_crossfeed` | pos 0.92 | pos 0.01 |
-        | - | - | - |
-        | 0.0008 (default) | 0.1166 | 0.1275 |
-        | 0.0025 (mayfly) | 0.2014 | 0.1315 |
-        | 0.0050 (`fitted-c4.json`) | **88.4618** | 0.1328 |
-        | 0.0100 | — | 0.1322 |
+        The second half is not cosmetic. The energy argument is
+        **instantaneous** — it holds only while the force acts on the signal it
+        was computed from — so a force returning a fraction _p_ of a round trip
+        later lags `2*pi*n*p` at partial _n_ and is anti-damping once that passes
+        a half cycle. And a strike position cannot express "next sample":
+        `injectionOffset` maps `[0,1]` affinely onto the round trip, so even its
+        clamped minimum of 0.01 is 1% of it — about 1 sample at MIDI 60 but 5 at
+        MIDI 40 and 17 at MIDI 21, and MIDI 40 is exactly where multi-string
+        groups begin. Measured on the chord render:
 
-        Note the third row: at the value `assets/presets/fitted-c4.json` actually
-        ships, the difference form on its own still diverged. The coupling stays
-        stable to `c = 0.05` and diverges at 0.1, so `NewStringBank` clamps to
+        | `unison_crossfeed` | pos 0.92 | pos 0.01 | `InjectForceNext` |
+        | - | - | - | - |
+        | 0.0008 (default) | 0.1166 | 0.1275 | 0.1270 |
+        | 0.0025 (mayfly) | 0.2014 | 0.1315 | 0.1306 |
+        | 0.0050 (`fitted-c4.json`) | **88.4618** | 0.1328 | 0.1325 |
+        | diverges at | < 0.005 | 0.1 | 0.5 |
+
+        Read the third row and the last together. At the value
+        `assets/presets/fitted-c4.json` actually ships, the difference form on
+        its own still diverged; writing the force at the freshest slot widens the
+        stable range by a further 5x on top of that. `NewStringBank` clamps to
         `maxUnisonCrossfeed = 0.02` — 4x above the knob ceiling in
-        `cmd/piano-fit/knobs.go` and 5x under the measured cliff.
+        `cmd/piano-fit/knobs.go` and 12x under the measured cliff.
 
         Pinned by four tests in `piano/unison_coupling_test.go`, the property one
         being `TestUnisonCouplingRemovesEnergy`: a coupled multi-string note must
@@ -878,7 +886,7 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
   - [x] **the interleaved DWG sympathetic loop no longer multiplies that
         growth.** Fixed by the item above, 2026-08-23. The same 120 s render at
         the shipped `resonance_gain` 0.00025 now reads **0.1338x** against the
-        0.1275x resonance-off baseline: the sympathetic path costs about 5% of
+        0.1270x resonance-off baseline: the sympathetic path costs about 5% of
         the ratio and the render still ends 17 dB below its own reference window.
         It previously read 5.06x against 1.21x.
 
@@ -1079,12 +1087,12 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         interleaved DWG loop grew 5.06x over 120 s at the shipped gain on top of
         a bank that already grew 1.21x with no sympathetic path at all. **That
         blocker is gone as of 2026-08-23**: the unison coupling was the source
-        of both, and with it corrected the same render decays to 0.1275x
-        (resonance off) and 0.1338x (resonance on at 0.00025).
+        of both, and with it corrected the same render decays to 0.1270x
+        (resonance off) and 0.1331x (resonance on at 0.00025).
 
         **The headroom is back, and it is measurable.** Same 120 s render,
-        sweeping `resonance_gain`: 0.00025 → 0.1338, 0.0007 → 0.2989, 0.00092 →
-        0.7836, 0.0014 → 14.02. The unity crossing lands at roughly 0.00092 —
+        sweeping `resonance_gain`: 0.00025 → 0.1331, 0.0007 → 0.2996, 0.00092 →
+        0.7847, 0.0014 → 14.02. The unity crossing lands at roughly 0.00092 —
         which is exactly where the pre-interleave notes had put it — so the
         shipped 0.00025 sits **3.7x under the ceiling**, worth about +11 dB
         before stability becomes the binding constraint again. Together with the

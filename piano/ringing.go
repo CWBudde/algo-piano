@@ -225,35 +225,18 @@ func (g *RingingStringGroup) injectCouplingForce(force float32) {
 	g.quietBlocks = 0
 }
 
-// unisonCouplingStrikePos is where the bridge coupling force is written into
-// each string's delay line, and it is a stability parameter, not a voicing one.
-//
-// injectionOffset maps [0,1] onto the observable slots [delayHeadroom, len-1],
-// and a force written at offset k is first read out k-delayHeadroom samples
-// later. Position 0 therefore means "read back on the very next sample" and is
-// the only choice that keeps the coupling term acting on the same signal it was
-// computed from. Any larger position delays the force by a fraction of a round
-// trip, and a delayed difference-force is only dissipative where that delay is
-// small in phase: at partial n the lag is 2*pi*n*pos radians, so as soon as
-// n*pos passes a half cycle the same term becomes ANTI-damping. That is not
-// hypothetical - see the measurements on processSample.
-//
-// injectionOffset clamps its input to [0.01, 0.99], so 0.01 is the freshest
-// slot reachable.
-const unisonCouplingStrikePos = float32(0.01)
-
 // maxUnisonCrossfeed bounds the coupling strength a preset may ask for.
 //
 // The difference form below is dissipative in the instantaneous sense at any
-// coupling strength, but the injection still costs one sample of delay, and at
-// a large enough gain that single sample is enough to turn it around. Measured
+// coupling strength, but the injection still costs one sample of delay, and at a
+// large enough gain that single sample is enough to turn it around. Measured
 // 2026-08-23 on the 120 s pedal-held chord render, peak of the last window over
-// the 25-30 s window: 0.1322x at c = 0.02, 0.1323x at 0.05, 1.8e14x at 0.1, and
-// non-finite at 0.25 and above. The transition is abrupt, so the bound is set
-// well inside the stable region rather than close to the cliff: 0.02 is 2.5x
-// under the largest value verified stable and 4x above the 0.005 ceiling
-// cmd/piano-fit/knobs.go gives the unison_crossfeed knob, so no fit can reach
-// it and no shipped preset is affected (the largest in assets/presets is 0.005).
+// the 25-30 s window: 0.1322x at c = 0.02, 0.1332x at 0.1, 0.1344x at 0.25, and
+// non-finite at 0.5. The transition is abrupt, so the bound is set well inside
+// the stable region rather than near the cliff: 0.02 is 12x under the largest
+// value verified stable and 4x above the 0.005 ceiling cmd/piano-fit/knobs.go
+// gives the unison_crossfeed knob, so no fit can reach it and no shipped preset
+// is affected (the largest in assets/presets is 0.005).
 const maxUnisonCrossfeed = float32(0.02)
 
 // processSample advances every string of the group by one sample, mixes them
@@ -279,31 +262,40 @@ const maxUnisonCrossfeed = float32(0.02)
 // sample. Measured over 120 s, pedal held, one note struck and nothing else
 // driving the bank, peak of the 115-120 s window over the 25-30 s window:
 //
-//	                       before   after   c = 0 (no coupling at all)
-//	note 33 (1 string)     0.1469   0.1469   0.1469
-//	note 36 (1 string)     0.0980   0.0980   0.0980
-//	note 45 (2 strings)    0.5583   0.0036   0.0256
-//	note 52 (2 strings)    1.2545   0.0003   0.0063
-//	note 60 (2 strings)    1.7159   0.0000   0.0003
+//	                       before   after     c = 0 (no coupling at all)
+//	note 33 (1 string)     0.1469   0.146883  0.146883
+//	note 36 (1 string)     0.0980   0.098027  0.098027
+//	note 45 (2 strings)    0.5583   0.003556  0.025640
+//	note 52 (2 strings)    1.2545   0.000326  0.006317
+//	note 60 (2 strings)    1.7159   0.000003  0.000349
 //
 // Single-string notes are bit-identical because they have no coupling path at
 // all, which is what identified the crossfeed as the source. Note that the
 // corrected coupling decays FASTER than c = 0 on every multi-string note - it
 // takes energy out, as a dissipative term must.
 //
-// The strike position moved with it. The difference form alone still diverged at
-// c = 0.005, the value assets/presets/fitted-c4.json ships: at 0.92 the force
-// comes back nearly a full round trip late, and the phase argument in
-// unisonCouplingStrikePos says what that does. Same chord render, 120 s:
+// WHERE THE FORCE IS WRITTEN matters as much as its sign. The dissipativity
+// argument above is instantaneous: it holds only while the force acts on the
+// signal it was computed from. A force that comes back a fraction p of a round
+// trip later lags 2*pi*n*p at partial n, and once that passes a half cycle the
+// same term is ANTI-damping. InjectForceNext writes into the slot the taps read
+// on the very next Process call, which is the shortest path that exists.
 //
-//	                     pos 0.92    pos 0.01
-//	c = 0.0008             0.1166      0.1275
-//	c = 0.0025             0.2014      0.1315
-//	c = 0.0050            88.4618      0.1328
-//	c = 0.0100                  -      0.1322
+// A strike position cannot express that. injectionOffset maps [0,1] affinely
+// onto the observable window, so its smallest input is 1% of the ROUND TRIP -
+// about 1 sample at MIDI 60 but 5 at MIDI 40 and 17 at MIDI 21, and MIDI 40 is
+// exactly where multi-string groups begin. Same chord render, 120 s:
 //
-// At the freshest slot the growth is flat across the whole knob range instead of
-// exploding at one end of it. maxUnisonCrossfeed fences the rest.
+//	              pos 0.92    pos 0.01    InjectForceNext
+//	c = 0.0008      0.1166      0.1275     0.1270
+//	c = 0.0025      0.2014      0.1315     0.1306
+//	c = 0.0050     88.4618      0.1328     0.1325
+//	diverges at      <0.005         0.1        0.5
+//
+// The middle column is why the plain difference form was not enough on its own:
+// at c = 0.005, the value assets/presets/fitted-c4.json ships, it still grew
+// 88x. Writing the force at the freshest slot instead widens the stable range
+// by a further 5x. maxUnisonCrossfeed fences the rest.
 //
 // The DC half of this same defect was patched once already, by putting a DC
 // blocker inside the string loop - see the "DC runaway" paragraph in
@@ -322,7 +314,7 @@ func (g *RingingStringGroup) processSample(unisonCrossfeed float32) float32 {
 			// The gain weight has to be the SAME one used to build the mix,
 			// otherwise the energy argument above no longer closes.
 			force := unisonCrossfeed * g.stringGain(i) * (sample - g.stringOut[i])
-			s.InjectForceAtPosition(force, unisonCouplingStrikePos)
+			s.InjectForceNext(force)
 		}
 	}
 	return sample

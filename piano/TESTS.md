@@ -190,9 +190,13 @@ grow. These four tests pin the property rather than the number.
   `cmd/piano-fit` can select, plus the clamp. The difference form alone was not enough here:
   at the old strike position 0.92 the force came back nearly a full round trip late, and at
   0.005 — the value `assets/presets/fitted-c4.json` ships — the render still grew 88x.
-  Injecting at `unisonCouplingStrikePos` instead makes the ratio flat across the range
-- `TestUnisonCrossfeedIsClamped` — presets are hand-editable JSON and the coupling diverges at
-  `c = 0.1` (1.8e14x), so `NewStringBank` clamps to `maxUnisonCrossfeed` rather than trusting
+  Writing the force with `StringWaveguide.InjectForceNext` instead is what makes the ratio
+  flat across the range. A strike position cannot express "next sample": `injectionOffset`
+  maps `[0,1]` affinely onto the round trip, so even its clamped minimum of 0.01 is ~1% of
+  it — 1 sample at MIDI 60 but 17 at MIDI 21
+- `TestUnisonCrossfeedIsClamped` — presets are hand-editable JSON and the coupling goes
+  non-finite at `c = 0.5`, so `NewStringBank` clamps to `maxUnisonCrossfeed` rather than
+  trusting
 
 Both open-loop probes drive until the reading stops moving, up to a 24 s budget, and report
 whether it did. A **settled** reading is the steady-state loop gain; an **unsettled** one is a

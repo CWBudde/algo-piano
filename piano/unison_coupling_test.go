@@ -115,8 +115,10 @@ func TestUnisonCouplingIsInertOnSingleStringNotes(t *testing.T) {
 // This is the test the old topology could not have passed at any setting: at
 // strike position 0.92 and c = 0.005 - the value assets/presets/fitted-c4.json
 // ships - the same render grew 88x even after the difference form was in place.
-// The bound is deliberately a long way under 1: what is being asserted is that
-// the note decays at every setting, not merely that it fails to explode.
+// Writing the force with InjectForceNext instead of at a strike position is what
+// closed that; see the table on RingingStringGroup.processSample. The bound is
+// deliberately a long way under 1: what is being asserted is that the note
+// decays at every setting, not merely that it fails to explode.
 func TestUnisonCouplingDecaysAcrossTheKnobRange(t *testing.T) {
 	t.Parallel()
 
@@ -135,8 +137,8 @@ func TestUnisonCouplingDecaysAcrossTheKnobRange(t *testing.T) {
 // TestUnisonCrossfeedIsClamped guards the bound itself.
 //
 // Presets are hand-editable JSON, and the coupling is stable only well inside
-// the range measured on maxUnisonCrossfeed - at c = 0.1 the same render diverges
-// to 1.8e14. NewStringBank must therefore clamp rather than trust.
+// the range measured on maxUnisonCrossfeed - at c = 0.5 the same render goes
+// non-finite. NewStringBank must therefore clamp rather than trust.
 func TestUnisonCrossfeedIsClamped(t *testing.T) {
 	t.Parallel()
 

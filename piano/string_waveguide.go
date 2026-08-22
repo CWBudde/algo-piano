@@ -199,6 +199,28 @@ func (s *StringWaveguide) InjectForceAtPosition(force float32, strikePos float32
 	s.delayLine[pos] += force
 }
 
+// InjectForceNext writes a force into the slot the interpolating taps read on
+// the NEXT call to Process, with no strike-position mapping in between.
+//
+// readDelayFractional taps at writePos+delayHeadroom and writePos+delayHeadroom-1
+// (modulo the buffer length), so delayHeadroom is the freshest offset both taps
+// still see - one slot lower and only the fractional tap reads it, two lower and
+// the write pointer destroys it first. That makes this the shortest feedback
+// path into the string that exists.
+//
+// It deliberately does NOT go through injectionOffset. That function maps a
+// strike position affinely onto the observable window, so its smallest input
+// (0.01, after clamping) is 1% of the ROUND TRIP, not one sample: about 1 slot
+// at MIDI 60 but 5 at MIDI 40 and 17 at MIDI 21. A caller that needs a force to
+// come back immediately - the unison bridge coupling in
+// RingingStringGroup.processSample, whose dissipativity argument only holds
+// while the delay is negligible in phase - cannot express that as a position,
+// at any pitch-independent value. Hence a separate entry point.
+func (s *StringWaveguide) InjectForceNext(force float32) {
+	pos := (s.writePos + delayHeadroom) % len(s.delayLine)
+	s.delayLine[pos] += force
+}
+
 // SetLoopLoss configures loop loss.
 func (s *StringWaveguide) SetLoopLoss(gain float32, highFreqDamping float32) {
 	if gain <= 0 {

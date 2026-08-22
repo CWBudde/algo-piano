@@ -604,13 +604,13 @@ func TestAggregateResonanceLoopIsBounded(t *testing.T) {
 // the 25-30 s window:
 //
 //	gain      block deposit  interleaved  interleaved + coupling fixed
-//	0 (off)   1.21           1.21         0.1275
-//	0.00018   1.13           3.35         0.136
-//	0.00025   1.14           5.06         0.1338
-//	0.0007    1.40           79.8         0.2989
-//	0.00092   2.28           322          0.7836
+//	0 (off)   1.21           1.21         0.1270
+//	0.00018   1.13           3.35         0.1354
+//	0.00025   1.14           5.06         0.1331
+//	0.0007    1.40           79.8         0.2996
+//	0.00092   2.28           322          0.7847
 //	0.0014    20.8           8.4e3        14.02
-//	0.002     938            1.3e6        700.8
+//	0.002     938            1.3e6        702.6
 //	0.005     -              -            1.3e12
 //
 // Read the third column against the first two. On the interleaved loop alone

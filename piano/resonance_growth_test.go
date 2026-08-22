@@ -14,8 +14,8 @@ import (
 // on a known-bad number rather than as a decay assertion:
 //
 //	                                     before    after
-//	resonance off                        1.2122x   0.1275x
-//	resonance on, gain 0.00025           5.0558x   0.1338x
+//	resonance off                        1.2122x   0.1270x
+//	resonance on, gain 0.00025           5.0558x   0.1331x
 //
 // The cause was the unison bridge coupling, which fed each string's own output
 // back into itself with no subtraction and no loss - see the measurements on
@@ -90,7 +90,7 @@ func measureSustainedGrowth(t *testing.T, gain float32, seconds int) (reference,
 }
 
 // maxBankDecayWithoutResonance is the recorded ratio plus the 8% headroom this
-// repo fences with. Measured 2026-08-23: 0.1275.
+// repo fences with. Measured 2026-08-23: 0.1270.
 const maxBankDecayWithoutResonance = 0.138
 
 // TestDWGSustainedBankDecaysWithoutResonance is the plant on its own: six notes
@@ -119,7 +119,7 @@ func TestDWGSustainedBankDecaysWithoutResonance(t *testing.T) {
 }
 
 // maxDWGResonanceSustainedDecay is the same, with the sympathetic loop on.
-// Measured 2026-08-23: 0.1338.
+// Measured 2026-08-23: 0.1331.
 const maxDWGResonanceSustainedDecay = 0.145
 
 // shippedResonanceGain is the resonance_gain every preset under assets/presets
@@ -128,7 +128,7 @@ const maxDWGResonanceSustainedDecay = 0.145
 const shippedResonanceGain = 0.00025
 
 // TestDWGResonanceSustainedDecayIsFenced pins what the sympathetic loop costs on
-// top of the decay above: 0.1275 -> 0.1338, i.e. the loop slows the decay by
+// top of the decay above: 0.1270 -> 0.1331, i.e. the loop slows the decay by
 // about 5% of the ratio and the render still ends 17 dB below its own reference
 // window. That is what an audible sympathetic path on a stable plant should look
 // like.
