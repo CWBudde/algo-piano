@@ -603,15 +603,105 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         53.8, so 0.001 would clear the old cap — but the stability data in the
         follow-up below puts 0.001 squarely in the marginal band. Do not retry
         it from the 56.5 dB figure alone.
-  - [ ] follow-up: **re-fit the C4 preset against the corrected renderer. This
-        is the named remedy for the widened `spectral_rmse_db` fence in
-        `assets/thresholds/c4.json`**, not a nice-to-have.
-        `assets/presets/fitted-c4-mayfly.json` was fitted against a renderer
-        whose sympathetic path carried a 1/f0 error of up to 183x at A0, so its
-        spectrum was tuned around a defect. When the re-fit lands, tighten
-        `spectral_rmse_db` back down from 67.0 and tighten `time_rmse`,
-        `envelope_rmse_db` and `decay_diff_db_per_s` in the same pass — all
-        three already measure better than their current caps.
+  - [x] follow-up: **re-fit the C4 preset against the corrected renderer.**
+        Done 2026-08-22. `assets/presets/fitted-c4-mayfly.json` was fitted
+        against a renderer whose sympathetic path carried a 1/f0 error of up to
+        183x at A0, so its spectrum was tuned around a defect. The re-fit closes
+        the widened fence: **all five** enforced thresholds in
+        `assets/thresholds/c4.json` were TIGHTENED in the same pass, none
+        loosened, and `spectral_rmse_db` is back below the 57.5 that stood
+        before the resonator normalisation.
+
+        | metric                | before  | after   | cap 67.0-era → new |
+        | --------------------- | ------- | ------- | ------------------ |
+        | `score`               | 0.5249  | 0.5182  | 0.57 → 0.559       |
+        | `time_rmse`           | 0.10189 | 0.10113 | 0.112 → 0.109      |
+        | `envelope_rmse_db`    | 10.156  | 9.593   | 11.75 → 10.34      |
+        | `spectral_rmse_db`    | 62.287  | 56.572  | 67.0 → **61.0**    |
+        | `decay_diff_db_per_s` | 4.800   | 4.503   | 5.9 → 4.85         |
+
+        Every cap is the measured value plus 7.7–8.0% headroom, the convention
+        that file states. The measured 56.572 dB is below the 57.5 fence that
+        stood before the resonator normalisation, which is the promise this
+        re-fit owed. It does **not** beat the 52.89 dB the same preset measured
+        on the pre-normalisation renderer — that comparison was against a
+        renderer with the 1/f0 sympathetic defect in it and is not a target. Note
+        also that the CAP (61.0) sits above 57.5 purely because the headroom
+        convention applies on top of the measurement; the fence is wider than it
+        was in 2026-08-21 even though the measurement is better.
+
+        The tracked sidecar `assets/presets/fitted-c4-mayfly.json.report.json`
+        was **deleted**, not regenerated. `piano-fit` resumes from
+        `<output-preset>.report.json` by default, so leaving the old one in place
+        meant an in-place re-run of this preset would silently restore the
+        pre-re-fit knobs instead of resuming from what shipped. There is no
+        honest replacement to write: this preset is the product of a chain of
+        deterministic `--sweep` runs, not of one resumable `piano-fit` search.
+        With the file gone, resume degrades to a "resume skipped" notice.
+
+        **All five numbers are measured at `output_gain` 7.096.** The re-fit cut
+        the room-IR mix hard, which cut the absolute output level with it; at the
+        `output_gain` 1.357 the search compared candidates under, the preset
+        rendered 7.2x quieter in RMS (−25.6 → −42.7 dBFS) than the one it
+        replaces, and the RMS-normalising gate cannot see that. Re-matching
+        `output_gain` puts the render at 0.048274 RMS against the reference's
+        0.048364 and costs part of the apparent gain: at 1.357 the same knobs
+        measure `score` 0.5040 and `spectral_rmse_db` 51.554, which is an
+        artifact of the quiet render and must not be quoted.
+
+        **The dominant term was the wet level of the legacy single-IR (room) stage, not
+        the string model.** The preset sets `ir_wav_path`, so the engine loads it as
+        the room stage and `ir_wet_mix`/`ir_gain` are room controls, not body-IR ones.
+        The preset carried `ir_wet_mix` 1.1888 with `ir_gain` 1.7203, an
+        effective wet factor of 2.045. A deterministic 2076-sample sweep of the
+        three IR-mix knobs (`--sweep --optimize mix`, 9-point OAT scan plus 2048
+        Halton points, report `out/sweep/mix-mayfly.json`) found **887 samples
+        that improve all four gated raw metrics at once** — a region, not a
+        lucky sample. The re-fit sits at `ir_wet_mix` 0.2328 / `ir_gain` 1.0912
+        / `ir_dry_mix` 0.2107, a wet factor of 0.254. Three further knobs came
+        from pass sweeps around that point: `high_freq_damping` 0 → 0.05 and
+        `unison_crossfeed` 0.00236 → 0.0025 (sustain box),
+        `per_note.60.strike_position` 0.2945 → 0.45 (inharmonicity box).
+        `resonance_gain` was not touched and stays at 0.00025.
+
+        **Selected on `balanced-v2`, deliberately not on `legacy-v1`.**
+        `legacy-v1` saturates its spectral component and puts no weight on
+        partial level, partial frequency, tristimulus, attack or the segmented
+        decay, so a search steered by it pays those six to buy the four it sees.
+        Measured, not assumed: continuing the sweep chain reached `legacy-v1`
+        0.4654 with `spectral_rmse_db` 48.1 and `decay_diff_db_per_s` 1.54 —
+        better on every gated metric than what shipped — while pushing
+        `partial_level_rmse_db` 10.88 → 24.20 and `attack_centroid_rmse_oct`
+        0.544 → 2.445. Rejected as gate-gaming. The shipped point is the
+        `balanced-v2` optimum of the same search (0.47391 → 0.42687), with no
+        sampled direction around it improving `balanced-v2` by more than 0.0002.
+        Its one real cost is `attack_centroid_rmse_oct` 0.544 → 0.947, a direct
+        consequence of removing the body colouration from the onset; it is not
+        enforced and is recorded in that file so the trade stays visible.
+
+        **Stochastic `piano-fit` runs were tried first and lost.** Six 300 s
+        Mayfly runs from the old preset (`legacy-v1` seeds 1/7/13/23,
+        `balanced-v2`, and the `attack` pass) all either regressed `time_rmse`
+        past its cap or failed to beat the deterministic sweep; the best,
+        `legacy-v1` seed 1, reached `score` 0.4937 with `spectral_rmse_db` 47.5
+        but `time_rmse` 0.1158 against a 0.112 fence.
+
+  - [ ] follow-up: **`piano-fit --match-output-gain` is not score-neutral.**
+        The flag's own help says `analysis.Compare` RMS-normalises both signals
+        so `output_gain` cannot move the score. It can: the auto-stop is an
+        **absolute** −90 dBFS threshold, so a louder render crosses it later,
+        produces a longer candidate and scores differently. Measured 2026-08-22
+        on one fitted preset, same knobs otherwise: `output_gain` 7.096 scores
+        0.5208, `output_gain` 1.357 scores 0.5061. Every fitted preset in the
+        C4 re-fit round had to be re-measured at the tracked preset's
+        `output_gain` because of it. Either make the auto-stop relative to the
+        candidate's own peak, or drop the claim from the flag's help and from
+        `docs/optimization-workflow.md`.
+  - [ ] follow-up: **the Halton sweep caps at 8 dimensions.** The `attack` pass
+        exposes 9 knobs, so `--sweep --pass attack` with a joint stage fails
+        with `halton: 9 dimensions exceed the 8-prime base table` and
+        `--sweep-joint-max-dims 9` does not help. The attack box is therefore
+        only ever scanned one-at-a-time. Extend the prime table.
   - [ ] follow-up: **recover sympathetic resonance level.** The normalisation is
         correct but it removes the mechanism that made sympathetic resonance
         audible, and a scalar cannot bring it back. The loss is **not** a flat
@@ -680,7 +770,7 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         true 1.53. Deriving the gain analytically was not attempted - the loop
         runs through `StringBank.Process` and the transfer function is not
         reachable from the coefficients.
-  - [ ] follow-up: make `cmd/piano-modal-fit` disable resonance during fitting
+  - [x] follow-up: make `cmd/piano-modal-fit` disable resonance during fitting
         the way `cmd/piano-fit/main.go:212-214` does.
         `assets/presets/modal-calibrated.json` was very likely fitted against
         diverging renders, which would explain why `analysis/norms.go:55`
