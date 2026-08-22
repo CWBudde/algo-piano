@@ -111,12 +111,13 @@ assert equality with no tolerance.
 - `TestConvolverLoadsMonoWavAsDualMono` (`convolver_test.go`)
 - `TestConvolverMatchesDirectConvolutionLongIR` (`convolver_test.go`) — IRs of 512 and 8192 taps, i.e. longer than one partition, for both `SoundboardConvolver` and `BodyConvolver`
 - `TestConvolverBlockSizeContinuity` (`convolver_test.go`) — one stream chopped into chunks of 1, 63, 64, 100, 128, 256 and 333 must convolve the same; regression test for the non-`partSize` block defect
+- `TestConvolverShortIRBlockSizeContinuity` (`convolver_test.go`) — the same sweep over IRs of 1, 32, 64, 127, 128 and 129 taps crossed with chunks of 1, 63, 64, 100, 128, 200, 255, 256, 333 and 1200; regression test for the input history being sized from the tail stage's priming window, which is zero for a single-partition IR
 - `TestConvolverImpulseRecoversIR` (`convolver_test.go`) — pins zero added latency
 - `TestConvolverResetMidStreamStartsFresh` (`convolver_test.go`) — `Reset()` off a partition boundary
 
 ## `convolver_stream.go`
 
-- Covered by the four streaming tests listed under `convolver.go` above; the
+- Covered by the five streaming tests listed under `convolver.go` above; the
   partition plumbing has no public surface of its own.
 
 ## `params.go`

@@ -335,3 +335,60 @@ func TestConvolverResetMidStreamStartsFresh(t *testing.T) {
 		})
 	}
 }
+
+// decayingCosineIR is decayingIR with a non-zero first tap, so that the
+// degenerate one-tap case below is a real filter rather than silence.
+func decayingCosineIR(n int) []float32 {
+	ir := make([]float32, n)
+	for i := range ir {
+		ir[i] = float32(math.Cos(float64(i)*0.11) * math.Exp(-float64(i)/(float64(n)/4)))
+	}
+	return ir
+}
+
+// TestConvolverShortIRBlockSizeContinuity is the same continuity contract as
+// above, swept over IRs that fit inside a single partition.
+//
+// Those were the blind spot of the sweep above, which only uses 512 and 1024
+// taps: the input history was sized from the tail stage's priming window, and
+// an IR of at most partSize taps needs no tail stage at all, so the history
+// collapsed to one partition. emitDirect reaches back len(ir)-1 samples from
+// the end of a partial block that is itself up to partSize-1 samples long, so
+// anything past one partition was silently read as the zero fill. With a
+// 128-tap IR that was wrong even for a single 1200-sample Process call
+// (max abs diff 0.0417 against directConvolve), and worst at chunk 255, where
+// a full partition is followed by a 127-sample partial one (2.08).
+//
+// The IR lengths straddle the partition size in both directions and include the
+// degenerate single tap; the chunk sizes add 200 and 255 to the sweep above,
+// both of which leave a large partial partition after a complete one.
+func TestConvolverShortIRBlockSizeContinuity(t *testing.T) {
+	input := convolverTestSine(1200)
+
+	for _, irLen := range []int{1, 32, 64, 127, 128, 129} {
+		for _, chunk := range []int{1, 63, 64, 100, 128, 200, 255, 256, 333, 1200} {
+			t.Run(fmt.Sprintf("taps%d/chunk%d", irLen, chunk), func(t *testing.T) {
+				leftIR := decayingCosineIR(irLen)
+				rightIR := decayingIR(irLen + 1)
+				wantL := directConvolve(input, leftIR)[:len(input)]
+				wantR := directConvolve(input, rightIR)[:len(input)]
+
+				c := NewSoundboardConvolver(48000)
+				c.SetIR(leftIR, rightIR)
+				gotL, gotR := streamStereo(c, input, chunk)
+				if d := relDiff(gotL, wantL); d > convolverRelTolerance {
+					t.Errorf("soundboard left relative error %g exceeds %g", d, convolverRelTolerance)
+				}
+				if d := relDiff(gotR, wantR); d > convolverRelTolerance {
+					t.Errorf("soundboard right relative error %g exceeds %g", d, convolverRelTolerance)
+				}
+
+				b := NewBodyConvolver(48000)
+				b.SetIR(leftIR)
+				if d := relDiff(streamMono(b, input, chunk), wantL); d > convolverRelTolerance {
+					t.Errorf("body relative error %g exceeds %g", d, convolverRelTolerance)
+				}
+			})
+		}
+	}
+}

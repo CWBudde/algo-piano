@@ -225,14 +225,30 @@ type blockStream struct {
 // for a sample-at-a-time caller at the price of 16 KB.
 const histSlack = 4096
 
-// configure sizes the stream for a set of lanes. histLen covers the longest
-// lane's priming window plus one partition, which is also enough for the
-// partSize-1 samples the head reaches back over and for a full-IR fallback.
+// configure sizes the stream for a set of lanes.
+//
+// The history has to satisfy two readers at once. ensureTail replays the
+// longest lane's priming window, which ends at the last committed sample and so
+// sits up to partSize-1 samples back from the end of the window. emitDirect
+// writes up to partSize-1 samples at a time and reaches back len(ir)-1 samples
+// from the last of them, over the whole IR whenever there is no tail stage to
+// carry h[partSize:] — which is exactly the case for an IR of at most one
+// partition, where primeLen is zero. Sizing on primeLen alone therefore left a
+// single-partition IR with a one-partition history, and emitDirect silently
+// read the zero fill instead of the input it needed.
+//
+// max(primeLen, len(ir)-1) + partSize covers both: it is primeLen + partSize
+// for a multi-partition IR, where primeLen is already at least len(ir)-1, and
+// len(ir)-1 + partSize for a short one.
 func (s *blockStream) configure(partSize int, lanes ...*olaLane) {
 	s.partSize = partSize
 	histLen := partSize
 	for _, l := range lanes {
-		if n := l.primeLen() + partSize; n > histLen {
+		reach := l.primeLen()
+		if n := len(l.ir) - 1; n > reach {
+			reach = n
+		}
+		if n := reach + partSize; n > histLen {
 			histLen = n
 		}
 	}

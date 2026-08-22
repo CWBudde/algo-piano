@@ -108,9 +108,18 @@ func processInCallbacks(fn func([]float32) []float32, input []float32) {
 
 // BenchmarkSoundboardConvolverPartitionSize sweeps the partition size at a
 // fixed one-second IR, driving the convolver with 128-frame calls throughout.
-// Larger partitions mean fewer, bigger FFTs per unit of audio in an offline
-// setting; under a fixed 128-frame callback they instead mean one full,
-// mostly-discarded partition per callback.
+//
+// A callback shorter than the partition no longer pads a partition out and
+// throws most of its output away — it is buffered, and the samples the caller
+// asks for before their partition closes come from the head/tail split in
+// convolver_stream.go. So a larger partition really does amortize its FFTs over
+// more audio here, at a price: each committed partition costs two FFT
+// round-trips instead of one (the main stage plus the h[partSize:] tail stage)
+// while covering partSize frames rather than 128, and every off-grid sample
+// pays partSize multiply-accumulates for the head. That puts FFT break-even at
+// partition 256; measured, 512 and 1024 pull clear for a one-second room IR,
+// 256 lands slightly the wrong side of break-even, and 64 costs twice 128.
+// BENCHMARKS.md carries the numbers.
 func BenchmarkSoundboardConvolverPartitionSize(b *testing.B) {
 	input := benchmarkInput(convolverBenchAudioFrames)
 	ir := benchmarkIR(48000)
