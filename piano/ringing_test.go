@@ -198,6 +198,45 @@ func TestStringBankProcessHasNoPerBlockHeapAllocs(t *testing.T) {
 	}
 }
 
+// TestStringBankResonantProcessHasNoPerBlockHeapAllocs covers the per-sample
+// sympathetic path specifically.
+//
+// The test above builds its bank with NewStringBank, which leaves no resonance
+// engine attached, so it never reaches injectSample at all — its pass says
+// nothing about the loop. Here the engine is wired and the pedal is fully down,
+// so every one of the 88 groups is an undamped target and the injection runs on
+// every sample of every block.
+func TestStringBankResonantProcessHasNoPerBlockHeapAllocs(t *testing.T) {
+	for _, model := range []StringModel{StringModelDWG, StringModelModal} {
+		t.Run(string(model), func(t *testing.T) {
+			params := NewDefaultParams()
+			params.StringModel = model
+			params.ResonanceEnabled = true
+			params.ResonancePerNoteFilter = true
+			params.CouplingEnabled = true
+			params.CouplingMode = CouplingModeStatic
+
+			sb := NewStringBank(48000, params)
+			h := NewHammerExciter(48000, params)
+			sb.SetResonanceEngine(NewResonanceEngine(48000, params.ResonanceGain, params.ResonancePerNoteFilter))
+			sb.SetSustainAmount(1)
+			sb.SetKeyDown(60, true)
+			h.Trigger(60, 100)
+
+			for i := 0; i < 32; i++ {
+				_ = sb.Process(128, h)
+			}
+
+			allocs := testing.AllocsPerRun(200, func() {
+				_ = sb.Process(128, h)
+			})
+			if allocs != 0 {
+				t.Fatalf("expected zero per-block heap allocs with the resonance loop closed, got %.3f", allocs)
+			}
+		})
+	}
+}
+
 func TestStringBankCouplingModeOffDisablesEdges(t *testing.T) {
 	params := NewDefaultParams()
 	params.CouplingEnabled = true

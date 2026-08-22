@@ -125,7 +125,8 @@ assert equality with no tolerance.
   public `Piano.Process` with the DWG core, resonance on and the sustain pedal held; no
   five-second window may exceed 1.5x the first sustain window. This is the assertion the
   divergence escaped: it stayed finite for well over 40 s, so the 4 s
-  `TestLongRenderHasNoNaNOrInf` rows never saw it
+  `TestLongRenderHasNoNaNOrInf` rows never saw it. Its 45 s horizon has a blind spot of its
+  own — see `resonance_growth_test.go`, which needs 120 s to make the growth unambiguous
 - `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — per-note open-loop
   gain of the bridge-injection loop, notes 21-84, on both cores at the defaults and on the
   modal core with the knobs of `assets/presets/modal-calibrated.json`. Subtests run in
@@ -136,17 +137,51 @@ assert equality with no tolerance.
   that core's aggregate loop from 1.43 down to 0.02
 - `TestResonanceProbeSeesKnownDivergingLoop` (`modal_resonance_test.go`) — runs the same probe
   on the DWG core at `resonance_gain` 0.0014 with the pedal held, a configuration whose 120 s
-  render peaks at 91.5 and climbs, and requires the probe to report at least 1.0. Without it
-  the two bounded-loop probes above are unfalsifiable: the 0.5 s-warmup probe they replace
-  reported 0.1968 for exactly this configuration
+  render grows 8.4e3x, and requires the probe to report at least 1.0. Without it the two
+  bounded-loop probes above are unfalsifiable: the 0.5 s-warmup probe they replace reported
+  0.1968 for exactly this configuration. It shows the probe can see **a** diverging loop, not
+  every one — see the growth tests below
+- `TestResonanceLoopIsBlockSizeInvariant` (`resonance_blocksize_test.go`) — the assertion that
+  the loop really is interleaved with rendering. With coupling off, a resonance-on tail
+  rendered through `RingingState.Process` must be **bit-identical** across caller block sizes
+  1/16/64/128/333, because every element of the loop is a per-sample recursion and
+  `StringBank.prevMix` carries the one-sample delay across the call boundary. It fails on the
+  pre-interleave code by 3 to 5 orders of magnitude
+- `TestResonanceLoopIsBlockSizeInvariantWithoutEngine` (`resonance_blocksize_test.go`) — the
+  negative control: the same comparison on a bank with no engine attached passes on both
+  revisions, which is what makes a failure above attributable to the resonance path
+- `TestPianoResonanceRenderIsBlockSizeStable` (`resonance_blocksize_test.go`) — the same
+  comparison through the public `Piano.Process`, bounded at 1e-5 relative rather than exact:
+  a non-partition-sized block goes through the convolvers' head/tail split and differs by
+  ~1e-6 relative round-off (`convolver_stream.go`)
+- `TestSetStringModelKeepsResonanceWired` (`resonance_blocksize_test.go`) — `SetStringModel`
+  rebuilds the ringing state, and a fresh bank starts unwired, so this pins that
+  `attachResonance` runs again afterwards and that the loop still drives a silent held note
+- `TestStringBankResonantProcessHasNoPerBlockHeapAllocs` (`ringing_test.go`) — zero heap
+  allocations per block with the loop closed and all 88 groups undamped. The older alloc
+  tests build via `NewStringBank`, which leaves the bank unwired, so they never reach the
+  injection path at all
+- `TestDWGSustainedBankGrowsWithoutResonance` (`resonance_growth_test.go`) — records a
+  **pre-existing defect**: six notes struck once under a held pedal, resonance off, coupling
+  off, and the DWG output still grows 1.21x over 120 s (5.41x over 300 s), geometrically. The
+  numbers are bit-identical before and after the interleave. The fence is set just above the
+  measurement so a worsening fails; it is not a claim that the growth is acceptable
+- `TestDWGResonanceSustainedGrowthIsFenced` (`resonance_growth_test.go`) — the same render with
+  the loop on at the shipped `resonance_gain` 0.00025 grows 5.06x, against 1.14x on the
+  block-deposit loop. **A fence on a known-bad number.** Lowering the gain does not rescue it:
+  even 1e-6 exceeds the resonance-off baseline, so the bank's own growth is the root cause
 
 Both open-loop probes drive until the reading stops moving, up to a 24 s budget, and report
 whether it did. A **settled** reading is the steady-state loop gain; an **unsettled** one is a
-**lower bound**, because an undamped string's transient runs for minutes — the diverging
-reference row needs 100 s of drive to flatten and reaches only 0.73 of its limit at 24 s. The
-modal rows settle; the DWG rows do not. The 0.5 bound is read through that shortfall (see
-`maxResonanceLoopGain`), and `TestDWGResonanceLongRenderDecays` remains what pins the loop
-end to end.
+**lower bound**, because an undamped string's transient runs for minutes. The modal rows
+settle; the DWG rows do not. The 0.5 bound is read through that shortfall (see
+`maxResonanceLoopGain`).
+
+**Treat a passing open-loop bound as necessary, never sufficient.** The probes inject a sine
+at one note's fundamental into a plant they assume is stable, and since the interleave neither
+assumption holds for the DWG core: they read 0.174 against the 0.5 bound for a configuration
+whose render grows 5x in two minutes. `TestDWGResonanceLongRenderDecays` and the two growth
+tests are what pin the loop end to end.
 
 ## `convolver.go`
 

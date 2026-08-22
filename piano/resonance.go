@@ -51,31 +51,50 @@ func (r *ResonanceEngine) bandLimit(x float32) float32 {
 	return lp
 }
 
-// InjectFromBridge feeds the band-limited bridge signal into every undamped
-// target and reports whether any energy was actually deposited, so the caller
-// can tell the string bank to enroll the groups that started resonating.
-func (r *ResonanceEngine) InjectFromBridge(bridge []float32, targets []resonanceTarget) bool {
-	if r == nil || r.injectionGain <= 0 || len(bridge) == 0 || len(targets) == 0 {
+// injectSample band-limits ONE bridge sample and deposits it into every undamped
+// target, reporting whether any energy was actually deposited so the caller can
+// enroll the groups that started resonating.
+//
+// It is the ONLY injection entry point. StringBank.processWithBridge calls it
+// once per sample from inside its render loop, so the string state advances
+// between consecutive deposits and the drive is spread across the block in time.
+//
+// Until 2026-08-22 there was a second, block-at-a-time entry point
+// (InjectFromBridge) that Piano.Process called with a finished block. No string
+// state advanced between its deposits, so all of a block's samples landed on the
+// same delay-line tap / modal state: for a mode at angular frequency w that
+// deposits |sum x[i]| — the block's DC content — rather than
+// |sum x[i]*exp(-jwi)|, the drive at w. A 128-tap boxcar at block rate, in other
+// words, with ~+42 dB at DC and a first null at fs/128 = 375 Hz. It is gone
+// rather than merely unused: closing the loop from outside the bank WAS the
+// defect, and the two RingingState forwarders that let a caller reach it
+// (ResonanceTargets, NotifyResonanceInjected) went with it. Probes that need to
+// drive the bank with a known signal use the drive seam on
+// StringBank.processWithBridge instead.
+//
+// It must stay allocation-free: StringBank.Process is pinned at zero heap
+// allocations per block. No variadics, no closures, no per-sample slice
+// construction; targets is the bank's pre-allocated slice.
+func (r *ResonanceEngine) injectSample(x float32, targets []resonanceTarget) bool {
+	if r == nil || r.injectionGain <= 0 || len(targets) == 0 {
 		return false
 	}
+	x = r.bandLimit(x)
+	if x > -1e-8 && x < 1e-8 {
+		return false
+	}
+	energy := x * r.injectionGain
 	injected := false
-	for i := 0; i < len(bridge); i++ {
-		x := r.bandLimit(bridge[i])
-		if x > -1e-8 && x < 1e-8 {
+	for _, t := range targets {
+		if !t.isUndamped() {
 			continue
 		}
-		energy := x * r.injectionGain
-		for _, t := range targets {
-			if !t.isUndamped() {
-				continue
-			}
-			vEnergy := energy
-			if r.perNoteFilter {
-				vEnergy = t.filterResonanceDrive(x) * r.injectionGain
-			}
-			t.injectResonance(vEnergy)
-			injected = true
+		vEnergy := energy
+		if r.perNoteFilter {
+			vEnergy = t.filterResonanceDrive(x) * r.injectionGain
 		}
+		t.injectResonance(vEnergy)
+		injected = true
 	}
 	return injected
 }
