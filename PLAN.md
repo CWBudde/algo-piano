@@ -440,8 +440,19 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         digital silence is that the DWG excitation fills only 4-25% of the delay
         line, so the bank output is a sparse impulse train. Closing that gap
         needs a distributed excitation or a loop filter with real bandwidth.)
-  - [ ] DWG vs modal distance on chords
-  - [ ] sustain pedal and coupling behavior parity checks
+  - [x] DWG vs modal distance on chords
+        (`TestDWGModalDistanceIsBoundedOnChords` in `piano/core_distance_test.go`.
+        Measured 2026-08-22, 750 blocks, sustain held: C3 major (48/55/60/64)
+        0.8434, C4 major (60/67/72/76) 0.8401. Same 0.89 bound as the single-note
+        test, so polyphony is required not to make the cores diverge further.)
+  - [x] sustain pedal and coupling behavior parity checks
+        (`piano/core_parity_test.go`. Mid-render pedal lift, tail RMS over the
+        final 80 blocks: DWG held/lifted 2.55x, modal 8.19x, bound 1.50x.
+        Coupling-mode ordering in a silent note 72: off exactly 0 in both cores,
+        static 1.89e-09 (DWG) / 1.84e-09 (modal), physical 3.35e-10 / 3.10e-10 —
+        the static > physical > off ordering is asserted to match across cores.
+        These pin relative behaviour only; absolute agreement is impossible while
+        the distance sits at 0.83-0.84.)
   - [ ] long-render stability (NaN/Inf free)
 - [ ] Add benchmarks:
   - [ ] DWG vs modal CPU at fixed block size/sample rate
