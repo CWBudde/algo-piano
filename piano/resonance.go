@@ -109,7 +109,17 @@ func newNoteResonator(sampleRate int, centerHz float32, bandwidthHz float32, gai
 	w0 := 2.0 * math.Pi * f0 / fs
 	a1 := float32(2.0 * r * math.Cos(w0))
 	a2 := float32(-(r * r))
-	b0 := float32(1.0 - r)
+	// Unity peak gain. The denominator of H(z) = b0 / (1 - a1 z^-1 - a2 z^-2)
+	// factors at the centre frequency as
+	//
+	//	1 - 2r*cos(w0)*e^-jw0 + r^2*e^-2jw0 = (1-r) * (1 - r*e^-2jw0)
+	//
+	// so |H(e^jw0)| = b0 / ((1-r) * sqrt(1 - 2r*cos(2w0) + r^2)). Setting b0 to
+	// that denominator makes the peak exactly one at every centre frequency.
+	// The naive b0 = 1-r instead peaks at roughly 1/(2*sin(w0)), a 1/f0 law
+	// that reached 183x at A0 and pushed the summed sympathetic loop past
+	// unity in the bass; see the Phase 9.6 notes in PLAN.md.
+	b0 := float32((1.0 - r) * math.Sqrt(1.0-2.0*r*math.Cos(2.0*w0)+r*r))
 	return noteResonator{a1: a1, a2: a2, b0: b0, gain: gain}
 }
 

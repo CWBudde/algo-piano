@@ -545,31 +545,101 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         `ResonancePerNoteFilter` true, and roughly 20x lower with it false — and
         the closed loop decays to zero in every modal row, so the fix holds for
         the summed loop and not only per note.)
-  - [ ] follow-up: **the DWG core's aggregate resonance loop grows with the
-        sustain pedal held.** Found while answering the review above; it
-        predates the modal fix, which touches no DWG file. With all 88 groups
-        undamped the aggregate open-loop gain is 1.43 at defaults and 1.98 under
-        `modal-calibrated.json`'s resonance gain (per-note it is only 0.41), and
-        through the public `Piano.Process` the render grows from a peak of 11 at
-        1 s to 6.2e8 at 40 s (3.0e12 with the hotter gain). It is invisible today
-        because `dwg-off-resonance` in `TestLongRenderHasNoNaNOrInf` runs 4 s,
-        over which the growth is only a few dB. The mechanism is the aggregation
-        itself, so a fix has to normalise the injection across the undamped bank
-        or size `ResonanceGain` from the full loop — both move DWG output and
-        need a `gate-c4` re-baseline, which is why the DWG rows of
-        `TestAggregateResonanceLoopIsBounded` are skipped rather than asserted.
-        Note `ResonancePerNoteFilter=false` is _not_ affected (aggregate 0.03),
-        so the unnormalised `noteResonator` bank below is the likely amplifier.
+  - [x] **the DWG core's aggregate resonance loop grows with the sustain pedal
+        held.** Found while answering the review above; it predated the modal
+        fix, which touches no DWG file. With all 88 groups undamped the
+        aggregate open-loop gain was 1.43 at defaults and 1.98 under
+        `modal-calibrated.json`'s resonance gain (per-note only 0.41), and
+        through the public `Piano.Process` a render grew from a peak of 3.2 at
+        1 s to 1.2e7 at 40 s. It was invisible because `dwg-off-resonance` in
+        `TestLongRenderHasNoNaNOrInf` runs 4 s, over which the growth is only a
+        few dB.
+        **Resolved 2026-08-22 by the `noteResonator` normalisation below**, and
+        the suspicion recorded here was right: the aggregation was not the
+        mechanism. `noteResonator` was built with `b0 = 1-r`, which peaks at
+        `1/(2*sin(w0))` — a 1/f0 law summing to 183.1 at A0, 20.1 at C4 and 2.6
+        at C7 — so the per-note filters, not the summing, put the loop over
+        unity. Normalising to unity peak gain drops the hottest DWG aggregate
+        60x (1.4276 → 0.0237) with **no change to `ResonanceGain`**, so no
+        per-source or polyphony normalisation was needed; the 40 s render now
+        decays (peak 0.44 at 40 s against 1.2e7). The DWG rows of
+        `TestAggregateResonanceLoopIsBounded` are un-skipped and asserting, and
+        `TestDWGResonanceLongRenderDecays` in
+        `piano/resonance_normalisation_test.go` closes the loop through
+        `Piano.Process` for 45 s. The modal conclusions of the entry above still
+        hold — the modal aggregate only moves further from the bound (0.0164 →
+        0.0002 at defaults, 0.1208 → 0.0016 under `modal-calibrated.json`).
   - [ ] follow-up: interleave `InjectFromBridge` with rendering instead of
         driving a frozen string state - the loop is currently closed once per
         block in `Piano.Process`, so a whole block of bridge force is deposited
         before any of it is rendered
-  - [ ] follow-up: normalise the `noteResonator` bank and re-fit
-        `ResonanceGain`. `filterResonanceDrive` sums three unnormalised
-        resonators (`piano/modal_group.go` and `piano/ringing.go`,
-        byte-identical in both cores), which is a ~178x amplifier at A0.
-        Touching it moves DWG output and needs a `gate-c4` re-baseline, so it is
-        deliberately out of scope here.
+  - [x] normalise the `noteResonator` bank. Done 2026-08-22: `b0` is now
+        `(1-r)*sqrt(1 - 2r*cos(2*w0) + r^2)`, which makes the peak exactly one
+        at every centre frequency in both cores.
+        `TestNoteResonatorHasUnityPeakGain` and
+        `TestResonanceDriveBankGainIsRegisterIndependent`
+        (`piano/resonance_normalisation_test.go`) pin it analytically and
+        against a driven sine. `ResonanceGain` was deliberately **not** re-fitted
+        with it; see the three follow-ups below, which that decision opened.
+  - [x] re-baselined `assets/thresholds/c4.json` for the resonator
+        normalisation. Every shipped preset pins `resonance_gain: 0.00025`, so
+        the normalisation quiets their sympathetic resonance and the gate preset
+        moves with it. Measured 2026-08-22 on
+        `assets/presets/fitted-c4-mayfly.json`: `score` 0.5330 → 0.5249
+        (**improved**, and close to the 0.5240 the same preset scores with
+        resonance switched off entirely), `time_rmse` 0.1022 → 0.1019,
+        `envelope_rmse_db` 10.801 → 10.156 and `decay_diff_db_per_s` 5.428 →
+        4.800 all improved, but `spectral_rmse_db` 52.89 → **62.236 against a
+        cap of 57.50**. The spectral component saturates under the frozen
+        legacy-v1 norms, which is why `score` improves while the raw metric
+        breaches. `spectral_rmse_db` was therefore LOOSENED 57.5 → 67.0 (7.7%
+        headroom, the convention that file states); the three metrics that
+        improved were deliberately left alone, because the re-fit below will
+        move them again. Full rationale is in that file's `_comment` and
+        `recorded.note`.
+        Re-voicing the preset's `resonance_gain` to buy the metric back was
+        measured and **rejected**: sweeping it on the corrected renderer gives
+        0 → 75.8 dB, 0.00025 → 62.2, 0.0005 → 59.4, 0.001 → 56.5, 0.002 →
+        53.8, so 0.001 would clear the old cap — but the stability data in the
+        follow-up below puts 0.001 squarely in the marginal band. Do not retry
+        it from the 56.5 dB figure alone.
+  - [ ] follow-up: **re-fit the C4 preset against the corrected renderer. This
+        is the named remedy for the widened `spectral_rmse_db` fence in
+        `assets/thresholds/c4.json`**, not a nice-to-have.
+        `assets/presets/fitted-c4-mayfly.json` was fitted against a renderer
+        whose sympathetic path carried a 1/f0 error of up to 183x at A0, so its
+        spectrum was tuned around a defect. When the re-fit lands, tighten
+        `spectral_rmse_db` back down from 67.0 and tighten `time_rmse`,
+        `envelope_rmse_db` and `decay_diff_db_per_s` in the same pass — all
+        three already measure better than their current caps.
+  - [ ] follow-up: **recover sympathetic resonance level.** The normalisation is
+        correct but it removes the mechanism that made sympathetic resonance
+        audible, and a scalar cannot bring it back. The loss is **not** a flat
+        figure: it is the old bank's peak gain, so it is register-dependent and
+        heaviest exactly where the runaway was — −45.3 dB at A0, −38.0 at MIDI
+        36, −26.1 at C4, −14.2 at MIDI 84, −8.3 at MIDI 96. That shape is the
+        argument that the change is correct rather than merely quieter. The web
+        client is unaffected either way: `cmd/piano-wasm` builds from
+        `NewDefaultParams()`, where resonance is off. Measured 2026-08-22, DWG,
+        pedal held, six notes struck, peak of the last 5 s of a 120 s render
+        through `Piano.Process`: `ResonanceGain` 0.00018 is flat (1.75), 0.0007
+        creeps up (2.42), 0.0014 diverges (91.5 and climbing). The loop's
+        stability ceiling is therefore around 3x the current default, against
+        the 8-20x that restoring mid-register level would need. Getting the
+        level back needs a change to the loop itself — wider resonator
+        bandwidths, more partials, or per-target injection scaling — not more
+        gain.
+  - [ ] follow-up: **the open-loop probes in `piano/modal_resonance_test.go`
+        read a transient, not a steady state.** An undamped string has a T60 of
+        tens of seconds; `measureResonanceLoopGain` warms up for 0.5 s, so its
+        numbers are lower bounds. Measured 2026-08-22 on a configuration that
+        does diverge (DWG, `ResonanceGain` 0.0014): the same probe reports
+        0.1968 at 0.5 s of warmup, 0.3189 at 2 s, 0.7903 at 8 s and 1.7135 at
+        30 s, still climbing. Every recorded number in that file, before and
+        after this change, is understated by that factor, and the 0.5 bound is
+        not a stability criterion. A settled probe costs minutes per row, so the
+        real assertion currently lives in `TestDWGResonanceLongRenderDecays`;
+        replacing the probe with something both cheap and sound is open.
   - [ ] follow-up: make `cmd/piano-modal-fit` disable resonance during fitting
         the way `cmd/piano-fit/main.go:212-214` does.
         `assets/presets/modal-calibrated.json` was very likely fitted against

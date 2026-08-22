@@ -105,6 +105,38 @@ const (
 	DefaultRoomGain   = float32(1.0)
 )
 
+// DefaultResonanceGain scales the bridge signal that ResonanceEngine deposits
+// into every undamped string.
+//
+// It lives here rather than as a literal because NewPiano needs the same value
+// when it is handed nil params, and the two must never drift apart.
+//
+// The value is UNCHANGED by the 2026-08-22 unity-peak normalisation of
+// noteResonator, and that is a measured decision rather than an omission.
+//
+// The old resonator bank amplified its input by roughly 1/(2*sin(w0)) — 183x at
+// A0, 20x at C4, 2.6x at C7 — so no single scalar reproduces the old per-note
+// behaviour: it was frequency-dependent, and its bass end was the divergence.
+// Normalising it costs sympathetic level in proportion to that error, so the
+// loss is register-dependent and heaviest exactly where the runaway was:
+// −45.3 dB at A0, −38.0 at MIDI 36, −26.1 at C4, −14.2 at MIDI 84, −8.3 at
+// MIDI 96. The obvious compensation is to raise this gain. Measured at 48 kHz
+// on the DWG core with the sustain pedal held (all 88 groups undamped), peak of
+// the last five seconds of a 120 s render through Piano.Process, six notes
+// struck:
+//
+//	gain      45 s   80 s   120 s
+//	0.00018   1.59   1.53   1.75    flat
+//	0.0007    1.70   2.05   2.42    creeping up
+//	0.0014    4.52   12.7   91.5    diverging
+//
+// The loop's stability ceiling therefore sits somewhere around 3x this value,
+// not the 8-20x that restoring mid-register level would need, so there is no
+// room to compensate with a scalar. Raising it is a separate change that has to
+// come with a mechanism that widens the loop's margin, not just more gain. See
+// the Phase 9.6 notes in PLAN.md.
+const DefaultResonanceGain = float32(0.00018)
+
 // NewDefaultParams creates default parameters.
 func NewDefaultParams() *Params {
 	return &Params{
@@ -121,7 +153,7 @@ func NewDefaultParams() *Params {
 		RoomWetMix:                 DefaultRoomWetMix,
 		RoomGain:                   DefaultRoomGain,
 		ResonanceEnabled:           false,
-		ResonanceGain:              0.00018,
+		ResonanceGain:              DefaultResonanceGain,
 		ResonancePerNoteFilter:     true,
 		HammerStiffnessScale:       1.0,
 		HammerExponentScale:        1.0,

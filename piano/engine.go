@@ -108,7 +108,7 @@ func NewPiano(sampleRate int, maxPolyphony int, params *Params) *Piano {
 		roomConvolver: NewSoundboardConvolver(sampleRate),
 	}
 	if params == nil || params.ResonanceEnabled {
-		gain := float32(0.00018)
+		gain := DefaultResonanceGain
 		perNoteFilter := true
 		if params != nil && params.ResonanceGain > 0 {
 			gain = params.ResonanceGain
