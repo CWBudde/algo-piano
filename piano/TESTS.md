@@ -59,6 +59,10 @@ This maps each split source file to its direct and indirect test coverage.
 - `TestModalSoAOffsetsAreConsistent` (`modal_parity_test.go`)
 - `TestModalFallbackSingleModeLayout` (`modal_parity_test.go`)
 - `TestModalLongRenderIsFiniteAcrossKernels` (`modal_parity_test.go`)
+- `TestModalResonanceEnergyStaysBounded` (`modal_resonance_test.go`) — the modal core with
+  resonance and the sustain pedal held must be decaying by the end of a 6 s render, not
+  merely finite
+- `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — `resonanceForceScale`
 
 ## `modal_kernel.go`
 
@@ -102,6 +106,9 @@ assert equality with no tolerance.
 
 - `TestSympatheticResonanceEnergizesSilentHeldString` (`resonance_test.go`)
 - `TestPerNoteResonanceFilterIsFrequencySelective` (`resonance_test.go`)
+- `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — open-loop gain of
+  the bridge-injection loop on both cores, notes 21-84; the loop is linear, so a gain at or
+  above 1 diverges unconditionally
 
 ## `convolver.go`
 

@@ -344,8 +344,11 @@ This phase is split into execution subphases to make progress and ownership expl
       `CouplingMode`/`StringModel` string literals, the `Process(n) -> 2n` contract
       and the `NewDefaultParams` defaults. `cmd/piano-wasm/export_contract_test.go`
       cross-checks the `js.Global().Set` export names against the `wasm*` call sites
-      in `web/`. Found and documented one real defect: modal core with
-      `ResonanceEnabled` diverges to NaN after ~0.29 s, so that row is skipped.)
+      in `web/`. Found one real defect — the modal core with `ResonanceEnabled`
+      diverged to NaN after ~0.29 s — which is now fixed by `resonanceForceScale`
+      in `piano/modal_group.go`; the `modal-physical-resonance` row asserts
+      again, and `piano/modal_resonance_test.go` pins the resonance loop gain on
+      both cores.)
 - [ ] Add benchmarks:
   - [x] idle full-string-bank cost (`BenchmarkStringBankIdle`)
   - [x] active polyphony with coupling `off/static/physical`
@@ -502,10 +505,34 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         the static > physical > off ordering is asserted to match across cores.
         These pin relative behaviour only; absolute agreement is impossible while
         the distance sits at 0.83-0.84.)
-  - [ ] long-render stability (NaN/Inf free)
-        (partially covered by `TestLongRenderHasNoNaNOrInf` in
-        `piano/integration_test.go`, see Phase 9.6; still open here because the
-        modal core with `ResonanceEnabled` diverges and that row is skipped)
+  - [x] long-render stability (NaN/Inf free)
+        (`TestLongRenderHasNoNaNOrInf` in `piano/integration_test.go`, see
+        Phase 9.6. The modal + `ResonanceEnabled` row is live again: the modal
+        core injected the per-sample bridge force straight into mode state
+        without the force-to-state conversion the waveguide gets for free from
+        its delay line, which put the open-loop resonance gain at 12.16 at A0
+        (DWG: 0.41) and made the linear loop in `Piano.Process` diverge.
+        `resonanceForceScale = f0/fs` in `piano/modal_group.go` fixes it —
+        post-fix loop gain 0.007 at A0, 0.0015 at C4 — and the row now peaks at
+        149.63, the same as `modal-physical-pedal-release`, well under the 1024
+        runaway limit. `TestResonanceLoopGainIsBoundedAcrossCores` and
+        `TestModalResonanceEnergyStaysBounded` in
+        `piano/modal_resonance_test.go` guard the loop gain and the decay.)
+  - [ ] follow-up: interleave `InjectFromBridge` with rendering instead of
+        driving a frozen string state - the loop is currently closed once per
+        block in `Piano.Process`, so a whole block of bridge force is deposited
+        before any of it is rendered
+  - [ ] follow-up: normalise the `noteResonator` bank and re-fit
+        `ResonanceGain`. `filterResonanceDrive` sums three unnormalised
+        resonators (`piano/modal_group.go` and `piano/ringing.go`,
+        byte-identical in both cores), which is a ~178x amplifier at A0.
+        Touching it moves DWG output and needs a `gate-c4` re-baseline, so it is
+        deliberately out of scope here.
+  - [ ] follow-up: make `cmd/piano-modal-fit` disable resonance during fitting
+        the way `cmd/piano-fit/main.go:212-214` does.
+        `assets/presets/modal-calibrated.json` was very likely fitted against
+        diverging renders, which would explain why `analysis/norms.go:55`
+        excludes it as a degenerate outlier.
 - [ ] Add benchmarks:
   - [x] DWG vs modal CPU at fixed block size/sample rate
         (`BenchmarkStringBankStringModels` in `piano/modal_bench_test.go` runs

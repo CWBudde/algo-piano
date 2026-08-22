@@ -65,6 +65,27 @@ type ModalStringGroup struct {
 	undampedK  float32
 	dampedK    float32
 
+	// resonanceForceScale converts a per-sample bridge force into a modal state
+	// increment. Injecting the force straight into g.re treats an amplitude and
+	// a force-per-sample as the same quantity; the waveguide core gets that
+	// conversion for free because energy written into the delay line is read
+	// once per round trip, i.e. it carries an implicit f0/fs.
+	//
+	// Without it the sympathetic resonance loop closed once per block in
+	// Piano.Process runs open-loop gains far above unity in the bass, and since
+	// that loop is entirely linear it diverges to NaN within ~0.29 s. Measured
+	// open-loop gain (48 kHz, default params, unit sine drive at the note's f0,
+	// TestResonanceLoopGainIsBoundedAcrossCores):
+	//
+	//	note   modal before   modal after   dwg
+	//	21     12.162535      0.006968      0.411011
+	//	36      6.104038      0.008318      0.372699
+	//	48      1.437305      0.003917      0.157057
+	//	60      0.271781      0.001481      0.064689
+	//	72      0.036856      0.000402      0.009353
+	//	84      0.003611      0.000079      0.000900
+	resonanceForceScale float32 // f0 / sampleRate == 1 / round-trip length
+
 	keyDown       bool
 	sustainAmount float32
 	active        bool
@@ -174,6 +195,8 @@ func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringG
 		excitation: excitation,
 		undampedK:  undampedK,
 		dampedK:    dampedK,
+
+		resonanceForceScale: freq / sr,
 	}
 
 	// Pass 2: fill the mode parameters.
@@ -414,7 +437,7 @@ func (g *ModalStringGroup) injectResonance(energy float32) {
 	if energy == 0 {
 		return
 	}
-	g.injectAtPosition(energy, modalResonanceStrikePos, 0.55)
+	g.injectAtPosition(energy*g.resonanceForceScale, modalResonanceStrikePos, 0.55)
 	g.resonanceEnergized = true
 }
 
