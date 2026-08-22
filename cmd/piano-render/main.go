@@ -40,11 +40,18 @@ func main() {
 	if *irPath != "" {
 		params.IRWavPath = *irPath
 	}
-	if params.IRWavPath == "" {
-		params.IRWavPath = piano.DefaultIRWavPath
-	}
+	// Fall back to the shipped IR as the *room* stage of the radiation path.
+	// The legacy single-IR field is only used when the caller or preset set it
+	// explicitly, never as the default.
+	piano.ApplyDefaultRoomIR(params)
 
-	fmt.Printf("Rendering note %d, velocity %d, for %.2f seconds at %d Hz (preset: %s, IR: %s)...\n", *note, *velocity, *duration, *sampleRate, *presetPath, params.IRWavPath)
+	// Report the IR the engine will actually load for the room stage: either the
+	// dual-IR room path or the legacy single-IR path it falls back to.
+	reportedIR := params.RoomIRWavPath
+	if reportedIR == "" {
+		reportedIR = params.IRWavPath
+	}
+	fmt.Printf("Rendering note %d, velocity %d, for %.2f seconds at %d Hz (preset: %s, IR: %s)...\n", *note, *velocity, *duration, *sampleRate, *presetPath, reportedIR)
 
 	p := piano.NewPiano(*sampleRate, maxPolyphony, params)
 

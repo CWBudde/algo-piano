@@ -231,9 +231,9 @@ func renderCandidate(
 	if err != nil {
 		return nil, nil, err
 	}
-	if params.IRWavPath == "" {
-		params.IRWavPath = piano.DefaultIRWavPath
-	}
+	// Fall back to the shipped IR as the *room* stage of the radiation path, so
+	// scoring never silently selects the legacy single-IR path as its default.
+	piano.ApplyDefaultRoomIR(params)
 
 	p := piano.NewPiano(sampleRate, 16, params)
 	p.NoteOn(note, velocity)

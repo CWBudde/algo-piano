@@ -227,7 +227,18 @@ Final stereo sample uses:
 - per-stage gains
 - final output gain
 
-Legacy single-IR fields are mapped for backward compatibility when dual-IR paths are not set.
+Legacy single-IR fields are mapped for backward compatibility when dual-IR paths are not set. The
+mapping is resolved once — at `NewPiano` and again in `SetIRMix` (`resolveRadiationMix`) — so the
+per-block render path only ever reads dual-IR semantics and the legacy fields cannot override
+`BodyIRGain` at render time.
+
+The stage order `string-bank bridge mix -> body IR -> room IR` is serial and fenced by
+`piano/radiation_test.go`, which drives pure-delay IRs through `Piano.Process` and asserts that the
+room contribution lands at the sum of both delays.
+
+Offline tools (`piano-render`, `piano-fit`, `piano-distance`) fall back to the shipped IR via
+`piano.ApplyDefaultRoomIR`, which installs it as the _room_ stage. The legacy `IRWavPath` is honoured
+only when a caller or preset sets it explicitly.
 
 ## 5. Runtime Mode Selection (`dwg` vs `modal`)
 
