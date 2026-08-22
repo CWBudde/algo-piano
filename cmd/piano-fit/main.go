@@ -101,7 +101,36 @@ func main() {
 	cpuProfile := flag.String("cpuprofile", "", "Write CPU profile to file")
 	mayflyVariant := flag.String("mayfly-variant", "desma", "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
 	mayflyPop := flag.Int("mayfly-pop", 10, "Male and female population size per Mayfly run")
-	mayflyRoundEvals := flag.Int("mayfly-round-evals", 240, "Target eval budget per Mayfly round")
+	mayflyRoundEvals := flag.Int("mayfly-round-evals", 240, "Target eval budget per Mayfly round. "+
+		"NOTE: the iteration count derived from it assumes a round costs NPop+NPopF evals per iteration, which "+
+		"undercounts crossover offspring, mutants and DESMA elites by roughly 2.3x at the default population. "+
+		"Use --mayfly-iters to set the count directly; the run report records the measured cost as evals_per_iteration")
+
+	// --search and the --mayfly-* overrides below come from the optimizer
+	// audit. Every one of them defaults to the behaviour this tool had before
+	// the audit, so a run that sets none of them reproduces every tracked
+	// report exactly — the same invariant --score-constraint carries.
+	searchFlag := flag.String("search", string(searchMayfly), "Where candidate positions come from: mayfly|random|halton. "+
+		"The two samplers are control conditions, not fitting modes: a stochastic search that cannot beat a "+
+		"low-discrepancy sequence at the same eval budget is not paying for itself. They feed the same objective, "+
+		"budget accounting and best-tracking, so the sampling strategy is the only thing that differs")
+	tracePath := flag.String("trace", "", "Write a JSONL convergence trace, one record per evaluation "+
+		"{eval, t_sec, worker, aggregate, best}. Empty disables tracing")
+	mayflyIters := flag.Int("mayfly-iters", 0, "Iterations per Mayfly round (0 derives it from --mayfly-round-evals). "+
+		"The derivation undercounts the real per-iteration eval cost, so rounds are truncated mid-search and their "+
+		"annealing schedule never completes")
+	mayflyWarmStart := flag.Bool("mayfly-warm-start", false, "Seed each Mayfly round's swarm with the current best "+
+		"candidate (one male, one female) instead of starting from a uniformly random population. Without it, "+
+		"--preset chaining, --resume and every previous round's progress bypass the search itself")
+	mayflyNCRatio := flag.Float64("mayfly-nc-ratio", 0, "Crossover offspring count as a multiple of the population "+
+		"(0 keeps the hardcoded NC = 2*pop). The hardcoded value silently overrides the library's own NCRatio and "+
+		"doubles the per-iteration eval cost")
+	mayflyDanceDamp := flag.Float64("mayfly-dance-damp", 0, "Per-iteration nuptial-dance damping (0 = library default 0.8). "+
+		"At 0.8 the dance is down to 0.8^12 = 0.07 by the end of a default-length round")
+	mayflyFLDamp := flag.Float64("mayfly-fl-damp", 0, "Per-iteration female-flight damping (0 = library default 0.99)")
+	mayflyGDamp := flag.Float64("mayfly-g-damp", 0, "Per-iteration inertia damping (0 = library default 1.0, i.e. none)")
+	mayflyStagnation := flag.Int("mayfly-stagnation", 0, "End a Mayfly round after this many iterations without "+
+		"improvement (0 disables early stopping). The principled alternative to a fixed iteration count")
 
 	polish := flag.Bool("polish", false, "Run a deterministic coordinate-descent polish stage after optimization")
 	polishOnly := flag.Bool("polish-only", false, "Skip the Mayfly search entirely and only run the polish stage (implies --polish); pair with --resume as a finishing move")
@@ -301,6 +330,16 @@ func main() {
 	if *refineTopK > *topK {
 		*refineTopK = *topK
 	}
+	if *mayflyIters < 0 {
+		*mayflyIters = 0
+	}
+	if *mayflyStagnation < 0 {
+		*mayflyStagnation = 0
+	}
+	searchModeValue, err := parseSearchMode(*searchFlag)
+	if err != nil {
+		die("invalid --search: %v", err)
+	}
 	parsedWorkers, err := parseWorkersFlag(*workers)
 	if err != nil {
 		die("invalid workers value: %v", err)
@@ -468,6 +507,18 @@ func main() {
 		scorer: passScore,
 		pass:   passSpecification.Name,
 
+		search: searchOptions{
+			mode:       searchModeValue,
+			iters:      *mayflyIters,
+			warmStart:  *mayflyWarmStart,
+			ncRatio:    *mayflyNCRatio,
+			danceDamp:  *mayflyDanceDamp,
+			flDamp:     *mayflyFLDamp,
+			gDamp:      *mayflyGDamp,
+			stagnation: *mayflyStagnation,
+		},
+		tracePath: *tracePath,
+
 		scoreConstraints:   scoreConstraints,
 		metricConstraints:  metricConstraints,
 		metricProfiles:     metricProfiles,
@@ -532,6 +583,8 @@ func main() {
 		elapsed:       result.elapsed,
 		evals:         result.evals,
 		variant:       strings.ToLower(*mayflyVariant),
+		searchMode:    searchModeValue,
+		evalsPerIter:  result.evalsPerIteration,
 		defs:          defs,
 		best:          result.best,
 		bestScore:     result.bestScore,
