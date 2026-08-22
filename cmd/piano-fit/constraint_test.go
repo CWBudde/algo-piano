@@ -208,7 +208,7 @@ func TestApplyScoreConstraintsEmptyListIsIdentity(t *testing.T) {
 	if rejects.Load() != 0 {
 		t.Fatalf("rejects = %d, want 0", rejects.Load())
 	}
-	if scoreConstraintMetrics(nil, []float64{1}, []float64{1}, 48000, 60) != nil {
+	if scoreConstraintMetrics(nil, nil, []float64{1}, []float64{1}, 48000, 60) != nil {
 		t.Fatal("scoreConstraintMetrics must do no work without constraints")
 	}
 }
@@ -555,15 +555,21 @@ func TestScoreConstraintMetricsSanitizesADivergedRender(t *testing.T) {
 		diverged[i] = math.Inf(1)
 	}
 
-	out := scoreConstraintMetrics(cs, reference, diverged, 48000, 60)
+	out := scoreConstraintMetrics(cs, nil, reference, diverged, 48000, 60)
 	m, ok := out[analysis.ProfileLegacyV1]
 	if !ok {
 		t.Fatalf("no metrics for the constrained profile: %v", out)
 	}
-	if math.IsNaN(m.Score) || math.IsInf(m.Score, 0) {
-		t.Fatalf("Score = %v, want a finite value after Sanitized()", m.Score)
+	if math.IsNaN(m.Sanitized.Score) || math.IsInf(m.Sanitized.Score, 0) {
+		t.Fatalf("Score = %v, want a finite value after Sanitized()", m.Sanitized.Score)
 	}
-	if m.Score != worstCaseScore {
-		t.Fatalf("Score = %v, want the worst case %v so the ceiling is breached, not cleared", m.Score, worstCaseScore)
+	if m.Sanitized.Score != worstCaseScore {
+		t.Fatalf("Score = %v, want the worst case %v so the ceiling is breached, not cleared", m.Sanitized.Score, worstCaseScore)
+	}
+	// The RAW view of the SAME comparison must still be non-finite, or the
+	// raw-metric constraints have nothing to detect. See
+	// TestScoreConstraintMetricsKeepsRawMetricsUnsanitized.
+	if isFiniteScore(m.Raw.Score) {
+		t.Fatalf("Raw.Score = %v, want the unsanitized non-finite value", m.Raw.Score)
 	}
 }

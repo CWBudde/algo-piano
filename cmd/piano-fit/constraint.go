@@ -28,6 +28,18 @@ type scoreConstraint struct {
 	weights analysis.Weights
 }
 
+// constraintProfile is one weighting a candidate must be compared under.
+//
+// It exists because two different constraint kinds need the same comparison.
+// A scoreConstraint needs its own profile's `score`; the raw-metric
+// constraints in metric_constraint.go need legacy-v1's metrics. Naming the
+// profiles in one list is what lets scoreConstraintMetrics compare ONCE PER
+// DISTINCT PROFILE instead of once per constraint.
+type constraintProfile struct {
+	name    string
+	weights analysis.Weights
+}
+
 // constraintPenaltyBase is the aggregate a breaching candidate reports.
 //
 // It is a LARGE FINITE penalty rather than +Inf on purpose. github.com/cwbudde/
@@ -136,6 +148,19 @@ func formatConstraintScores(cs []scoreConstraint, scores map[string]float64) str
 	return strings.Join(parts, "; ")
 }
 
+// constraintComparison is one candidate comparison, kept in the two views its
+// two consumers need.
+//
+// It exists so a single analysis.CompareWithOptions can serve both constraint
+// kinds. Raw is the comparison exactly as analysis produced it, non-finite
+// fields included; Sanitized is Raw.Sanitized(). Which view a check must use
+// is documented on scoreConstraintMetrics, and getting it wrong is not a
+// cosmetic mistake in either direction.
+type constraintComparison struct {
+	Raw       analysis.Metrics
+	Sanitized analysis.Metrics
+}
+
 // scoreConstraintMetrics scores an ALREADY RENDERED candidate buffer under
 // every constrained profile.
 //
@@ -150,28 +175,66 @@ func formatConstraintScores(cs []scoreConstraint, scores map[string]float64) str
 // normalizeRMS and lag estimation inside the window, producing a score that is
 // comparable to nothing.
 //
-// Every result is Sanitized() before it leaves this function, and that is a
-// correctness requirement rather than cosmetics. A constraint is enforced as
+// Every result is returned in BOTH views, because the two consumers need
+// different ones and the comparison must not be run twice to get them.
+//
+// The SCORE constraints read the sanitized view, and that is a correctness
+// requirement rather than cosmetics. A constraint is enforced as
 // `score > max`, which is FALSE for a NaN score — so an undefined comparison
 // would pass the ceiling silently and let a degenerate candidate through the
 // one check that exists to stop it. Sanitized() maps a non-finite Score to
 // 1.0, the maximum distance, so an unmeasurable render breaches every ceiling
 // below 1.0 instead of clearing all of them. It also keeps the numbers written
 // into best_constraint_scores finite and printable.
+//
+// The RAW-METRIC constraints must read the unsanitized view, for the mirror
+// image of that reason. Sanitized() substitutes a per-field STAND-IN for a
+// non-finite raw metric — 60.0 dB for spectral_rmse_db, 0 for the decay
+// slopes — and those stand-ins are not worst-case values the way 1.0 is for a
+// score. 60.0 dB sits BELOW the tracked C4 ceiling of 62.30, so sanitising
+// before the check would let an unmeasurable candidate clear the exact fence
+// that exists to stop it, and clear it metric-dependently. Keeping the raw
+// value is what makes the explicit non-finite test in applyMetricConstraints
+// reachable at all.
+//
+// `extra` names profiles that must be measured even though no scoreConstraint
+// asks for them — today that is the single legacy-v1 comparison the raw-metric
+// constraints read their values from (see metric_constraint.go). A profile
+// already covered by cs is NOT compared twice: the raw metrics are
+// profile-independent and the score is fully determined by the weighting, so
+// the second comparison would be bit-identical work.
 func scoreConstraintMetrics(
 	cs []scoreConstraint,
+	extra []constraintProfile,
 	reference, cand []float64,
 	sampleRate, midiNote int,
-) map[string]analysis.Metrics {
-	if len(cs) == 0 {
+) map[string]constraintComparison {
+	if len(cs) == 0 && len(extra) == 0 {
 		return nil
 	}
-	out := make(map[string]analysis.Metrics, len(cs))
+	profiles := make([]constraintProfile, 0, len(cs)+len(extra))
+	seen := make(map[string]bool, len(cs)+len(extra))
 	for _, c := range cs {
-		out[c.Profile] = analysis.CompareWithOptions(reference, cand, sampleRate, analysis.Options{
-			Weights:  c.weights,
+		if seen[c.Profile] {
+			continue
+		}
+		seen[c.Profile] = true
+		profiles = append(profiles, constraintProfile{name: c.Profile, weights: c.weights})
+	}
+	for _, p := range extra {
+		if seen[p.name] {
+			continue
+		}
+		seen[p.name] = true
+		profiles = append(profiles, p)
+	}
+	out := make(map[string]constraintComparison, len(profiles))
+	for _, p := range profiles {
+		m := analysis.CompareWithOptions(reference, cand, sampleRate, analysis.Options{
+			Weights:  p.weights,
 			MIDINote: midiNote,
-		}).Sanitized()
+		})
+		out[p.name] = constraintComparison{Raw: m, Sanitized: m.Sanitized()}
 	}
 	return out
 }
@@ -242,8 +305,11 @@ func applyScoreConstraints(
 //     would be off by one exactly when the run failed.
 //
 // A feasible re-score needs neither correction and is returned unchanged.
+//
+// Both constraint kinds are handled here, because both write the same
+// penalty into the same aggregate and both increment the same counter.
 func postMatchEval(cfg *optimizationConfig, ev optimizationEval, rejectsBefore int) optimizationEval {
-	if len(cfg.scoreConstraints) == 0 || !ev.constraintViolated {
+	if !cfg.constrained() || !ev.constraintViolated {
 		return ev
 	}
 	ev.aggregate = aggregateScores(ev.notes, targetWeights(cfg.targets), cfg.aggregate)
