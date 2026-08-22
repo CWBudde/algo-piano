@@ -711,11 +711,27 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         re-baselined in the same PR: four of five caps LOOSENED, the deltas are
         in that file's `recorded.note`. Re-fitting the C4 preset against the new
         (longer) scoring window is the honest follow-up.
-  - [ ] follow-up: **the Halton sweep caps at 8 dimensions.** The `attack` pass
-        exposes 9 knobs, so `--sweep --pass attack` with a joint stage fails
-        with `halton: 9 dimensions exceed the 8-prime base table` and
-        `--sweep-joint-max-dims 9` does not help. The attack box is therefore
-        only ever scanned one-at-a-time. Extend the prime table.
+  - [x] follow-up: **the Halton sweep caps at 8 dimensions.** _Done:_ the base
+        table now holds the first 32 primes and `--sweep-joint-max-dims`
+        defaults to 16, so the 9-knob `attack` box runs joint. The cap stays a
+        deliberate guard rather than an accident of the table length: this
+        Halton implementation does not scramble, so high-base coordinates are
+        poorly distributed until the sample count grows large.
+        _Evidence._ `--sweep --pass attack` at note 60 with
+        `--sweep-samples 9 --sweep-joint-evals 2048` now completes — 2130 evals,
+        0 errors, 342 s, 2048 Halton points over the 9-D box — where before it
+        aborted with `halton: 9 dimensions exceed the 8-prime base table`.
+        Baseline `attack-v1 = 0.3923` / `legacy-v1 = 0.5121`; 14 Pareto points;
+        constrained best #1237 `attack-v1 = 0.3416` / `legacy-v1 = 0.5030`.
+        That is a measurement of the tool, not a fitted preset — nothing was
+        applied or gated, and it was measured on the pre-relative-auto-stop
+        renderer.
+        _Regression guard._ `just sweep-sustain-c4` (5-D, primes 2/3/5/7/11) was
+        run before and after the change: the two 16 860 704-byte reports are
+        identical except for the wall-clock `elapsed_seconds` field (164.288 s
+        vs 150.887 s), which cannot match by construction. With that field
+        removed both reports hash to the same SHA-256, so extending the table
+        moved no sample.
   - [ ] follow-up: **recover sympathetic resonance level.** The normalisation is
         correct but it removes the mechanism that made sympathetic resonance
         audible, and a scalar cannot bring it back. The loss is **not** a flat

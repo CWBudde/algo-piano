@@ -120,7 +120,7 @@ func main() {
 	sweepSamples := flag.Int("sweep-samples", 9, "One-at-a-time samples per knob, endpoints inclusive")
 	sweepJointEvals := flag.Int("sweep-joint-evals", 2048, "Joint-stage sample count (0 disables the joint stage)")
 	sweepJointSkip := flag.Int("sweep-joint-skip", 64, "Halton index offset (burn-in) for the joint stage")
-	sweepJointMaxDims := flag.Int("sweep-joint-max-dims", 8, "Refuse the joint stage above this dimensionality")
+	sweepJointMaxDims := flag.Int("sweep-joint-max-dims", 16, "Refuse the joint stage above this dimensionality")
 	sweepProfiles := flag.String("sweep-profiles", "", "Comma-separated scoring profiles to record per sample "+
 		"(empty = the pass profile first, then legacy-v1). The first profile is the primary Pareto objective")
 
