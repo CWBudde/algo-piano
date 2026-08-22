@@ -56,3 +56,6 @@ mem.prof
 # Web demo build artifacts
 web/dist/
 web/wasm_exec.js
+
+# Agent worktrees (never belong in the repo)
+.claude/worktrees/
