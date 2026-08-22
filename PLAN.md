@@ -627,10 +627,129 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         `Piano.Process` for 45 s. The modal conclusions of the entry above still
         hold — the modal aggregate only moves further from the bound (0.0164 →
         0.0002 at defaults, 0.1208 → 0.0016 under `modal-calibrated.json`).
-  - [ ] follow-up: interleave `InjectFromBridge` with rendering instead of
-        driving a frozen string state - the loop is currently closed once per
-        block in `Piano.Process`, so a whole block of bridge force is deposited
-        before any of it is rendered
+  - [x] follow-up: **interleave `InjectFromBridge` with rendering instead of
+        driving a frozen string state.** Done 2026-08-22. The loop now runs
+        inside `StringBank`'s per-sample render loop, driven by the previous
+        sample's own bank output, so the delay is one SAMPLE rather than one
+        block. `ResonanceEngine.injectSample` is the production entry point;
+        `InjectFromBridge` survives as an open-loop one for probes, with a
+        `processWithBridge` drive seam so the probes measure the loop production
+        actually runs. `Piano` still owns the engine and re-attaches it after
+        every rebuild of the ringing state (`attachResonance`), which
+        `TestSetStringModelKeepsResonanceWired` pins because `SetStringModel`
+        would otherwise silently drop it. Cost is unchanged — the old code
+        already paid the full per-sample cost, it just deposited into frozen
+        state — at 0.746 ms / 0.653 ms against 0.77 / 0.61, still 0 allocs.
+
+        **What the defect was, exactly.** For a mode at angular frequency `w`
+        the string received `|sum x[i]|`, the block's DC content, instead of
+        `|sum x[i]*exp(-jwi)|`, the drive at `w`. That is a 128-tap boxcar at
+        block rate: ~+42 dB at DC, first null at `fs/128` = 375 Hz, −13 dB
+        sidelobe rejection above it, plus block-rate imaging. The partials the
+        `noteResonator` bank is tuned to were being annihilated before injection
+        across most of the keyboard.
+
+        **Proof it is fixed:** `TestResonanceLoopIsBlockSizeInvariant` requires a
+        resonance-on tail to be **bit-identical** across caller block sizes
+        1/16/64/128/333 with coupling off. Every element of the loop is a
+        per-sample recursion and `prevMix` carries the delay across the call
+        boundary, so that holds by construction. On the old code the same
+        comparison is off by 1e-3 to 1e-2 absolute against a peak of 2.7 — three
+        to five orders above the round-off floor. A negative control (bank with
+        no engine) and a `Piano.Process`-level variant bounded at 1e-5 relative
+        (the convolvers are not bit-identical off-partition) come with it.
+
+        **Measured: the loop got 13 dB louder at the same gain.** Isolating note
+        72's sympathetic output by differencing two renders (held silent vs not
+        held, note 60 struck, coupling off): DWG −52.21 dB → **−38.93 dB** under
+        the struck note, modal −98.25 → **−85.22**. That is 13.3 / 13.0 dB
+        recovered with no change to `ResonanceGain`, against the −26.1 dB at C4
+        the resonator normalisation cost. It bears directly on the "recover
+        sympathetic resonance level" item below, which stays OPEN.
+
+        **The hot register moved up**, as predicted: the modal per-note open-loop
+        gain now rises monotonically with pitch (21: 0.000068 → 84: 0.000308)
+        where it used to peak at note 36. The aggregate `perNoteFilter=false`
+        rows fell 3.6-4.2x — the old DC-ward gain was applied to all 88 responses
+        at once and they added coherently — while the `true` rows rose up to
+        1.2x. The 0.5 bound holds with the hottest row at 0.2413. All recorded
+        tables in `piano/modal_resonance_test.go` were re-measured.
+
+  - [x] **the C4 gate was buying 14.7 dB of its spectral score from the
+        block-deposit artefact.** Found while re-baselining for the interleave.
+        `assets/thresholds/c4.json` `spectral_rmse_db` was LOOSENED 62.3 → 78.3,
+        by far the largest loosening in that file's history; the other four
+        enforced thresholds were TIGHTENED in the same pass.
+
+        The decisive measurement is the same preset with `resonance_enabled:
+        false`, a path this change cannot execute a single instruction on:
+
+        | | score | spectral | high(2k+) | frames |
+        | - | - | - | - | - |
+        | resonance OFF, before | 0.529104 | 72.531788 | 77.215274 | 177792 |
+        | resonance OFF, after | 0.529104 | 72.531788 | 77.215274 | 177792 |
+
+        Bit-identical. So the model's own spectral error against `reference/c4.wav`
+        was ALWAYS 72.53 dB. What the gate was fenced against — 57.80 dB — was
+        that same model plus 14.73 dB of masking from the defect: an impulse
+        deposited once every 128 samples is a 375 Hz-spaced impulse train,
+        broadband by construction, and it was filling the 2 kHz+ band with
+        block-rate imaging that sat closer to the reference than the model's real
+        output does. The corrected loop contributes 0.09 dB (72.53 → 72.62), and
+        sweeping `resonance_gain` over 0 … 1e-3 moves the metric only between
+        72.4 and 72.9. The whole move is the high band: low 27.5 → 27.1, mid
+        40.1 → 41.4, high **61.4 → 77.3**.
+
+        The deficiency this EXPOSES is already on the books — Phase 11's
+        diagnosis reads "high-frequency energy (>3kHz) drops 20-60 dB faster than
+        the reference", and 77.2 dB is that. Masking it was never a fix. The
+        standing promise is the same one the DC pedestal and the resonator
+        normalisation both paid off: **re-fit the C4 preset against the corrected
+        renderer**, selected on `balanced-v2`. Nothing here may be loosened again
+        first.
+
+  - [ ] follow-up: **re-fit `assets/presets/fitted-c4-mayfly.json` against the
+        interleaved loop.** The preset was fitted against a renderer whose
+        sympathetic path was a block-rate boxcar, so the standing debt above is
+        owed. Note it is unlikely to recover the 57.8 dB figure — that number was
+        never the model's — and the honest target is the 72.5 dB the model
+        actually produces, minus whatever a fit can take off it.
+  - [ ] follow-up: **the DWG bank grows on its own with the pedal held, with no
+        sympathetic path at all.** Found while measuring the interleave. Six
+        notes struck once, pedal held, coupling off, `ResonanceEnabled` false so
+        `Piano` never even constructs an engine: the output still grows **1.21x
+        over 120 s and 5.41x over 300 s**, geometrically, which is a loop above
+        unity inside the DWG bank itself. Nothing adds energy after the attack.
+        It is PRE-EXISTING — the figures are bit-identical before and after the
+        interleave — and it is invisible to `TestDWGResonanceLongRenderDecays`,
+        whose 45 s horizon leaves it inside that test's 1.5x wobble allowance.
+        Pinned as a fence by `TestDWGSustainedBankGrowsWithoutResonance`
+        (`piano/resonance_growth_test.go`). The modal core does not do this: the
+        same render is at digital silence long before the reference window.
+  - [ ] follow-up: **the interleaved DWG sympathetic loop multiplies that
+        growth, and no gain is small enough to avoid it.** The same 120 s render
+        at the shipped `resonance_gain` 0.00025 grows **5.06x**, against 1.14x on
+        the block-deposit loop — which scored _below_ the 1.21x resonance-off
+        baseline, i.e. the old loop was damping the bank rather than driving it,
+        because it fed the strings almost nothing at their own frequencies.
+        Lowering the gain does not rescue it: over 300 s against the 5.41x
+        baseline, 1e-6 gives 5.50x, 1e-5 gives 6.41x, 5e-5 gives 12.7x, so even a
+        gain 250x under the shipped one is already above baseline. **The
+        resonance loop is not the root cause — the item above is** — and any
+        honest positive feedback compounds an already-growing plant. Fenced by
+        `TestDWGResonanceSustainedGrowthIsFenced`, explicitly as a fence on a
+        known-bad number.
+
+        `NewDefaultParams` has `ResonanceEnabled: false`, and `cmd/piano-wasm`
+        builds from it, so the web client and the default path are unaffected;
+        the shipped `assets/presets/*.json` all enable it and are.
+
+        **The open-loop probes do not see this**, and that limit is now written
+        into them: they read 0.174 (default) and 0.241 (modal-calibrated) against
+        a 0.5 bound for renders that grow 5x in two minutes. They inject a sine
+        at ONE note's fundamental into a plant they assume is stable, and neither
+        assumption holds here. A passing bound is necessary, never sufficient.
+
   - [x] normalise the `noteResonator` bank. Done 2026-08-22: `b0` is now
         `(1-r)*sqrt(1 - 2r*cos(2*w0) + r^2)`, which makes the peak exactly one
         at every centre frequency in both cores.
@@ -798,6 +917,23 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         level back needs a change to the loop itself — wider resonator
         bandwidths, more partials, or per-target injection scaling — not more
         gain.
+
+        **Partly paid, 2026-08-22, by the interleave above — and NOT closed.**
+        Interleaving is exactly the "change to the loop itself" this item asked
+        for, and it recovered **13.3 dB (DWG) / 13.0 dB (modal)** of sympathetic
+        level with no change to `ResonanceGain`, measured by differencing a
+        render with a silently-held note 72 against one without it. That is half
+        of the −26.1 dB the normalisation cost at C4, taken back without touching
+        a scalar, which is what "a scalar cannot bring it back" predicted.
+
+        The rest is now BLOCKED on stability rather than on level, and the
+        blocker moved: the two growth follow-ups above record that the
+        interleaved DWG loop grows 5.06x over 120 s at the shipped gain, on top
+        of a bank that already grows 1.21x with no sympathetic path at all.
+        There is no headroom left to spend on level in the DWG core until that
+        bank growth is fixed. The modal core is unaffected and is where further
+        level work can honestly proceed first.
+
   - [x] follow-up: **the open-loop probes in `piano/modal_resonance_test.go`
         read a transient, not a steady state.** Fixed 2026-08-22 by replacing
         the 0.5 s warmup and the cumulative average with a windowed probe:

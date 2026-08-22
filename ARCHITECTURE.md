@@ -11,18 +11,19 @@ This document describes the current `algo-piano` architecture as implemented in 
 
 1. Event/control layer (note on/off, pedal state, model selection)
 2. Excitation layer (nonlinear hammer model + optional attack noise)
-3. String-bank layer (`dwg` or `modal`, selectable at runtime)
-4. Sympathetic resonance injection layer
-5. Linear body/room rendering layer (partitioned convolution IRs)
-6. Stereo output mix layer
+3. String-bank layer (`dwg` or `modal`, selectable at runtime), with the
+   sympathetic resonance loop closed **inside** its per-sample render loop
+4. Linear body/room rendering layer (partitioned convolution IRs)
+5. Stereo output mix layer
 
 Core render path per audio block:
 
 ```text
 MIDI/UI Events
   -> HammerExciter + RingingState(StringBank[dwg|modal])
+       per sample: hammer force -> optional ResonanceEngine injection of the
+       PREVIOUS sample's bridge mix into undamped notes -> advance strings
   -> mono bridge/string mix
-  -> optional ResonanceEngine injection into undamped notes
   -> BodyConvolver (mono->mono)
   -> Room/SoundboardConvolver (mono->stereo)
   -> output mix/gain
@@ -195,13 +196,33 @@ Coupling is applied blockwise:
 
 ### 4.3 Sympathetic resonance
 
-`ResonanceEngine` processes bridge mono signal:
+`ResonanceEngine` processes the bridge mono signal, one sample at a time:
 
 - DC removal + lowpass band-limiting
-- scaled injection into undamped note targets
 - optional per-note resonance filter before injection
+- scaled injection into undamped note targets
 
 Targets are the currently selected string groups (DWG or modal), so resonance works with both modes.
+
+**The loop is closed inside `StringBank`, not around it.** `Piano` owns the
+engine and attaches it to the ringing state (`attachResonance`, re-run after
+every rebuild, including `SetStringModel`); `StringBank.processWithBridge` then
+calls `injectSample` once per sample from within its render loop, driven by the
+previous sample's own bank output. The loop delay is therefore one SAMPLE.
+
+Until 2026-08-22 it was closed once per block in `Piano.Process`: a finished
+block was handed to `InjectFromBridge`, which deposited every sample of it into
+string state that never advanced in between. That summed the block coherently —
+for a mode at angular frequency `w` the string received `|sum x[i]|`, the block's
+DC content, instead of `|sum x[i]*exp(-jwi)|`, the drive at `w` — which is a
+128-tap boxcar at block rate. `InjectFromBridge` survives as an **open-loop**
+entry point for probes that drive the bank with a known signal; it must not be
+called on a bank that has an engine attached, or every sample is injected twice.
+
+One thing deliberately stayed at block rate: `syncResonatingNotes` enrolls
+newly energized groups once per block, because `activeNotes` and the modal arena
+layout are fixed for a block's duration. That costs one block per group at first
+energization and nothing thereafter.
 
 ### 4.4 Body and room convolution
 

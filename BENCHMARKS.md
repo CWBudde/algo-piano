@@ -333,6 +333,23 @@ noise against the figures in the paragraph above. The normalisation only changes
 `b0`, which `newNoteResonator` computes once at construction, so the per-sample
 work is identical and nothing here needed re-baselining.
 
+Re-measured 2026-08-22 after the sympathetic loop was **interleaved with
+rendering** — it now runs inside `StringBank`'s per-sample loop rather than as a
+whole-block deposit in `Piano.Process`, so the benchmark drives `sb.Process`
+directly instead of feeding its output back through `InjectFromBridge`. Median of
+five `-count=5` runs at default benchtime: **0.746 ms (`perNoteFilter`) and
+0.653 ms (`flatDrive`)**, both still **0 B/op, 0 allocs/op**.
+
+That is within noise of the 0.77 / 0.61 ms above, and it is the expected result
+rather than a lucky one: the old code was **already** paying the full per-sample
+cost. `InjectFromBridge` looped over the block's samples and ran `bandLimit`, the
+three-filter `noteResonator` bank and `injectResonance` once per sample per
+undamped target — it simply did so against string state that never advanced in
+between. Interleaving moves that identical work into the render loop and adds one
+predictable branch and one float32 store per sample. Nothing about the cost model
+in this section changes; what changed is that the deposits now land on advancing
+state.
+
 With resonance **disabled** the change is not measurable above this machine's
 noise. `BenchmarkModalPolyphonyScaling` (all 10 sub-benchmarks) and
 `BenchmarkStringBankCouplingModes` (all 30) report `~`.

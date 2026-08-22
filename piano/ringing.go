@@ -294,16 +294,27 @@ type StringBank struct {
 	modalGroups              [128]*ModalStringGroup
 	resonancePending         bool
 	targets                  []resonanceTarget
-	coupling                 [128][]couplingEdge
-	distanceMap              [128][128]float32
-	active                   [128]bool
-	activeNotes              []int
-	blockEnergy              [128]float64
-	couplingSum              [128]float64
-	couplingAbs              [128]float64
-	sampleOut                [128]float32
-	outputBuf                []float32
-	modalArena               *modalArena
+	// resonance closes the sympathetic loop INSIDE the per-sample render loop.
+	// It is nil by default — an unwired bank renders exactly as it did before
+	// the loop moved in here, which is what every open-loop probe relies on.
+	// A concrete pointer rather than an interface: this is read once per sample
+	// in the hot loop.
+	resonance *ResonanceEngine
+	// prevMix is the last rendered bridge sample, carried across block
+	// boundaries so the loop delay is one SAMPLE and not one block. It lives on
+	// the bank rather than on the engine because it is bank output, and because
+	// the engine is detached and re-attached across a core switch.
+	prevMix     float32
+	coupling    [128][]couplingEdge
+	distanceMap [128][128]float32
+	active      [128]bool
+	activeNotes []int
+	blockEnergy [128]float64
+	couplingSum [128]float64
+	couplingAbs [128]float64
+	sampleOut   [128]float32
+	outputBuf   []float32
+	modalArena  *modalArena
 }
 
 func sanitizeNoteRange(minNote int, maxNote int) (int, int) {
@@ -711,14 +722,24 @@ func (sb *StringBank) markActive(note int) {
 	sb.activeNotes = append(sb.activeNotes, note)
 }
 
-// syncResonatingNotes enrolls groups that were energized from outside the
-// bank's own note handling. Sympathetic resonance is injected straight into the
-// undamped groups by ResonanceEngine.InjectFromBridge, which marks a group
-// active without ever touching the active-note list; without this sweep such a
-// group would accumulate energy that Process never renders. The sweep runs at
-// most once per block, only after the resonance engine reported an injection,
-// so it adds no per-sample work and no allocations (markActive appends into the
-// pre-sized active-note list).
+// syncResonatingNotes enrolls groups that were energized outside the bank's own
+// note handling. Sympathetic resonance is injected straight into the undamped
+// groups, which marks a group active without ever touching the active-note
+// list; without this sweep such a group would accumulate energy that Process
+// never renders. The sweep runs at most once per block, only after an injection
+// was reported, so it adds no per-sample work and no allocations (markActive
+// appends into the pre-sized active-note list).
+//
+// It stays a once-per-block sweep even though injection is now per-sample, and
+// that is deliberate: activeNotes and the modal arena layout are fixed for the
+// duration of a block, so a group first energized at sample i cannot be rendered
+// before the next block either way. The cost is exactly ONE block, ONCE per
+// group, at first energization — after that endBlock returns true
+// unconditionally for an undamped group, so with the pedal held every target
+// enrolls within a block or two and never leaves. In steady state, which is what
+// every stability test and every shipped preset runs, the loop is fully
+// per-sample. Enrolling mid-block would need the arena's unbound fallback path
+// and is a separate change.
 func (sb *StringBank) syncResonatingNotes() {
 	if !sb.resonancePending {
 		return
@@ -733,10 +754,47 @@ func (sb *StringBank) syncResonatingNotes() {
 	}
 }
 
-// NotifyResonanceInjected tells the bank that the resonance engine deposited
-// energy into at least one group, so the next block has to look for groups that
-// need enrolling. Without the flag the idle bank would pay for the sweep on
-// every block.
+// SetResonanceEngine attaches (or, with nil, detaches) the sympathetic engine
+// the render loop drives per sample. A bank with no engine renders exactly as it
+// did before the loop moved inside StringBank, which is what the open-loop
+// probes rely on — do NOT also call InjectFromBridge on a wired bank, or every
+// sample is injected twice.
+func (sb *StringBank) SetResonanceEngine(engine *ResonanceEngine) {
+	if sb == nil {
+		return
+	}
+	sb.resonance = engine
+	sb.prevMix = 0
+}
+
+// injectResonanceSample closes (or, with a non-nil drive, breaks) the loop for
+// one sample. Injection mid-block is safe in both cores: modalArena.acquire
+// repoints g.re/g.im at the arena slab, so injectAtPosition writes into the
+// arena and the next advance() picks it up — the same mechanism
+// hammer.ProcessSample -> InjectHammerForce -> injectAtPosition already uses —
+// and the DWG path simply adds at the delay line's write position.
+func (sb *StringBank) injectResonanceSample(i int, drive []float32) {
+	if sb.resonance == nil {
+		return
+	}
+	x := sb.prevMix
+	if drive != nil {
+		if i >= len(drive) {
+			return
+		}
+		x = drive[i]
+	}
+	if sb.resonance.injectSample(x, sb.targets) {
+		sb.resonancePending = true
+	}
+}
+
+// NotifyResonanceInjected tells the bank that a resonance deposit happened, so
+// the next block has to look for groups that need enrolling. Without the flag
+// the idle bank would pay for the sweep on every block.
+//
+// The render loop sets the flag itself now; this stays exported for open-loop
+// callers that drive the targets through InjectFromBridge.
 func (sb *StringBank) NotifyResonanceInjected() {
 	sb.resonancePending = true
 }
@@ -800,7 +858,19 @@ func (sb *StringBank) InjectCouplingForce(note int, force float32) {
 	sb.markActive(note)
 }
 
+// Process renders one block, closing the sympathetic loop internally when an
+// engine is attached (SetResonanceEngine).
 func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
+	return sb.processWithBridge(numFrames, hammer, nil)
+}
+
+// processWithBridge renders one block. When drive is nil the sympathetic loop is
+// CLOSED: each sample is injected from the previous sample's own bank output. A
+// non-nil drive BREAKS the loop and substitutes drive[i] for that output, which
+// is what the open-loop probes in modal_resonance_test.go need in order to
+// measure a response against a known excitation. It is unexported and only ever
+// non-nil from in-package test code, so the render path never allocates it.
+func (sb *StringBank) processWithBridge(numFrames int, hammer *HammerExciter, drive []float32) []float32 {
 	out := sb.ensureOutputBuffer(numFrames)
 	if numFrames <= 0 {
 		return out
@@ -811,7 +881,15 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 			if hammer != nil {
 				hammer.ProcessSample(sb)
 			}
+			// Keep injecting so the per-sample filter chain (the DC blocker,
+			// the 3.2 kHz pole and the per-note resonators) stays continuous
+			// across an idle stretch. With no active group the mix is zero and
+			// bandLimit decays under injectSample's 1e-8 gate within a few
+			// samples, so this deposits nothing and costs nothing — which is
+			// what TestSustainPedalAloneKeepsIdleBankEmpty pins.
+			sb.injectResonanceSample(i, drive)
 			out[i] = 0
+			sb.prevMix = 0
 		}
 		return out
 	}
@@ -831,6 +909,9 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 		if hammer != nil {
 			hammer.ProcessSample(sb)
 		}
+		// Inject BEFORE arena.advance() so the deposit is rotated and decayed
+		// once before it is read out, exactly as hammer and coupling force are.
+		sb.injectResonanceSample(i, drive)
 		if arenaBound {
 			arena.advance()
 		}
@@ -860,6 +941,7 @@ func (sb *StringBank) Process(numFrames int, hammer *HammerExciter) []float32 {
 			}
 		}
 		out[i] = mix
+		sb.prevMix = mix
 	}
 
 	// Hand state back to the groups before coupling, so everything downstream
@@ -1003,19 +1085,13 @@ func (r *RingingState) Process(numFrames int, hammer *HammerExciter) []float32 {
 	return r.bank.Process(numFrames, hammer)
 }
 
-// NotifyResonanceInjected forwards the resonance engine's report to the bank.
-func (r *RingingState) NotifyResonanceInjected() {
+// SetResonanceEngine attaches the sympathetic engine the bank's render loop
+// drives per sample. Piano re-attaches after every rebuild of the ringing state.
+func (r *RingingState) SetResonanceEngine(engine *ResonanceEngine) {
 	if r == nil || r.bank == nil {
 		return
 	}
-	r.bank.NotifyResonanceInjected()
-}
-
-func (r *RingingState) ResonanceTargets() []resonanceTarget {
-	if r == nil || r.bank == nil {
-		return nil
-	}
-	return r.bank.targets
+	r.bank.SetResonanceEngine(engine)
 }
 
 func (r *RingingState) SetCouplingMode(mode CouplingMode) bool {

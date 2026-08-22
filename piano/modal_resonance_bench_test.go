@@ -4,12 +4,12 @@ import "testing"
 
 // BenchmarkModalResonanceInjection measures the sympathetic-resonance path,
 // which is the heaviest excitation consumer in the modal core: with the sustain
-// pedal down every one of the 128 groups is an undamped target, so
-// InjectFromBridge drives injectAtPosition 128 times per sample.
+// pedal down every one of the 128 groups is an undamped target, so the render
+// loop drives injectAtPosition once per group per sample.
 //
-// The other modal benchmarks run with ResonanceEnabled = false, and resonance
-// lives at the Piano level rather than inside StringBank, so this benchmark
-// wires the engine up by hand.
+// The other modal benchmarks run with ResonanceEnabled = false, and a bank
+// starts with no engine attached, so this benchmark wires one up by hand — the
+// same call NewPiano makes.
 func BenchmarkModalResonanceInjection(b *testing.B) {
 	notes := []int{40, 44, 48, 52, 56, 60, 64, 68}
 
@@ -30,14 +30,14 @@ func BenchmarkModalResonanceInjection(b *testing.B) {
 
 			sb := NewStringBank(48000, params)
 			h := NewHammerExciter(48000, params)
-			res := NewResonanceEngine(48000, params.ResonanceGain, perNoteFilter)
+			sb.SetResonanceEngine(NewResonanceEngine(48000, params.ResonanceGain, perNoteFilter))
 			sb.SetSustain(true)
 			for _, note := range notes {
 				sb.SetKeyDown(note, true)
 				h.Trigger(note, 110)
 			}
 			for i := 0; i < 64; i++ {
-				res.InjectFromBridge(sb.Process(128, h), sb.targets)
+				sb.Process(128, h)
 			}
 
 			b.ReportAllocs()
@@ -48,7 +48,7 @@ func BenchmarkModalResonanceInjection(b *testing.B) {
 					retriggerBenchmarkBank(sb, h, notes)
 					b.StartTimer()
 				}
-				res.InjectFromBridge(sb.Process(128, nil), sb.targets)
+				sb.Process(128, nil)
 			}
 		})
 	}

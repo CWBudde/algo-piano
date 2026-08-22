@@ -118,6 +118,7 @@ func NewPiano(sampleRate int, maxPolyphony int, params *Params) *Piano {
 		}
 		p.resonance = NewResonanceEngine(sampleRate, gain, perNoteFilter)
 	}
+	p.attachResonance()
 	// Load body IR from file if specified.
 	if params != nil && params.BodyIRWavPath != "" {
 		_ = p.bodyConvolver.SetIRFromWAV(params.BodyIRWavPath, sampleRate)
@@ -136,6 +137,23 @@ func NewPiano(sampleRate int, maxPolyphony int, params *Params) *Piano {
 	// is resolved before the first block instead of on every block.
 	p.mix = resolveRadiationMix(params, p.irMixExplicit)
 	return p
+}
+
+// attachResonance points the ringing state's render loop at this Piano's
+// resonance engine. It must run after EVERY rebuild of p.ringing — NewPiano and
+// SetStringModel both replace it — because the sympathetic loop now lives inside
+// StringBank's per-sample loop and a fresh bank starts unwired.
+//
+// The engine deliberately stays owned by Piano rather than built inside
+// NewStringBank: it has to survive a core switch (carrying its DC-blocker and
+// one-pole state with it, as the hammer exciter's soft-pedal state does), and a
+// self-building bank would close the loop internally for the open-loop probes
+// that set ResonanceEnabled and then drive the targets themselves.
+func (p *Piano) attachResonance() {
+	if p == nil || p.ringing == nil {
+		return
+	}
+	p.ringing.SetResonanceEngine(p.resonance)
 }
 
 // NoteOn triggers a new note.
@@ -228,6 +246,7 @@ func (p *Piano) SetStringModel(model StringModel) bool {
 	p.hammerExciter = NewHammerExciter(p.sampleRate, p.params)
 	p.hammerExciter.SetSoftPedal(soft)
 	p.ringing = NewRingingState(p.sampleRate, p.params)
+	p.attachResonance()
 	p.ringing.SetSustainAmount(sustain)
 	for note := 0; note < 128; note++ {
 		if !held[note] {
@@ -293,10 +312,6 @@ func (p *Piano) SetIRMix(bodyDry, bodyGain, roomWet, roomGain float32) {
 // Process renders a block of audio samples (stereo interleaved).
 func (p *Piano) Process(numFrames int) []float32 {
 	monoMix := p.ringing.Process(numFrames, p.hammerExciter)
-
-	if p.resonance != nil && p.resonance.InjectFromBridge(monoMix, p.ringing.ResonanceTargets()) {
-		p.ringing.NotifyResonanceInjected()
-	}
 
 	// Signal flow: string bank → body convolver (mono→mono) → room convolver (mono→stereo)
 	bodyMono := p.bodyConvolver.Process(monoMix)
