@@ -838,9 +838,18 @@ func scoreParams(
 			constraintNotes[profile] = append(constraintNotes[profile], noteReport{
 				Note:          t.note,
 				ReferencePath: t.referencePath,
-				Score:         cm.Score,
-				Similarity:    cm.Similarity,
-				Metrics:       cm,
+				// Score and Similarity are the SANITIZED ones, so a non-finite
+				// comparison aggregates as the worst case 1.0 and breaches
+				// every score ceiling below it instead of clearing them all.
+				Score:      cm.Sanitized.Score,
+				Similarity: cm.Sanitized.Similarity,
+				// Metrics stays RAW, because worstMetricValues and
+				// applyMetricConstraints must be able to SEE a non-finite raw
+				// metric: the sanitized stand-ins are not worst-case values
+				// and would clear the very ceilings they should breach. Both
+				// views come from the one comparison above, so this costs
+				// nothing. See scoreConstraintMetrics.
+				Metrics: cm.Raw,
 			})
 		}
 	}

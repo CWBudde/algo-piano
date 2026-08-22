@@ -148,6 +148,19 @@ func formatConstraintScores(cs []scoreConstraint, scores map[string]float64) str
 	return strings.Join(parts, "; ")
 }
 
+// constraintComparison is one candidate comparison, kept in the two views its
+// two consumers need.
+//
+// It exists so a single analysis.CompareWithOptions can serve both constraint
+// kinds. Raw is the comparison exactly as analysis produced it, non-finite
+// fields included; Sanitized is Raw.Sanitized(). Which view a check must use
+// is documented on scoreConstraintMetrics, and getting it wrong is not a
+// cosmetic mistake in either direction.
+type constraintComparison struct {
+	Raw       analysis.Metrics
+	Sanitized analysis.Metrics
+}
+
 // scoreConstraintMetrics scores an ALREADY RENDERED candidate buffer under
 // every constrained profile.
 //
@@ -162,14 +175,27 @@ func formatConstraintScores(cs []scoreConstraint, scores map[string]float64) str
 // normalizeRMS and lag estimation inside the window, producing a score that is
 // comparable to nothing.
 //
-// Every result is Sanitized() before it leaves this function, and that is a
-// correctness requirement rather than cosmetics. A constraint is enforced as
+// Every result is returned in BOTH views, because the two consumers need
+// different ones and the comparison must not be run twice to get them.
+//
+// The SCORE constraints read the sanitized view, and that is a correctness
+// requirement rather than cosmetics. A constraint is enforced as
 // `score > max`, which is FALSE for a NaN score — so an undefined comparison
 // would pass the ceiling silently and let a degenerate candidate through the
 // one check that exists to stop it. Sanitized() maps a non-finite Score to
 // 1.0, the maximum distance, so an unmeasurable render breaches every ceiling
 // below 1.0 instead of clearing all of them. It also keeps the numbers written
 // into best_constraint_scores finite and printable.
+//
+// The RAW-METRIC constraints must read the unsanitized view, for the mirror
+// image of that reason. Sanitized() substitutes a per-field STAND-IN for a
+// non-finite raw metric — 60.0 dB for spectral_rmse_db, 0 for the decay
+// slopes — and those stand-ins are not worst-case values the way 1.0 is for a
+// score. 60.0 dB sits BELOW the tracked C4 ceiling of 62.30, so sanitising
+// before the check would let an unmeasurable candidate clear the exact fence
+// that exists to stop it, and clear it metric-dependently. Keeping the raw
+// value is what makes the explicit non-finite test in applyMetricConstraints
+// reachable at all.
 //
 // `extra` names profiles that must be measured even though no scoreConstraint
 // asks for them — today that is the single legacy-v1 comparison the raw-metric
@@ -182,7 +208,7 @@ func scoreConstraintMetrics(
 	extra []constraintProfile,
 	reference, cand []float64,
 	sampleRate, midiNote int,
-) map[string]analysis.Metrics {
+) map[string]constraintComparison {
 	if len(cs) == 0 && len(extra) == 0 {
 		return nil
 	}
@@ -202,12 +228,13 @@ func scoreConstraintMetrics(
 		seen[p.name] = true
 		profiles = append(profiles, p)
 	}
-	out := make(map[string]analysis.Metrics, len(profiles))
+	out := make(map[string]constraintComparison, len(profiles))
 	for _, p := range profiles {
-		out[p.name] = analysis.CompareWithOptions(reference, cand, sampleRate, analysis.Options{
+		m := analysis.CompareWithOptions(reference, cand, sampleRate, analysis.Options{
 			Weights:  p.weights,
 			MIDINote: midiNote,
-		}).Sanitized()
+		})
+		out[p.name] = constraintComparison{Raw: m, Sanitized: m.Sanitized()}
 	}
 	return out
 }
