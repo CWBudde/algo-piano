@@ -150,7 +150,6 @@ function generateKeyboard() {
     const whiteKeyGap = parseFloat(rootStyles.getPropertyValue('--white-key-gap')) || 2;
     const whiteKeyMargin = whiteKeyGap;
     const blackKeyWidth = parseFloat(rootStyles.getPropertyValue('--black-key-width')) || 34;
-    const blackKeyFineTune = -2;
 
     // Generate white keys first
     for (let octave = 0; octave < numOctaves; octave++) {
@@ -190,8 +189,7 @@ function generateKeyboard() {
                 const whiteKeysBefore = whiteKeyPattern.filter(n => n < i).length;
                 const totalWhiteKeysSpace = (whiteKeyWidth + whiteKeyMargin * 2);
                 const leftPos = (whiteKeysBefore + octave * 7) * totalWhiteKeysSpace -
-                                blackKeyWidth / 2 +
-                                blackKeyFineTune;
+                                blackKeyWidth / 2;
                 key.style.left = `${leftPos}px`;
 
                 const label = document.createElement('div');
