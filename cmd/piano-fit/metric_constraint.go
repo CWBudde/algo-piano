@@ -97,10 +97,10 @@ func parseMetricConstraints(raw []string) ([]metricConstraint, error) {
 		if math.IsNaN(maxVal) || math.IsInf(maxVal, 0) {
 			return nil, fmt.Errorf("metric-constraint maximum in %q must be finite", entry)
 		}
-		// A non-positive ceiling is refused for the same reason the gate
-		// refuses a zero threshold: it cannot be met by a non-negative error
-		// metric, and the relative violation `got/max - 1` is meaningless
-		// (division by zero, or an inverted ordering) below it.
+		// A non-positive ceiling is refused for the same reason gate.Evaluate
+		// refuses one: it cannot be met by a non-negative error metric, and
+		// the relative violation is meaningless below it (division by zero,
+		// or an inverted ordering).
 		if maxVal <= 0 {
 			return nil, fmt.Errorf("metric-constraint maximum in %q must be positive", entry)
 		}
@@ -258,12 +258,22 @@ func worstMetricValues(cs []metricConstraint, perNote []noteReport) map[string]f
 // counts the rejection — the same shape applyScoreConstraints has, for the
 // same reasons.
 //
-// RELATIVE VIOLATION. The penalty adds `got/max - 1` per breached metric, not
-// `got - max`. Score violations live in [0,1] while a spectral_rmse_db
-// violation is measured in tens of dB, so a raw sum would let one metric own
-// the entire penalty gradient and make the others invisible inside the
-// infeasible region. The ratio is scale-free: 10% over budget is the same
-// violation whether the budget is 0.569 or 62.3.
+// RELATIVE VIOLATION. The penalty adds `(got - max)/|max|` per breached
+// metric, not `got - max`. Score violations live in [0,1] while a
+// spectral_rmse_db violation is measured in tens of dB, so a raw sum would let
+// one metric own the entire penalty gradient and make the others invisible
+// inside the infeasible region. The ratio is scale-free: 10% over budget is
+// the same violation whether the budget is 0.569 or 62.3.
+//
+// The absolute value in the denominator is what keeps a breach POSITIVE for
+// every ceiling, not just a positive one. For max > 0 the expression is
+// algebraically identical to the older `got/max - 1`, so no measured number
+// moves; for max <= 0 the old form went NEGATIVE on a genuine breach, and
+// since the violations are SUMMED that did not merely fail to reject the
+// candidate — it could cancel another metric's real breach. Both entry points
+// already refuse a non-positive ceiling (parseMetricConstraints here,
+// gate.Evaluate for a threshold file), so this is the third line of defence
+// and it costs one math.Abs.
 //
 // It folds into the SAME constraintPenaltyBase + violation aggregate the score
 // constraints use, and for the documented reason (see constraint.go): mayfly
@@ -290,18 +300,24 @@ func applyMetricConstraints(
 		if !ok {
 			continue
 		}
+		// The RAW value is what is recorded and what is checked. It reaches
+		// the console through formatMetricValues, which marks a non-finite
+		// value as a breach, and the JSON report through writeOutputs, whose
+		// sanitizeNonFinite pass already records any non-finite number as 0.
 		ev.metricValues[c.Metric] = got
 		// A non-finite value must never clear a ceiling. `got > c.Max` is
-		// FALSE for NaN, and unlike Score — which analysis.Metrics.Sanitized()
-		// maps to the worst-case 1.0 — the raw dB fields have no such mapping,
-		// so an unmeasurable render would silently pass the one check that
-		// exists to stop it.
+		// FALSE for NaN, and the sanitized stand-ins for the raw dB fields are
+		// not worst-case values the way Sanitized() maps a non-finite Score to
+		// 1.0 — spectral_rmse_db becomes 60.0, which sits BELOW the tracked C4
+		// ceiling of 62.30 — so a sanitized value would let an unmeasurable
+		// render pass the one check that exists to stop it. That is why
+		// scoreConstraintMetrics hands the raw metrics through unsanitized.
 		if !isFiniteScore(got) {
 			violation += worstCaseMetricViolation
 			continue
 		}
 		if got > c.Max {
-			violation += got/c.Max - 1.0
+			violation += (got - c.Max) / math.Abs(c.Max)
 		}
 	}
 	if violation <= 0 {

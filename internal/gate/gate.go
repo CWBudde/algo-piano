@@ -134,8 +134,17 @@ func Evaluate(spec Spec, m analysis.Metrics) (breaches []Breach, worstUsedFracti
 			// Not yet calibrated: listed for visibility, deliberately unenforced.
 			continue
 		}
-		if *limit == 0 {
-			return nil, 0, "", fmt.Errorf("gate: metric %q has a zero threshold, which cannot be met", name)
+		if *limit <= 0 {
+			// Every gated metric is a non-negative error magnitude — an RMSE,
+			// an absolute difference, a distance — so a non-positive ceiling
+			// can only be met by a perfect measurement, if at all. It also
+			// breaks the arithmetic built on top: worstUsedFraction below is
+			// `got / limit`, which is undefined at zero and inverts its
+			// ordering when negative, and cmd/piano-fit turns the same
+			// threshold into a relative violation for its search penalty. A
+			// non-positive entry is therefore a broken threshold file, not a
+			// strict one, and it is refused rather than silently mis-enforced.
+			return nil, 0, "", fmt.Errorf("gate: metric %q has a non-positive threshold %g, which cannot be met", name, *limit)
 		}
 		used := got / *limit
 		if used > worstUsedFraction {

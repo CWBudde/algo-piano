@@ -19,7 +19,8 @@ func TestFormatBreach(t *testing.T) {
 }
 
 func TestFormatBreachWithZeroMax(t *testing.T) {
-	// Evaluate rejects a zero threshold before a breach can carry one, so this
+	// Evaluate rejects a non-positive threshold before a breach can carry one,
+	// so this
 	// only guards against a NaN reaching the output if that ever changes.
 	b := gate.Breach{Metric: "score", Got: 1.0, Max: 0}
 	if line := formatBreach(b); line != "gate: FAIL score=1.00 > max 0.00 (+0.0%)" {

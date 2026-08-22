@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cwbudde/algo-piano/analysis"
+	"github.com/cwbudde/algo-piano/internal/gate"
 	"github.com/cwbudde/algo-piano/piano"
 )
 
@@ -634,4 +635,126 @@ func TestFormatMetricHelpers(t *testing.T) {
 	if got := formatMetricValues(cs, nil); !strings.Contains(got, "score=n/a") {
 		t.Fatalf("formatMetricValues = %q", got)
 	}
+}
+
+// TestScoreConstraintMetricsKeepsRawMetricsUnsanitized pins the defect this
+// pair of views exists to close, at the level the defect actually lived.
+//
+// scoreConstraintMetrics used to return ONE view, Sanitized(), and the raw
+// metrics therefore reached applyMetricConstraints already substituted. That
+// made the explicit non-finite test in applyMetricConstraints unreachable and,
+// worse, made the outcome depend on WHICH metric was constrained:
+// analysis.Metrics.Sanitized() maps a non-finite spectral_rmse_db to 60.0,
+// which sits BELOW the tracked C4 ceiling of 62.3, so an unmeasurable
+// candidate CLEARED the exact fence that exists to stop it. A non-finite
+// decay_segment_rmse_db_per_s becomes 0 and clears any ceiling at all, while a
+// non-finite time_rmse becomes 1.0 and does breach.
+//
+// The path exercised here is the real one: compare a diverged render, take the
+// worst per-note value, then apply the constraints.
+func TestScoreConstraintMetricsKeepsRawMetricsUnsanitized(t *testing.T) {
+	const n = 4096
+	reference := make([]float64, n)
+	diverged := make([]float64, n)
+	for i := range reference {
+		reference[i] = math.Sin(2 * math.Pi * 262 * float64(i) / 48000)
+		diverged[i] = math.Inf(1)
+	}
+
+	// The two C4 ceilings whose sanitized stand-in would clear them.
+	cs := []metricConstraint{
+		{Metric: "spectral_rmse_db", Max: 62.3},
+		{Metric: "decay_segment_rmse_db_per_s", Max: 16.58},
+	}
+	extra, err := metricConstraintProfiles(cs)
+	if err != nil {
+		t.Fatalf("metricConstraintProfiles: %v", err)
+	}
+
+	out := scoreConstraintMetrics(nil, extra, reference, diverged, 48000, 60)
+	cm, ok := out[analysis.ProfileLegacyV1]
+	if !ok {
+		t.Fatalf("no comparison for the constrained profile: %v", out)
+	}
+
+	raw := gate.MetricsByJSONTag(cm.Raw)
+	san := gate.MetricsByJSONTag(cm.Sanitized)
+	for _, c := range cs {
+		if isFiniteScore(raw[c.Metric]) {
+			t.Fatalf("%s raw = %v, want the unsanitized non-finite value", c.Metric, raw[c.Metric])
+		}
+		// This is the assertion that makes the test meaningful: the sanitized
+		// stand-in really does clear the ceiling, so checking against it would
+		// let the candidate through.
+		if san[c.Metric] > c.Max {
+			t.Fatalf("%s sanitized = %v already breaches max %v; pick a ceiling the stand-in clears",
+				c.Metric, san[c.Metric], c.Max)
+		}
+	}
+
+	values := worstMetricValues(cs, []noteReport{{Note: 60, Metrics: cm.Raw}})
+	var rejects atomic.Int64
+	ev := applyMetricConstraints(cs, optimizationEval{aggregate: 0.35}, values, &rejects)
+	if !ev.constraintViolated {
+		t.Fatal("an unmeasurable render must be rejected, not cleared")
+	}
+	if ev.aggregate < constraintPenaltyBase {
+		t.Fatalf("aggregate = %v, want at least the penalty base %v", ev.aggregate, constraintPenaltyBase)
+	}
+	if got := rejects.Load(); got != 1 {
+		t.Fatalf("rejections = %d, want 1", got)
+	}
+	wantViolation := constraintPenaltyBase + float64(len(cs))*worstCaseMetricViolation
+	if ev.aggregate != wantViolation {
+		t.Fatalf("aggregate = %v, want %v (one worst-case violation per unmeasurable metric)",
+			ev.aggregate, wantViolation)
+	}
+}
+
+// TestApplyMetricConstraintsViolationStaysPositive pins the sign of the
+// relative violation.
+//
+// The penalty used to be `got/max - 1`, which is NEGATIVE for a genuine breach
+// under a non-positive ceiling. Because the violations are SUMMED, that did
+// not merely fail to reject the candidate: a negative contribution could
+// cancel another metric's real breach. `(got - c.Max)/math.Abs(c.Max)` is
+// algebraically identical for a positive ceiling — checked here so the fix is
+// provably number-preserving on every threshold the repo actually ships — and
+// stays positive otherwise.
+func TestApplyMetricConstraintsViolationStaysPositive(t *testing.T) {
+	t.Run("positive ceiling keeps the old number", func(t *testing.T) {
+		cs := metricCS("spectral_rmse_db", 62.3)
+		var rejects atomic.Int64
+		ev := applyMetricConstraints(cs, optimizationEval{aggregate: 0.35},
+			map[string]float64{"spectral_rmse_db": 70.0}, &rejects)
+		want := constraintPenaltyBase + (70.0/62.3 - 1.0)
+		if ev.aggregate != want {
+			t.Fatalf("aggregate = %v, want the unchanged %v", ev.aggregate, want)
+		}
+	})
+
+	// gate.Evaluate and parseMetricConstraints both refuse a non-positive
+	// ceiling now, so this can only be reached by constructing the struct
+	// directly. It is pinned anyway: the arithmetic is the last line of
+	// defence, and a summed negative violation is a silent wrong answer.
+	t.Run("negative ceiling cannot mask another breach", func(t *testing.T) {
+		cs := []metricConstraint{
+			{Metric: "spectral_rmse_db", Max: -10.0},
+			{Metric: "time_rmse", Max: 0.109},
+		}
+		var rejects atomic.Int64
+		ev := applyMetricConstraints(cs, optimizationEval{aggregate: 0.35}, map[string]float64{
+			"spectral_rmse_db": 50.0,
+			"time_rmse":        0.12,
+		}, &rejects)
+		if !ev.constraintViolated {
+			t.Fatal("both metrics breach, so the candidate must be rejected")
+		}
+		spectral := (50.0 - -10.0) / 10.0
+		time := (0.12 - 0.109) / 0.109
+		want := constraintPenaltyBase + spectral + time
+		if math.Abs(ev.aggregate-want) > 1e-9 {
+			t.Fatalf("aggregate = %v, want %v (both violations positive)", ev.aggregate, want)
+		}
+	})
 }

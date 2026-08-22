@@ -121,6 +121,31 @@ func TestEvaluateRejectsUnknownKeyEvenWhenNull(t *testing.T) {
 	}
 }
 
+// TestEvaluateRejectsNonPositiveThreshold pins that a negative ceiling is as
+// invalid as a zero one.
+//
+// Every gated metric is a non-negative error magnitude, so a non-positive
+// ceiling cannot be met. It also breaks the arithmetic built on top: the
+// worstUsedFraction `got / limit` inverts its ordering below zero, and
+// cmd/piano-fit turns the same threshold into a relative violation for its
+// search penalty, where a negative contribution could cancel another metric's
+// real breach. Only zero used to be refused, so a negative entry slipped
+// through and was silently mis-enforced.
+func TestEvaluateRejectsNonPositiveThreshold(t *testing.T) {
+	for name, limit := range map[string]float64{"zero": 0, "negative": -10.0} {
+		t.Run(name, func(t *testing.T) {
+			spec := Spec{Max: map[string]*float64{"spectral_rmse_db": ptr(limit)}}
+			_, _, _, err := Evaluate(spec, analysis.Metrics{SpectralRMSEDB: 50.0})
+			if err == nil {
+				t.Fatalf("want an error for a %s threshold", name)
+			}
+			if !strings.Contains(err.Error(), "spectral_rmse_db") {
+				t.Errorf("error %q should name the offending metric", err)
+			}
+		})
+	}
+}
+
 func TestEvaluatePassesWithHeadroom(t *testing.T) {
 	spec := Spec{Max: map[string]*float64{
 		"spectral_rmse_db": ptr(60.0),
