@@ -7,20 +7,31 @@ import (
 	"testing"
 )
 
-// BenchmarkStringBankMemoryFootprint measures the **resident** memory footprint
-// of a constructed full-keyboard string bank — PLAN.md 12.4's "memory footprint
+// BenchmarkStringBankRetainedHeap measures the **retained live Go heap** held by
+// a constructed full-keyboard string bank — PLAN.md 12.4's "memory footprint
 // comparison". It is deliberately not a `b.ReportAllocs` benchmark: every other
 // benchmark in this package already reports steady-state per-block allocations,
 // and those are all zero, which says nothing about how many bytes a constructed
-// bank holds resident for the lifetime of the plugin instance. That number is
-// what a shipping profile has to budget, so it is measured here directly with
-// runtime.ReadMemStats.
+// bank keeps alive for the lifetime of the plugin instance. That is the number
+// measured here directly with runtime.ReadMemStats.
+//
+// # What this number is NOT
+//
+// It is a live-heap figure, not a resident-set (RSS) figure, and it must not be
+// used as a resident or shipping memory budget. MemStats.HeapAlloc counts only
+// bytes in live Go heap objects; it excludes heap-span slack and fragmentation,
+// allocator and runtime metadata, goroutine stacks, and every other non-heap
+// mapping the process holds. Real RSS for a plugin instance is therefore
+// strictly larger, by an amount this benchmark cannot see. What the figure IS
+// good for is exactly what PLAN.md 12.4 asks of it: a stable, attributable
+// comparison of what the DWG and modal data structures cost relative to each
+// other, and how that cost scales with ModalPartials.
 //
 // What is measured
 //
-//	B/bank    live heap bytes held by one NewStringBank + NewHammerExciter pair
-//	          over the full 21..108 compass, after a full GC, with the pair
-//	          still reachable.
+//	B/bank    retained live heap bytes held by one NewStringBank +
+//	          NewHammerExciter pair over the full 21..108 compass, after a full
+//	          GC, with the pair still reachable.
 //	B/voice   the same number divided by the voice count, where a voice is one
 //	          sounding STRING (via stringCountForNotes / defaultUnisonForNote),
 //	          not one key. The 88-key compass holds 196 strings, and the
@@ -30,9 +41,9 @@ import (
 //
 // # How the number is taken
 //
-// Construction, not Process, is the measured region. Everything that makes up
-// the footprint is allocated in NewStringBank: all 88 groups, the modal arena,
-// the distance map and the coupling graph. Process adds only the 128-frame
+// Construction, not Process, is the measured region. Everything that is
+// retained is allocated in NewStringBank: all 88 groups, the modal arena, the
+// distance map and the coupling graph. Process adds only the 128-frame
 // output buffer (512 B, allocated lazily), so warming the bank would not change
 // the answer while adding a heap full of transient garbage to the snapshot.
 // That is also why this benchmark does not call setupBenchmarkModalStringBank:
@@ -59,8 +70,8 @@ import (
 //
 // The b.N loop still constructs one bank pair per iteration so that sec/op is a
 // real construction cost rather than an empty loop.
-func BenchmarkStringBankMemoryFootprint(b *testing.B) {
-	for _, tc := range memoryFootprintCases() {
+func BenchmarkStringBankRetainedHeap(b *testing.B) {
+	for _, tc := range retainedHeapCases() {
 		b.Run(tc.name, func(b *testing.B) {
 			voices := stringCountForNotes(fullCompassNotes())
 
@@ -69,7 +80,7 @@ func BenchmarkStringBankMemoryFootprint(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				sb, h := newFootprintBank(tc.model, tc.partials)
+				sb, h := newRetainedHeapBank(tc.model, tc.partials)
 				runtime.KeepAlive(sb)
 				runtime.KeepAlive(h)
 			}
@@ -83,22 +94,22 @@ func BenchmarkStringBankMemoryFootprint(b *testing.B) {
 	}
 }
 
-type memoryFootprintCase struct {
+type retainedHeapCase struct {
 	name     string
 	model    StringModel
 	partials int
 }
 
-// memoryFootprintCases compares the two cores over a full 88-key bank and
-// sweeps ModalPartials, the modal core's dominant footprint knob (valid range
+// retainedHeapCases compares the two cores over a full 88-key bank and
+// sweeps ModalPartials, the modal core's dominant memory knob (valid range
 // [1,32], default 8 — see Params.ModalPartials and preset/json.go). The DWG
 // core ignores ModalPartials, so it is measured once at the default.
-func memoryFootprintCases() []memoryFootprintCase {
-	cases := []memoryFootprintCase{
+func retainedHeapCases() []retainedHeapCase {
+	cases := []retainedHeapCase{
 		{name: "model_dwg", model: StringModelDWG, partials: 8},
 	}
 	for _, partials := range []int{1, 4, 8, 16, 32} {
-		cases = append(cases, memoryFootprintCase{
+		cases = append(cases, retainedHeapCase{
 			name:     fmt.Sprintf("model_modal_partials%d", partials),
 			model:    StringModelModal,
 			partials: partials,
@@ -118,11 +129,11 @@ func fullCompassNotes() []int {
 	return notes
 }
 
-// newFootprintBank builds the bank pair under measurement. The parameter setup
-// mirrors setupBenchmarkModalStringBank (resonance off, physical coupling at
-// full amount with 10 neighbours) so the coupling graph — a real part of the
-// footprint — is built the same way it is in the CPU benchmarks.
-func newFootprintBank(model StringModel, partials int) (*StringBank, *HammerExciter) {
+// newRetainedHeapBank builds the bank pair under measurement. The parameter
+// setup mirrors setupBenchmarkModalStringBank (resonance off, physical coupling
+// at full amount with 10 neighbours) so the coupling graph — a real part of the
+// retained heap — is built the same way it is in the CPU benchmarks.
+func newRetainedHeapBank(model StringModel, partials int) (*StringBank, *HammerExciter) {
 	params := NewDefaultParams()
 	params.StringModel = model
 	params.ModalPartials = partials
@@ -135,13 +146,13 @@ func newFootprintBank(model StringModel, partials int) (*StringBank, *HammerExci
 	return NewStringBank(48000, params), NewHammerExciter(48000, params)
 }
 
-// footprintSamples is how many independent snapshots are taken before the
+// retainedHeapSamples is how many independent snapshots are taken before the
 // median is reported.
-const footprintSamples = 5
+const retainedHeapSamples = 5
 
 func medianConstructedHeapBytes(model StringModel, partials int) uint64 {
-	samples := make([]uint64, 0, footprintSamples)
-	for i := 0; i < footprintSamples; i++ {
+	samples := make([]uint64, 0, retainedHeapSamples)
+	for i := 0; i < retainedHeapSamples; i++ {
 		samples = append(samples, constructedHeapBytes(model, partials))
 	}
 	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
@@ -157,7 +168,7 @@ func constructedHeapBytes(model StringModel, partials int) uint64 {
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 
-	sb, h := newFootprintBank(model, partials)
+	sb, h := newRetainedHeapBank(model, partials)
 
 	runtime.GC()
 	runtime.ReadMemStats(&after)
