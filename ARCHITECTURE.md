@@ -120,6 +120,19 @@ Per-note behavior:
   - `>= 70`: 3 strings
 - Detune/gain defaults are applied per unison string.
 - Each note group can apply per-note overrides (`loss`, `inharmonicity`, `strike_position`).
+- The strings of a group are coupled to each other through the bridge once per sample. The
+  force on string `i` is `unison_crossfeed * g_i * (mix - y_i)`: proportional to the
+  **difference** between the common bridge motion and that string's own contribution to it,
+  and written via `StringWaveguide.InjectForceNext`, into the slot the interpolating taps
+  read on the next `Process` call. Both details are load-bearing. The subtraction makes the
+  term dissipative — the energy it adds per sample is `c*(mix^2 - sum(g_i*y_i^2)) <= 0` by
+  Jensen's inequality — and that argument is instantaneous, so it survives at the partials
+  only if the force acts immediately: delayed by a fraction `p` of a round trip it lags
+  `2*pi*n*p` at partial `n` and turns anti-damping once that passes a half cycle. A strike
+  position cannot express "next sample" — `injectionOffset` maps `[0,1]` affinely onto the
+  round trip, so even its smallest input is ~1% of it (1 sample at MIDI 60, 17 at MIDI 21),
+  which is why this has its own entry point. `NewStringBank` clamps the strength to
+  `maxUnisonCrossfeed`. This is what produces unison beating and the two-stage decay.
 
 ## 3.2 Modal Mode (`string_model = "modal"`)
 

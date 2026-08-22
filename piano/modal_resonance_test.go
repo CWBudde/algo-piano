@@ -597,29 +597,33 @@ func TestAggregateResonanceLoopIsBounded(t *testing.T) {
 
 // divergingResonanceGain is a ResonanceGain the DWG core is known to diverge at.
 //
-// Re-derived 2026-08-22 after the loop was interleaved with rendering. The
+// Re-derived twice: 2026-08-22 after the loop was interleaved with rendering,
+// and 2026-08-23 after the unison bridge coupling was made dissipative. The
 // render is 120 s through Piano.Process, DWG, pedal held, six notes struck once,
 // coupling off, reported as the peak of the 115-120 s window over the peak of
 // the 25-30 s window:
 //
-//	gain      block deposit  interleaved
-//	0 (off)   1.21           1.21
-//	0.00018   1.13           3.35
-//	0.00025   1.14           5.06
-//	0.0007    1.40           79.8
-//	0.00092   2.28           322
-//	0.0014    20.8           8.4e3
-//	0.002     938            1.3e6
+//	gain      block deposit  interleaved  interleaved + coupling fixed
+//	0 (off)   1.21           1.21         0.1270
+//	0.00018   1.13           3.35         0.1354
+//	0.00025   1.14           5.06         0.1331
+//	0.0007    1.40           79.8         0.2996
+//	0.00092   2.28           322          0.7847
+//	0.0014    20.8           8.4e3        14.02
+//	0.002     938            1.3e6        702.6
+//	0.005     -              -            1.3e12
 //
-// The old comment here recorded "0.0007 only creeps up and 0.00018 - the default
-// - is flat" and put the unity crossing at 0.00092 from a linear fit. None of
-// that survives: on the interleaved loop every gain in the table grows, and the
-// crossing is below the smallest gain worth using. See
-// TestDWGResonanceSustainedGrowthIsFenced for why that is not fixable by
-// lowering the gain, and for the pre-existing bank growth underneath it.
+// Read the third column against the first two. On the interleaved loop alone
+// every gain in the table grew and the unity crossing was below the smallest
+// gain worth using, which was taken at the time as the corrected loop being
+// unstable. It was not: the plant underneath it was. With the unison coupling
+// no longer feeding each string its own output back, the loop has a real
+// ceiling again, and the crossing lands at roughly 0.00092 - which is exactly
+// where the pre-interleave notes put it, for what turns out to be the right
+// reason. The shipped resonance_gain of 0.00025 now sits 3.7x under it.
 //
-// 0.0014 is kept because the probe's calibration only needs a gain that the
-// renderer definitely diverges at, and this one diverges by 8.4e3 over 120 s.
+// 0.0014 is kept because the probe's calibration only needs a gain the renderer
+// definitely diverges at, and it still diverges there by 14x over 120 s.
 const divergingResonanceGain = 0.0014
 
 // TestResonanceProbeSeesKnownDivergingLoop calibrates the open-loop probe
@@ -633,12 +637,15 @@ const divergingResonanceGain = 0.0014
 // the interleaved loop (24 s of drive, still a lower bound), so it does cross.
 //
 // KNOWN LIMIT OF THIS CALIBRATION. It shows the probe can see A diverging loop.
-// It does not show the probe can see EVERY diverging loop, and since the
-// interleave it demonstrably cannot: the same renderer diverges at 0.00025,
-// where this probe reads 0.174 against a bound of 0.5. The probe drives a sine
-// at one note's fundamental into a plant it assumes is stable, and neither
-// assumption holds in the render TestDWGResonanceSustainedGrowthIsFenced makes.
-// Treat a passing bound here as necessary, never as sufficient.
+// It does not show the probe can see EVERY diverging loop, and there is a
+// measured instance of it missing one: between the resonance interleave and the
+// unison-coupling fix the same renderer ran away at 0.00025, where this probe
+// read 0.174 against a bound of 0.5. The probe drives a sine at one note's
+// fundamental into a plant it assumes is stable, and that second assumption is
+// the one that failed - the plant itself was above unity, which no open-loop
+// measurement of the resonance path can see. Treat a passing bound here as
+// necessary, never as sufficient; TestDWGResonanceSustainedDecayIsFenced is the
+// end-to-end check that would have caught it.
 func TestResonanceProbeSeesKnownDivergingLoop(t *testing.T) {
 	const sampleRate = 48000
 	// Note 33 is where the DWG aggregate loop peaks.

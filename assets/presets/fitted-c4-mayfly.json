@@ -1,21 +1,46 @@
 {
-  "output_gain": 7.096,
+  "output_gain": 0.14304323,
+  "min_note": 21,
+  "max_note": 108,
   "ir_wav_path": "../ir/default_96k.wav",
   "ir_wet_mix": 0.2328125,
   "ir_dry_mix": 0.21069959,
   "ir_gain": 1.0912,
+  "body_ir_gain": 1,
+  "body_dry_mix": 1,
+  "room_gain": 1,
   "resonance_enabled": true,
   "resonance_gain": 0.00025,
   "resonance_per_note_filter": true,
-  "hammer_stiffness_scale": 1.2196249,
-  "hammer_exponent_scale": 1.1868781,
-  "hammer_damping_scale": 1.4633535,
-  "hammer_initial_velocity_scale": 0.9928229,
-  "hammer_contact_time_scale": 0.7,
-  "unison_detune_scale": 0.7742883,
-  "unison_crossfeed": 0.0025,
+  "hammer_stiffness_scale": 1.1037657,
+  "hammer_exponent_scale": 1.0368904,
+  "hammer_damping_scale": 0.7852009,
+  "hammer_initial_velocity_scale": 0.9951176,
+  "hammer_contact_time_scale": 1.5834619,
+  "high_freq_damping": 0.22360589,
+  "unison_detune_scale": 1.0536852,
+  "unison_crossfeed": 0.0033683141,
   "soft_pedal_strike_offset": 0.08,
   "soft_pedal_hardness": 0.78,
+  "attack_noise_level": 0.24765398,
+  "attack_noise_duration_ms": 5.35107,
+  "attack_noise_color": -6.2241144,
+  "string_model": "dwg",
+  "modal_partials": 8,
+  "modal_gain_exponent": 1.1,
+  "modal_excitation": 1,
+  "modal_undamped_loss": 1,
+  "modal_damped_loss": 1,
+  "coupling_enabled": true,
+  "coupling_octave_gain": 0.00018,
+  "coupling_fifth_gain": 8e-05,
+  "coupling_max_force": 0.00045,
+  "coupling_mode": "static",
+  "coupling_amount": 1,
+  "coupling_harmonic_falloff": 1.35,
+  "coupling_detune_sigma_cents": 28,
+  "coupling_distance_exponent": 1.15,
+  "coupling_max_neighbors": 10,
   "per_note": {
     "21": {
       "inharmonicity": 0.02,
@@ -23,7 +48,7 @@
       "strike_position": 0.19
     },
     "60": {
-      "loss": 0.9947462,
+      "loss": 0.99736387,
       "strike_position": 0.45
     },
     "88": {
@@ -31,6 +56,5 @@
       "loss": 0.997,
       "strike_position": 0.15
     }
-  },
-  "high_freq_damping": 0.05
+  }
 }

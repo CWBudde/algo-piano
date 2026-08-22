@@ -5,32 +5,43 @@ import (
 	"testing"
 )
 
-// The DWG core grows slowly with the sustain pedal held even when the
-// sympathetic loop is switched off entirely, and the resonance loop multiplies
-// that growth. This file pins BOTH numbers so neither can drift unnoticed.
+// A struck chord held under the sustain pedal must decay. Nothing adds energy
+// after the attack: the keys are struck once, coupling is off, and the only
+// thing still running is the string bank and, in the second test, the
+// sympathetic loop. This file asserts that both cases decay, and pins how far.
 //
-// Neither bound is a stability claim. They are regression fences on measured
-// values, in the sense assets/thresholds/c4.json uses the word: a number the
-// suite must not get worse than, not a number anyone is happy with. See
-// TestDWGSustainedBankGrowsWithoutResonance for what is actually wrong here.
+// Until 2026-08-23 neither of them did, and this file recorded that as a fence
+// on a known-bad number rather than as a decay assertion:
+//
+//	                                     before    after
+//	resonance off                        1.2122x   0.1270x
+//	resonance on, gain 0.00025           5.0558x   0.1331x
+//
+// The cause was the unison bridge coupling, which fed each string's own output
+// back into itself with no subtraction and no loss - see the measurements on
+// RingingStringGroup.processSample. Multi-string notes grew; single-string notes
+// were bit-identical and always decayed, which is what localised it. The
+// sympathetic loop never was the root cause; it was compounding a plant that was
+// already above unity, and with the plant fixed it now costs 0.006 in this
+// ratio rather than 4x.
 const (
-	// growthRenderSeconds is long enough for the growth to clear the attack
-	// transient and become unambiguous. It is deliberately far past the 45 s of
-	// TestDWGResonanceLongRenderDecays: at 45 s the resonance-off growth is
-	// still inside that test's 1.5x wobble allowance, which is exactly why that
-	// test does not see this.
+	// growthRenderSeconds is long enough for the ratio to clear the attack
+	// transient and the first beats between the undamped strings. It is
+	// deliberately far past the 45 s of TestDWGResonanceLongRenderDecays, whose
+	// 1.5x wobble allowance is what let the old defect through unseen.
 	growthRenderSeconds = 120
 	growthWindowSeconds = 5
 	// growthReferenceWindow is the 25-30 s window: past the attack, past the
-	// first beats between the undamped strings, and before any of the growth
-	// below has taken hold.
+	// first beats, and the point everything later is measured against.
 	growthReferenceWindow = 5
 )
 
 // growthNotes is a chord spread across the register, struck once and then left
-// under the pedal. Coupling is off in these renders so that string-to-string
-// coupling, which is block-averaged and a feedback path of its own, cannot be
-// confused with the sympathetic loop.
+// under the pedal. It deliberately mixes single-string notes (below MIDI 40) and
+// two-string ones, since only the latter have a coupling path at all. Coupling
+// is off in these renders so that string-to-string coupling, which is
+// block-averaged and a feedback path of its own, cannot be confused with what is
+// being measured.
 var growthNotes = []int{33, 36, 45, 52, 60, 72}
 
 // measureSustainedGrowth renders the DWG core through the public Piano.Process
@@ -78,109 +89,81 @@ func measureSustainedGrowth(t *testing.T, gain float32, seconds int) (reference,
 	return peaks[growthReferenceWindow], peaks[len(peaks)-1]
 }
 
-// maxBankGrowthWithoutResonance fences the DWG core's OWN growth with the pedal
-// held and no sympathetic path at all. Measured 2026-08-22: 1.2122.
-const maxBankGrowthWithoutResonance = 1.35
+// maxBankDecayWithoutResonance is the recorded ratio plus the 8% headroom this
+// repo fences with. Measured 2026-08-23: 0.1270.
+const maxBankDecayWithoutResonance = 0.138
 
-// TestDWGSustainedBankGrowsWithoutResonance records a defect rather than
-// asserting correctness.
+// TestDWGSustainedBankDecaysWithoutResonance is the plant on its own: six notes
+// struck once, pedal held for two minutes, no sympathetic engine constructed at
+// all (ResonanceEnabled is false, so Piano never builds one) and no coupling.
 //
-// Six notes are struck once and the pedal is held for two minutes. Nothing adds
-// energy after the attack: coupling is off, the sympathetic engine is not built
-// at all (ResonanceEnabled is false, so Piano never constructs one), and no key
-// is pressed again. The output should decay. It does not - the 115-120 s window
-// peaks 1.21x higher than the 25-30 s window, and over 300 s the same render
-// reaches 5.41x. The growth is geometric, so this is a loop above unity
-// somewhere in the DWG bank itself, not a slow transient.
-//
-// It is PRE-EXISTING and has nothing to do with the sympathetic loop: the
-// numbers here are bit-identical on the code before and after resonance
-// injection was interleaved with rendering (2026-08-22), which is expected,
-// because with no engine attached that change cannot execute a single
-// instruction.
-//
-// The fence is set just above the measured value so a WORSENING fails. It must
-// not be read as a claim that 1.21x is acceptable. See PLAN.md 12.4.
-func TestDWGSustainedBankGrowsWithoutResonance(t *testing.T) {
+// The bound is far below 1, so this is a decay assertion and not merely a
+// no-divergence one. Tighten it whenever the number genuinely improves.
+func TestDWGSustainedBankDecaysWithoutResonance(t *testing.T) {
 	// Both growth renders are 120 s of DWG audio and touch no package state, so
 	// they are run concurrently; serially they would add a minute to the suite.
 	t.Parallel()
 
 	reference, last := measureSustainedGrowth(t, 0, growthRenderSeconds)
-	growth := last / reference
-	t.Logf("dwg, pedal held, resonance off: %d-%d s peak %.6g, %d-%d s peak %.6g, growth %.4fx",
+	ratio := last / reference
+	t.Logf("dwg, pedal held, resonance off: %d-%d s peak %.6g, %d-%d s peak %.6g, ratio %.4fx",
 		growthReferenceWindow*growthWindowSeconds, (growthReferenceWindow+1)*growthWindowSeconds, reference,
-		growthRenderSeconds-growthWindowSeconds, growthRenderSeconds, last, growth)
+		growthRenderSeconds-growthWindowSeconds, growthRenderSeconds, last, ratio)
 	if reference == 0 {
 		t.Fatalf("reference window is silent")
 	}
-	if growth > maxBankGrowthWithoutResonance {
-		t.Fatalf("the DWG bank's own growth with the pedal held got worse: %.4fx over %d s exceeds the recorded %.2fx",
-			growth, growthRenderSeconds, maxBankGrowthWithoutResonance)
+	if ratio > maxBankDecayWithoutResonance {
+		t.Fatalf("the DWG bank decays less than it did with the pedal held: %.4fx over %d s exceeds the recorded %.3fx",
+			ratio, growthRenderSeconds, maxBankDecayWithoutResonance)
 	}
 }
 
-// maxDWGResonanceSustainedGrowth fences the same render with the sympathetic
-// loop on at the gain every shipped preset pins. Measured 2026-08-22: 5.0558.
-const maxDWGResonanceSustainedGrowth = 5.6
+// maxDWGResonanceSustainedDecay is the same, with the sympathetic loop on.
+// Measured 2026-08-23: 0.1331.
+const maxDWGResonanceSustainedDecay = 0.145
 
 // shippedResonanceGain is the resonance_gain every preset under assets/presets
 // carries. The Params default is lower (DefaultResonanceGain, 0.00018), so
 // fencing the default would fence a configuration nothing actually ships.
 const shippedResonanceGain = 0.00025
 
-// TestDWGResonanceSustainedGrowthIsFenced pins how much the sympathetic loop
-// multiplies the growth above.
+// TestDWGResonanceSustainedDecayIsFenced pins what the sympathetic loop costs on
+// top of the decay above: 0.1270 -> 0.1331, i.e. the loop slows the decay by
+// about 5% of the ratio and the render still ends 17 dB below its own reference
+// window. That is what an audible sympathetic path on a stable plant should look
+// like.
 //
-// THIS IS A FENCE ON A KNOWN-BAD NUMBER. 5.06x over two minutes is not stable
-// and is not being called stable. What the fence buys is that the number cannot
-// get worse without the suite saying so.
+// Before the unison coupling was made dissipative this same comparison read
+// 1.2122 against 5.0558, and the difference was read - wrongly - as the
+// resonance loop being unstable. It was not: no gain avoided it, because the
+// plant it was driving was itself above unity. Lowering resonance_gain was
+// measured then and did not help (over 300 s against a 5.41x baseline, 1e-6 gave
+// 5.50x and 5e-5 gave 12.7x), which was already the evidence that the loop was
+// not the source.
 //
-// The history, measured on the same render, same notes, same gain:
+// The modal core is unaffected either way: the same render is at digital silence
+// well before the reference window.
 //
-//	                                 resonance off  resonance on (0.00025)
-//	block-deposit loop (before)      1.2122         1.1432
-//	interleaved loop (after)         1.2122         5.0558
-//
-// The resonance-off column is bit-identical, so the whole move is the loop. The
-// block-deposit loop scored BELOW the resonance-off baseline - it was damping
-// the bank, not driving it - because depositing a whole block into frozen state
-// delivers |sum x[i]|, the block's DC content, rather than the drive at each
-// partial. It fed the strings almost no energy at their own frequencies, and
-// what it did feed them arrived with the wrong phase. Interleaving makes the
-// loop do what it was always meant to do, and the honest consequence is that a
-// bank which was already growing on its own now has real positive feedback on
-// top of it.
-//
-// Reducing the gain does not rescue this. Measured over 300 s against a 5.41x
-// resonance-off baseline: 1e-6 gives 5.50x, 1e-5 gives 6.41x, 5e-5 gives 12.7x.
-// Even a gain 250x under the shipped one is already above the baseline, so
-// there is no gain at which an audible corrected loop sits inside it. The
-// resonance loop is not the root cause; the bank's own growth is, and that is
-// what has to be fixed. Both are PLAN.md 12.4 follow-ups.
-//
-// The modal core is unaffected: the same render decays to digital silence well
-// before the reference window, with or without resonance.
-//
-// Note that the open-loop probes in modal_resonance_test.go do NOT see this.
-// They report 0.174 (default) and 0.241 (modal-calibrated) against a bound of
-// 0.5. They inject a sine at ONE note's fundamental, so a loop that is hot at a
-// frequency the probe does not drive is invisible to them, and they measure the
-// resonance path against a plant that is assumed stable. Here it is not.
-func TestDWGResonanceSustainedGrowthIsFenced(t *testing.T) {
+// Note that the open-loop probes in modal_resonance_test.go could not have
+// caught the old defect and still cannot catch its kind. They inject a sine at
+// ONE note's fundamental and measure the resonance path against a plant they
+// assume is stable, so a bank that is hot on its own is invisible to them. A
+// passing bound there is necessary, never sufficient - this test is the
+// sufficient one.
+func TestDWGResonanceSustainedDecayIsFenced(t *testing.T) {
 	t.Parallel()
 
 	reference, last := measureSustainedGrowth(t, shippedResonanceGain, growthRenderSeconds)
-	growth := last / reference
-	t.Logf("dwg, pedal held, resonance_gain %.5f: %d-%d s peak %.6g, %d-%d s peak %.6g, growth %.4fx",
+	ratio := last / reference
+	t.Logf("dwg, pedal held, resonance_gain %.5f: %d-%d s peak %.6g, %d-%d s peak %.6g, ratio %.4fx",
 		shippedResonanceGain,
 		growthReferenceWindow*growthWindowSeconds, (growthReferenceWindow+1)*growthWindowSeconds, reference,
-		growthRenderSeconds-growthWindowSeconds, growthRenderSeconds, last, growth)
+		growthRenderSeconds-growthWindowSeconds, growthRenderSeconds, last, ratio)
 	if reference == 0 {
 		t.Fatalf("reference window is silent")
 	}
-	if growth > maxDWGResonanceSustainedGrowth {
-		t.Fatalf("the DWG sympathetic loop got hotter: %.4fx over %d s exceeds the recorded %.2fx",
-			growth, growthRenderSeconds, maxDWGResonanceSustainedGrowth)
+	if ratio > maxDWGResonanceSustainedDecay {
+		t.Fatalf("the DWG sympathetic loop got hotter: %.4fx over %d s exceeds the recorded %.3fx",
+			ratio, growthRenderSeconds, maxDWGResonanceSustainedDecay)
 	}
 }

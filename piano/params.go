@@ -137,6 +137,11 @@ const (
 // the Phase 9.6 notes in PLAN.md.
 const DefaultResonanceGain = float32(0.00018)
 
+// DefaultUnisonCrossfeed is how strongly the strings of a unison are coupled to
+// each other through the bridge. See RingingStringGroup.processSample for what
+// the coupling does and maxUnisonCrossfeed for the range it is stable over.
+const DefaultUnisonCrossfeed = float32(0.0008)
+
 // NewDefaultParams creates default parameters.
 func NewDefaultParams() *Params {
 	return &Params{
@@ -162,7 +167,7 @@ func NewDefaultParams() *Params {
 		HammerContactTimeScale:     1.0,
 		HighFreqDamping:            0.05,
 		UnisonDetuneScale:          1.0,
-		UnisonCrossfeed:            0.0008,
+		UnisonCrossfeed:            DefaultUnisonCrossfeed,
 		StringModel:                StringModelDWG,
 		ModalPartials:              8,
 		ModalGainExponent:          1.1,
