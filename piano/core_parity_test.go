@@ -121,7 +121,8 @@ func TestSustainPedalTailParityAcrossCores(t *testing.T) {
 //	physical   3.353057e-10   3.095291e-10   1.08x
 //
 // Asserted: off is exactly zero in both cores, both other modes are non-zero in
-// both cores, and the static/physical ordering matches between the cores.
+// both cores, each core on its own ranks the modes static > physical > off, and
+// that ranking additionally matches between the cores.
 //
 // Deliberately NOT asserted: the absolute energies, and the ratio between the
 // cores. The two columns happening to land within 10% of each other here is a
@@ -161,6 +162,38 @@ func TestCouplingModeOrderingParityAcrossCores(t *testing.T) {
 		}
 		if dwg <= 0 || modal <= 0 {
 			t.Fatalf("coupling mode %q must inject measurable energy in both cores: dwg=%e modal=%e", mode, dwg, modal)
+		}
+	}
+
+	// Absolute ordering inside each core: static > physical > off. The
+	// cross-core comparison further down only proves that the two cores AGREE
+	// on a ranking, so it would still pass if both of them regressed to rank
+	// physical above static. That is the ordering PLAN.md 12.4 documents, so it
+	// gets pinned per core rather than being inferred from the agreement.
+	//
+	// The gap is wide in the measured columns above — static sits 5.6x (DWG)
+	// and 6.0x (modal) above physical — and that is structural, not tuning:
+	// initStaticCouplingGraph puts one flat octave gain on the src->target edge,
+	// while initPhysicalCouplingGraph normalises each edge by the sum of the
+	// partial-alignment scores over all of the source's neighbours, so the same
+	// drive is divided across the whole fan-out instead of landing on the one
+	// note this test listens to. No tolerance is applied: the claim is a strict
+	// ordering, and with that much separation a plain comparison has all the
+	// headroom it needs.
+	modeIndex := map[CouplingMode]int{}
+	for i, mode := range modes {
+		modeIndex[mode] = i
+	}
+	descending := []CouplingMode{CouplingModeStatic, CouplingModePhysical, CouplingModeOff}
+	for _, model := range coreParityModels {
+		for k := 0; k+1 < len(descending); k++ {
+			louder, quieter := descending[k], descending[k+1]
+			louderEnergy := energies[model][modeIndex[louder]]
+			quieterEnergy := energies[model][modeIndex[quieter]]
+			if compareEnergies(louderEnergy, quieterEnergy) != 1 {
+				t.Fatalf("%s: coupling mode %s must inject strictly more energy than %s (expected static > physical > off): %s=%e %s=%e",
+					model, louder, quieter, louder, louderEnergy, quieter, quieterEnergy)
+			}
 		}
 	}
 
