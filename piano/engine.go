@@ -35,8 +35,12 @@ type Piano struct {
 type radiationMix struct {
 	// bodyDry scales the body-convolved (dry) branch in the output sum.
 	bodyDry float32
-	// bodyGain scales the body convolver output before it is both summed dry
-	// and fed into the room convolver.
+	// bodyGain scales the *dry* body branch only: Process multiplies the body
+	// convolver output by it when summing the dry signal, but the room
+	// convolver is fed the unscaled body signal. A room-only mix (bodyDry = 0)
+	// is therefore unaffected by BodyIRGain. This is pre-existing behaviour and
+	// deliberately documented rather than changed, because moving the gain
+	// ahead of the room convolution would alter every rendered sample.
 	bodyGain float32
 	// roomWet scales the room-convolved (wet) branch in the output sum.
 	roomWet float32

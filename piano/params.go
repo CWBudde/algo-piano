@@ -33,7 +33,7 @@ type Params struct {
 
 	// Dual-IR fields: body (mono, short) + room (stereo, longer).
 	BodyIRWavPath string
-	BodyIRGain    float32 // Gain applied to body-convolved signal
+	BodyIRGain    float32 // Gain applied to the dry body branch only (not to what the room convolver is fed)
 	BodyDryMix    float32 // How much body-colored signal in output
 	RoomIRWavPath string
 	RoomWetMix    float32 // How much room reverb in output
@@ -95,6 +95,16 @@ type NoteParams struct {
 	StrikePosition float32
 }
 
+// Defaults of the dual-IR mix fields. They live here — rather than as literals
+// inside NewDefaultParams — because ApplyDefaultRoomIR has to recognise a mix
+// that is still untouched, and the two must never drift apart.
+const (
+	DefaultBodyIRGain = float32(1.0)
+	DefaultBodyDryMix = float32(1.0)
+	DefaultRoomWetMix = float32(0.0)
+	DefaultRoomGain   = float32(1.0)
+)
+
 // NewDefaultParams creates default parameters.
 func NewDefaultParams() *Params {
 	return &Params{
@@ -106,10 +116,10 @@ func NewDefaultParams() *Params {
 		IRWetMix:                   1.0,
 		IRDryMix:                   0.0,
 		IRGain:                     1.0,
-		BodyIRGain:                 1.0,
-		BodyDryMix:                 1.0,
-		RoomWetMix:                 0.0,
-		RoomGain:                   1.0,
+		BodyIRGain:                 DefaultBodyIRGain,
+		BodyDryMix:                 DefaultBodyDryMix,
+		RoomWetMix:                 DefaultRoomWetMix,
+		RoomGain:                   DefaultRoomGain,
 		ResonanceEnabled:           false,
 		ResonanceGain:              0.00018,
 		ResonancePerNoteFilter:     true,

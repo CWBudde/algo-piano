@@ -281,6 +281,60 @@ func TestApplyDefaultRoomIRIsFallbackOnly(t *testing.T) {
 		}
 	})
 
+	t.Run("keeps an explicitly configured dual-IR mix", func(t *testing.T) {
+		// A path-less but explicitly dual configuration: installing the shipped
+		// room IR must not overwrite the first-class mix with the legacy fields.
+		params := NewDefaultParams()
+		params.BodyIRGain = 2.0
+		params.BodyDryMix = 0.5
+		params.RoomWetMix = 0.25
+		ApplyDefaultRoomIR(params)
+
+		if params.RoomIRWavPath != DefaultIRWavPath {
+			t.Fatalf("RoomIRWavPath = %q, want %q", params.RoomIRWavPath, DefaultIRWavPath)
+		}
+		if params.BodyIRGain != 2.0 {
+			t.Fatalf("BodyIRGain = %v, want it preserved at 2", params.BodyIRGain)
+		}
+		if params.BodyDryMix != 0.5 {
+			t.Fatalf("BodyDryMix = %v, want it preserved at 0.5", params.BodyDryMix)
+		}
+		if params.RoomWetMix != 0.25 {
+			t.Fatalf("RoomWetMix = %v, want it preserved at 0.25", params.RoomWetMix)
+		}
+
+		want := radiationMix{bodyDry: 0.5, bodyGain: 2.0, roomWet: 0.25, roomGain: 1.0}
+		if got := resolveRadiationMix(params, false); got != want {
+			t.Fatalf("resolved mix = %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a single non-default dual field is enough to suppress the remap", func(t *testing.T) {
+		for name, mutate := range map[string]func(*Params){
+			"body gain": func(p *Params) { p.BodyIRGain = 1.5 },
+			"body dry":  func(p *Params) { p.BodyDryMix = 0.25 },
+			"room wet":  func(p *Params) { p.RoomWetMix = 0.75 },
+			"room gain": func(p *Params) { p.RoomGain = 0.5 },
+		} {
+			t.Run(name, func(t *testing.T) {
+				params := NewDefaultParams()
+				params.IRDryMix, params.IRWetMix, params.IRGain = 0.3, 0.9, 1.4
+				mutate(params)
+				before := *params
+				ApplyDefaultRoomIR(params)
+
+				if params.BodyIRGain != before.BodyIRGain ||
+					params.BodyDryMix != before.BodyDryMix ||
+					params.RoomWetMix != before.RoomWetMix ||
+					params.RoomGain != before.RoomGain {
+					t.Fatalf("dual-IR mix clobbered: got %v/%v/%v/%v, want %v/%v/%v/%v",
+						params.BodyIRGain, params.BodyDryMix, params.RoomWetMix, params.RoomGain,
+						before.BodyIRGain, before.BodyDryMix, before.RoomWetMix, before.RoomGain)
+				}
+			})
+		}
+	})
+
 	t.Run("nil params are a no-op", func(t *testing.T) {
 		ApplyDefaultRoomIR(nil)
 	})
