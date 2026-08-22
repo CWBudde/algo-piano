@@ -147,12 +147,29 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         objective is not the whole cause.
         What this run establishes is an **observed trade-off**, not a proven
         model limitation: one 180 s stochastic run over the sustain knob set,
-        one seed, one search strategy, found no non-regressing candidate. A
-        different budget, seed, or a wider knob surface could still find one.
-        Before concluding the string model itself cannot match the reference
-        decay without breaking its spectrum, the next step is a
-        parameter-sensitivity or Pareto sweep over the sustain knobs — that is
-        what this box is now waiting on.)
+        one seed, one search strategy, found no non-regressing candidate.
+        **Settled 2026-08-22 by `just sweep-sustain-c4`** (`piano-fit --sweep`,
+        deterministic: a 9-point one-at-a-time scan per knob plus 2048 Halton
+        points over the 5-D box, 2093 evals in 199 s, all at final render
+        settings; report in `out/sweep/sustain-note60.json`). **A non-regressing
+        region exists**, so the trade-off is a property of the search, not of
+        the knob set or of the string model. Baseline `decay-v1 0.4380` /
+        `legacy-v1 0.5189`; `constrained_best` is sample #17 at
+        `decay-v1 0.3508` / `legacy-v1 0.5141`, reached by moving a single knob
+        (`unison_detune_scale 0.774` → `1.75`) and with time RMSE `0.0958` →
+        `0.0947`, inside the gate's `0.112`. `constrained_count` is 22 of 2092
+        sampled points, 12 of which also clear the gate cap. The two knobs with
+        the largest leverage on both objectives are `per_note.60.loss` and
+        `render.release_after`; `unison_detune_scale` is the cheap one, moving
+        `decay-v1` by 0.146 against only 0.033 of `legacy-v1`.
+        Scope, honestly: 2048 samples in 5-D is ~4.6 effective grid levels per
+        axis, and the region is ~1% of the sampled points with a `legacy-v1`
+        gain of only 0.005. The sweep shows the region is non-empty, not that it
+        is large or that a re-fit will beat #17.
+        **Box stays open.** The follow-up is no longer a sweep and is not
+        string-model work: re-fit `--pass sustain` constrained to that region —
+        a `legacy-v1` floor, or simply seeded from the #17 neighbourhood — and
+        judge it with `just gate-c4` as always.)
   - [ ] Inharmonicity pass: fit dispersion/inharmonicity via partial-frequency error
         (re-run 2026-08-22: still no leverage, and now marginally negative rather
         than neutral. From the attack preset, legacy score `0.5214` → `0.5234`,

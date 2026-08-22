@@ -16,6 +16,45 @@ import (
 	"github.com/cwbudde/algo-piano/preset"
 )
 
+// optimizerFlags carries the flag values whose validation is specific to the
+// optimizer path.
+type optimizerFlags struct {
+	sweep        bool
+	needsIR      bool
+	outputIR     string
+	outputPreset string
+	maxEvals     int
+	timeBudget   float64
+}
+
+// validateOptimizerFlags rejects flag combinations the optimizer cannot run
+// with.
+//
+// None of these apply in sweep mode: it writes only its JSON report — no
+// preset, no IR, no checkpoint — and it walks a fixed sample plan rather than
+// a budget, which is why it documents --time-budget as ignored. Validating
+// them anyway would force callers to invent a dummy --output-ir just to sweep
+// the body-ir or room-ir groups, and would reject a --time-budget of 0 that
+// the sweep never reads.
+func validateOptimizerFlags(f optimizerFlags) error {
+	if f.sweep {
+		return nil
+	}
+	if f.needsIR && f.outputIR == "" {
+		return errors.New("--output-ir is required when body-ir or room-ir groups are active")
+	}
+	if f.outputPreset == "" {
+		return errors.New("output-preset must not be empty")
+	}
+	if f.maxEvals < 1 {
+		return errors.New("max-evals must be >= 1")
+	}
+	if f.timeBudget <= 0 {
+		return errors.New("time-budget must be > 0")
+	}
+	return nil
+}
+
 func main() {
 	referencePath := flag.String("reference", "reference/c4.wav", "Reference WAV path")
 	presetPath := flag.String("preset", "assets/presets/default.json", "Base preset JSON path")
@@ -68,6 +107,19 @@ func main() {
 	polishStep := flag.Float64("polish-step", 0.08, "Initial polish step in normalised knob space")
 	polishShrink := flag.Float64("polish-shrink", 0.5, "Step shrink factor applied after a sweep that improves nothing")
 	polishMinStep := flag.Float64("polish-min-step", 0.004, "Polish stops once the step falls below this")
+
+	// --sweep-* block. Every flag here is INERT unless --sweep is set: they
+	// configure the deterministic sensitivity/Pareto sweep in sweep.go, which
+	// short-circuits the optimizer entirely.
+	sweep := flag.Bool("sweep", false, "Run a deterministic sensitivity + Pareto sweep over the active knobs instead of the optimizer. "+
+		"Renders, measures, writes one JSON report and exits: no preset, no run report, no RNG")
+	sweepOut := flag.String("sweep-out", "", "Sweep report JSON path (default: out/sweep/<pass>-note<N>.json)")
+	sweepSamples := flag.Int("sweep-samples", 9, "One-at-a-time samples per knob, endpoints inclusive")
+	sweepJointEvals := flag.Int("sweep-joint-evals", 2048, "Joint-stage sample count (0 disables the joint stage)")
+	sweepJointSkip := flag.Int("sweep-joint-skip", 64, "Halton index offset (burn-in) for the joint stage")
+	sweepJointMaxDims := flag.Int("sweep-joint-max-dims", 8, "Refuse the joint stage above this dimensionality")
+	sweepProfiles := flag.String("sweep-profiles", "", "Comma-separated scoring profiles to record per sample "+
+		"(empty = the pass profile first, then legacy-v1). The first profile is the primary Pareto objective")
 
 	matchOutputGainFlag := flag.Bool("match-output-gain", true, "Solve output_gain analytically after the search instead of searching it "+
 		"(analysis.Compare RMS-normalises both signals, so output_gain cannot move the score at all)")
@@ -140,17 +192,15 @@ func main() {
 		die("%v", err)
 	}
 
-	if needsIRSynthesis(groups) && *outputIR == "" {
-		die("--output-ir is required when body-ir or room-ir groups are active")
-	}
-	if *outputPreset == "" {
-		die("output-preset must not be empty")
-	}
-	if *maxEvals < 1 {
-		die("max-evals must be >= 1")
-	}
-	if *timeBudget <= 0 {
-		die("time-budget must be > 0")
+	if err := validateOptimizerFlags(optimizerFlags{
+		sweep:        *sweep,
+		needsIR:      needsIRSynthesis(groups),
+		outputIR:     *outputIR,
+		outputPreset: *outputPreset,
+		maxEvals:     *maxEvals,
+		timeBudget:   *timeBudget,
+	}); err != nil {
+		die("%v", err)
 	}
 	if *releaseAfter < 0.05 {
 		*releaseAfter = 0.05
@@ -228,7 +278,14 @@ func main() {
 		groups,
 		*matchOutputGainFlag,
 	)
-	if *resume {
+	// --resume is deliberately ignored in sweep mode: a stale checkpoint would
+	// silently move the sweep's baseline off --preset, and the baseline is the
+	// point every sensitivity span and the constrained set are measured
+	// against. See the matching --time-budget notice below.
+	if *resume && *sweep {
+		fmt.Println("sweep: --resume ignored (the baseline must be exactly --preset)")
+	}
+	if *resume && !*sweep {
 		resumePath := *resumeReport
 		if resumePath == "" {
 			if *reportPath != "" {
@@ -330,6 +387,30 @@ func main() {
 		matchOutputGain: *matchOutputGainFlag,
 	}
 
+	var passWindow *windowSpec
+	if !passSpecification.Window.isZero() {
+		w := passSpecification.Window
+		passWindow = &w
+	}
+
+	if *sweep {
+		runSweepMode(cfg, sweepModeArgs{
+			outPath:      *sweepOut,
+			samples:      *sweepSamples,
+			jointEvals:   *sweepJointEvals,
+			jointSkip:    *sweepJointSkip,
+			jointMaxDims: *sweepJointMaxDims,
+			profilesRaw:  *sweepProfiles,
+			passProfile:  passSpecification.profileName(),
+			passName:     passSpecification.Name,
+			passWindow:   passWindow,
+			note:         notes[0],
+			workers:      parsedWorkers,
+			timeBudget:   *timeBudget,
+		})
+		return
+	}
+
 	result, err := runOptimization(cfg)
 	if err != nil {
 		die("optimization failed: %v", err)
@@ -337,12 +418,6 @@ func main() {
 
 	if *noResonance && result.bestParams != nil {
 		result.bestParams.ResonanceEnabled = presetResonance
-	}
-
-	var passWindow *windowSpec
-	if !passSpecification.Window.isZero() {
-		w := passSpecification.Window
-		passWindow = &w
 	}
 
 	if err := writeOutputs(outputRequest{

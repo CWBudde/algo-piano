@@ -21,6 +21,29 @@ The idea: alternate between piano-only and IR stages so each builds on the previ
 
 - `--no-resonance`: Disables the resonance engine during optimization. Use for stages 1-3 to avoid the CPU cost of sympathetic resonance (27x speedup). Only enable resonance for final polish stages.
 - `--cpuprofile <file>`: Write CPU profile for performance analysis.
+- `--sweep`: Replaces the optimizer with a deterministic sensitivity + Pareto
+  sweep over whatever knobs the current `--pass`/`--optimize` selection leaves
+  active. It renders, measures, writes one JSON report and exits — no preset, no
+  run report, no checkpoint, and no RNG anywhere (a fixed inclusive grid plus a
+  Halton fill), so the report is reproducible from the flags alone.
+- `--sweep-samples` / `--sweep-joint-evals` / `--sweep-joint-skip` /
+  `--sweep-joint-max-dims` / `--sweep-profiles` / `--sweep-out`: inert unless
+  `--sweep` is set. Every sample is scored under **all** requested profiles from
+  one render, which is what makes a trade-off between two profiles measurable.
+- In `--sweep` mode `--time-budget` and `--resume` are deliberately **ignored**
+  (each prints a notice): a wall-clock cutoff would make the report
+  irreproducible, and a stale checkpoint would silently move the baseline off
+  `--preset`. For the same reason the optimizer-only flag validation is skipped
+  in sweep mode: `--output-ir`, `--output-preset`, `--max-evals` and a positive
+  `--time-budget` are not required, so `--sweep --optimize body-ir` runs without
+  a dummy output IR and `--time-budget 0` is accepted rather than rejected.
+- `constrained_best` is the lowest-primary sample that **strictly improves** the
+  primary profile over the baseline **and** scores the secondary profile no
+  worse than the baseline. Both halves are required: without the primary test a
+  run in which every non-regressing sample is worse on the primary objective
+  would still report a `constrained_best`, which reads as "a non-regressing
+  improvement region exists". `constrained_count` is the plainer number of
+  sampled points that hold the secondary line, improvement or not.
 
 ## Workflow
 
@@ -405,16 +428,118 @@ costing spectrum and time. A different budget, seed, search strategy or a wider
 knob surface could still find one, so "the model cannot do it" is not yet
 supported.
 
-Keep the pass out of the chain on the evidence. Before redirecting effort into
-string-model work, run a parameter-sensitivity or Pareto sweep over the sustain
-knobs — if the trade-off holds across that surface, _then_ it is a model
-finding.
+Keep the pass out of the chain on the evidence — but the sweep below shows the
+trade-off is **not** a property of the sustain box. A non-regressing region
+exists; the 180 s stochastic search simply did not land in it.
 
 Run `inharmonicity` from the attack-pass preset rather than the sustain-pass
 preset. Done that way it is very slightly negative (0.5214 → 0.5234) and leaves
 partial-frequency RMSE at 36.6 cents. Its three knobs simply have too little
 leverage at C4 — which is why the recipe's chained artifact is marginally worse
 than the attack pass on its own.
+
+### Sensitivity and Pareto sweep over the sustain knobs
+
+```bash
+just sweep-sustain-c4
+# equivalently:
+#   go run ./cmd/piano-fit --sweep --pass sustain \
+#       --preset out/passes/attack.json --reference reference/c4.wav \
+#       --sweep-out out/sweep/sustain-note60.json \
+#       --sweep-samples 9 --sweep-joint-evals 2048 --workers auto \
+#       --note 60 --velocity 118 --release-after 3.5 --sample-rate 48000 \
+#       --decay-dbfs -90 --decay-hold-blocks 6 --min-duration 2.0 --max-duration 30
+```
+
+2093 evaluations in 199 s on a 12-core box (~10.5 evals/s): one baseline, a
+9-point one-at-a-time scan of each of the five sustain knobs, and 2048 Halton
+points filling the 5-D box (primes 2/3/5/7/11, index offset 64). Every sample is
+rendered once at the **final** settings `just distance-c4` uses and then scored
+twice, under `decay-v1` and under `legacy-v1`, so the `legacy-v1` column is
+directly comparable to the table above.
+
+**Baseline** (`out/passes/attack.json`, note 60, velocity 118, release-after
+3.5 s): `decay-v1 = 0.4380`, `legacy-v1 = 0.5189`, time RMSE `0.0958`, envelope
+`10.15` dB, spectral `51.95` dB, decay diff `5.16` dB/s. That `legacy-v1` is
+byte-identical to what `just distance-c4` reports on the same preset, which is
+the sweep's correctness check. (It is `0.5189`, not the `0.5214` quoted in the
+table above: the attack pass is stochastic, and the `out/passes/attack.json`
+this sweep ran against is a different run of the same recipe. The comparison
+here is always sweep-baseline against sweep-sample, so nothing depends on which
+attack run is on disk.)
+
+| knob                   | range            | `decay-v1` span | `legacy-v1` span | argmin (`decay-v1`) | monotonic |
+| ---------------------- | ---------------- | --------------- | ---------------- | ------------------- | --------- |
+| `high_freq_damping`    | [0, 0.6]         | 0.0605          | 0.1212           | 0.225               | no        |
+| `unison_detune_scale`  | [0, 2]           | 0.1455          | 0.0334           | 1.00                | no        |
+| `unison_crossfeed`     | [0, 0.005]       | 0.0619          | 0.0506           | 0.004375            | no        |
+| `per_note.60.loss`     | [0.985, 0.99995] | 0.4568          | 0.3012           | 0.994344            | no        |
+| `render.release_after` | [0.2, 3.5]       | 0.5620          | 0.3268           | 3.5                 | yes       |
+
+`per_note.60.loss` and `render.release_after` dominate both objectives — they
+are the knobs that decide how much tail exists at all. `unison_detune_scale` is
+the interesting one: it moves `decay-v1` four times as far as it moves
+`legacy-v1`, which is exactly the shape a knob needs to buy decay cheaply.
+
+Pareto front on (`decay-v1`, `legacy-v1`), both minimised — 7 points:
+
+| index | `decay-v1` | `legacy-v1` | time RMSE | stage                     |
+| ----- | ---------- | ----------- | --------- | ------------------------- |
+| 419   | 0.3230     | 0.5521      | 0.1405    | joint                     |
+| 14    | 0.3273     | 0.5264      | 0.0933    | OAT `unison_detune_scale` |
+| 650   | 0.3298     | 0.5237      | 0.1146    | joint                     |
+| 17    | 0.3508     | **0.5141**  | 0.0947    | OAT `unison_detune_scale` |
+| 1244  | 0.3765     | 0.5123      | 0.0989    | joint                     |
+| 26    | 0.4143     | 0.5003      | 0.0982    | OAT `unison_crossfeed`    |
+| 34    | 0.4404     | 0.4979      | 0.1002    | OAT `per_note.60.loss`    |
+
+**`constrained_best` = sample #17, `constrained_count` = 22 of 2092.** Twenty-two
+sampled points score `legacy-v1` no worse than the baseline; the best of those
+that also improve `decay-v1` is #17, which changes exactly **one** knob:
+
+```
+unison_detune_scale 0.7743 -> 1.75    (everything else at baseline)
+decay-v1   0.4380 -> 0.3508
+legacy-v1  0.5189 -> 0.5141
+time RMSE  0.0958 -> 0.0947     (gate cap 0.112: clears it)
+envelope   10.15  -> 9.77 dB
+spectral   51.95  -> 49.02 dB
+decay segment RMSE 14.55 -> 10.16 dB/s
+```
+
+Confirmed independently: writing that preset out and running `just distance-c4`
+on it reports `0.5141`, the same number the sweep recorded. Twelve of the 22
+qualifying points improve `decay-v1` **and** keep time RMSE under the gate's
+`0.112`, so this is a region, not a single lucky sample.
+
+**What this licenses, and what it does not.** Across 2048 low-discrepancy
+samples of the 5-D sustain box plus a 45-point one-at-a-time scan, all at final
+render settings, there exists a non-empty region that improves `decay-v1`
+without regressing `legacy-v1` — so the sustain pass's regression is a property
+of _that search_, not of the sustain knob set and not of the string model. It
+does **not** say the region is large (22 of 2092 samples, ~1%), that the
+improvement is big (`legacy-v1` moves by 0.005), or that a constrained re-fit
+will find something better than #17. 2048 samples in 5-D is only ~4.6 effective
+grid levels per axis, so the region's true shape is undersampled.
+
+The follow-up is therefore a **constrained re-fit**, not string-model work: re-run
+`--pass sustain` with a `legacy-v1` floor, or simply start it from the #17
+neighbourhood, and judge it with `just gate-c4` as always.
+
+The report at `out/sweep/sustain-note60.json` carries the full
+`analysis.Metrics` and the per-profile `analysis.Components` breakdown of every
+sample, so the gate constraint stays a post-hoc filter rather than something the
+sweep has to know about:
+
+```bash
+jq '[.oat[],.joint[]] | map(select(.metrics.time_rmse <= 0.112)) | length' out/sweep/sustain-note60.json
+```
+
+One caveat baked into the tool: the sustain pass currently has an **empty**
+window, so both profile scores are full-signal and comparable to
+`just distance-c4`. If that ever changes, the scores become windowed and stop
+being comparable to anything in this document. The report records `pass_window`
+and the tool prints a warning when it is set.
 
 ## Multi-Note Fitting
 

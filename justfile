@@ -175,6 +175,81 @@ gate-c4 reference="reference/c4.wav" preset="assets/presets/fitted-c4-mayfly.jso
         --release-after "$release_after" \
         --max-duration 30
 
+# Deterministic sensitivity + Pareto sweep over the sustain-pass knobs.
+#
+# Answers "is the sustain pass's decay-vs-legacy trade-off a property of the
+# model, or an artifact of one stochastic run?" by scanning the five knobs
+# `--pass sustain` leaves active: a one-at-a-time star plus a Halton fill of the
+# 5-D box, every point rendered at the SAME final settings `distance-c4` uses so
+# the legacy-v1 column is directly comparable.
+#
+# Deliberately NOT part of `just ci`: the default 2048-point joint stage costs
+# minutes. See docs/optimization-workflow.md.
+sweep-sustain-c4 preset="out/passes/attack.json" reference="reference/c4.wav" out="out/sweep/sustain-note60.json" samples="9" joint_evals="2048" workers="auto":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # just passes recipe arguments positionally, so `name=value` arrives as a raw
+    # string in whatever slot it landed in. Strip the `name=` prefix and route the
+    # value to the parameter it names, so arguments may be given in any order.
+    names=(preset reference out samples joint_evals workers)
+    raw=("{{preset}}" "{{reference}}" "{{out}}" "{{samples}}" "{{joint_evals}}" "{{workers}}")
+    defaults=("out/passes/attack.json" "reference/c4.wav" "out/sweep/sustain-note60.json" "9" "2048" "auto")
+    declare -A arg=()
+    for i in "${!names[@]}"; do
+        arg["${names[$i]}"]="${defaults[$i]}"
+    done
+    for i in "${!raw[@]}"; do
+        key="${raw[$i]%%=*}"
+        if [[ "${raw[$i]}" != *=* ]] || [[ " ${names[*]} " != *" ${key} "* ]]; then
+            arg["${names[$i]}"]="${raw[$i]}"
+        fi
+    done
+    for i in "${!raw[@]}"; do
+        key="${raw[$i]%%=*}"
+        if [[ "${raw[$i]}" == *=* ]] && [[ " ${names[*]} " == *" ${key} "* ]]; then
+            arg["$key"]="${raw[$i]#*=}"
+        fi
+    done
+    preset="${arg[preset]}"
+    reference="${arg[reference]}"
+    out="${arg[out]}"
+    samples="${arg[samples]}"
+    joint_evals="${arg[joint_evals]}"
+    workers="${arg[workers]}"
+    # reference/*.wav is gitignored by design, so a fresh clone has no reference
+    # and this recipe must still exit clean when someone runs it.
+    if [ ! -f "$reference" ]; then
+        echo "sweep: SKIP - reference \"$reference\" not found (reference WAVs are gitignored; supply one to enable the sweep)"
+        exit 0
+    fi
+    # The preset is not optional: without it the sweep would silently baseline
+    # on something other than the attack pass, and every number below would be
+    # measured against the wrong point.
+    if [ ! -f "$preset" ]; then
+        echo "sweep: ERROR - preset \"$preset\" not found." >&2
+        echo "  Produce it first with: just passes" >&2
+        echo "  (or point the recipe elsewhere: just sweep-sustain-c4 preset=<path>)" >&2
+        exit 1
+    fi
+    mkdir -p "$(dirname "$out")"
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run ./cmd/piano-fit \
+        --sweep \
+        --pass sustain \
+        --preset "$preset" \
+        --reference "$reference" \
+        --sweep-out "$out" \
+        --sweep-samples "$samples" \
+        --sweep-joint-evals "$joint_evals" \
+        --workers "$workers" \
+        --note 60 \
+        --velocity 118 \
+        --release-after 3.5 \
+        --sample-rate 48000 \
+        --decay-dbfs -90 \
+        --decay-hold-blocks 6 \
+        --min-duration 2.0 \
+        --max-duration 30
+
 # Synthesize a stereo IR WAV for soundboard/body convolution
 ir-synth output="assets/ir/synth_96k.wav" sample_rate="96000" duration="2.0" modes="128" seed="1":
     #!/usr/bin/env bash

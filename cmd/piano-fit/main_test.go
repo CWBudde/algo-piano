@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cwbudde/algo-piano/piano"
@@ -183,4 +184,62 @@ func TestWritePresetJSONPreservesStringModel(t *testing.T) {
 			t.Fatalf("%s = %v, want %v", c.name, c.got, c.want)
 		}
 	}
+}
+
+// TestValidateOptimizerFlags pins which validations belong to the optimizer
+// alone. Sweep mode writes only its JSON report and walks a fixed sample plan,
+// so requiring --output-ir or a positive --time-budget there rejected
+// perfectly valid sweeps — notably `--sweep --optimize body-ir` without a
+// dummy output IR, and the `--time-budget 0` that sweep mode itself documents
+// as ignored.
+func TestValidateOptimizerFlags(t *testing.T) {
+	valid := optimizerFlags{outputPreset: "out/fit.json", maxEvals: 100, timeBudget: 120}
+
+	t.Run("a valid optimizer invocation passes", func(t *testing.T) {
+		if err := validateOptimizerFlags(valid); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	rejected := []struct {
+		name string
+		want string
+		mut  func(f *optimizerFlags)
+	}{
+		{"IR synthesis without an output IR", "--output-ir", func(f *optimizerFlags) { f.needsIR = true }},
+		{"empty output preset", "output-preset", func(f *optimizerFlags) { f.outputPreset = "" }},
+		{"non-positive max evals", "max-evals", func(f *optimizerFlags) { f.maxEvals = 0 }},
+		{"zero time budget", "time-budget", func(f *optimizerFlags) { f.timeBudget = 0 }},
+		{"negative time budget", "time-budget", func(f *optimizerFlags) { f.timeBudget = -1 }},
+	}
+	for _, c := range rejected {
+		t.Run("optimizer rejects "+c.name, func(t *testing.T) {
+			f := valid
+			c.mut(&f)
+			err := validateOptimizerFlags(f)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error must name %q, got %q", c.want, err)
+			}
+		})
+		t.Run("sweep accepts "+c.name, func(t *testing.T) {
+			f := valid
+			f.sweep = true
+			c.mut(&f)
+			if err := validateOptimizerFlags(f); err != nil {
+				t.Fatalf("sweep mode must not enforce this: %v", err)
+			}
+		})
+	}
+
+	// The combination from the review, in one shot: an IR group and the
+	// documented-as-ignored budget, with no output paths at all.
+	t.Run("sweep with an IR group, no output IR and a zero budget", func(t *testing.T) {
+		f := optimizerFlags{sweep: true, needsIR: true, maxEvals: 0, timeBudget: 0}
+		if err := validateOptimizerFlags(f); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
