@@ -196,6 +196,19 @@ func TestModalPartialsQualityCurve(t *testing.T) {
 				t.Fatalf("%s partials=%d: non-finite score (vs DWG %v, vs modal-%d %v)",
 					reg.name, partials, vsDWG.Score, modalPartialsInternalRef, vsRef.Score)
 			}
+			// partial_level_rmse_db carries the only quality assertion in this
+			// test, and analysis.Compare leaves it NaN when partial extraction
+			// fails on either render. The default legacy-v1 score gives that
+			// component zero weight, so the score checks above stay green in
+			// that case, and every NaN comparison below is false — the
+			// monotonicity check would pass silently for the rest of the sweep
+			// exactly when the analyzer or the render has regressed. Fail here
+			// instead, before the value is either compared or carried forward.
+			if math.IsNaN(vsRef.PartialLevelRMSEDB) || math.IsInf(vsRef.PartialLevelRMSEDB, 0) {
+				t.Fatalf("%s partials=%d: partial_level_rmse_db against modal-%d is %v, so the monotonicity "+
+					"assertion below has nothing to assert; partial extraction failed on one of the two renders",
+					reg.name, partials, modalPartialsInternalRef, vsRef.PartialLevelRMSEDB)
+			}
 			if vsDWG.AlignedFrames < modalPartialsBlocks*128/2 {
 				t.Errorf("%s partials=%d: only %d frames aligned out of %d, comparison is not meaningful",
 					reg.name, partials, vsDWG.AlignedFrames, modalPartialsBlocks*128)
