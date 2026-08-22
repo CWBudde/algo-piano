@@ -2,6 +2,7 @@ package piano
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"strconv"
@@ -98,8 +99,75 @@ func newResonanceProbeBank(params *Params, sampleRate int) (*StringBank, *Resona
 	return sb, res
 }
 
-// measureResonanceLoopGain returns the open-loop gain of the sympathetic
-// resonance path at one drive frequency.
+// Probe timing. The drive is measured in windows of resonanceProbeWindow
+// seconds; each window yields one gain reading, and the probe stops when the
+// mean of the last second has stopped moving against the second before it, or
+// when resonanceProbeMaxSeconds of drive have been spent, whichever is first.
+//
+// resonanceProbeMaxSeconds is a cost ceiling, not a settling time: an undamped
+// string's transient runs far past it (see resonanceProbeSettleFraction). It is
+// set where it is because 24 s is what it takes for the probe to see the
+// known-diverging DWG configuration as above unity, which is the calibration
+// TestResonanceProbeSeesKnownDivergingLoop pins.
+const (
+	resonanceProbeWindow     = 0.25
+	resonanceProbeMaxSeconds = 24.0
+	// resonanceProbeScanSeconds is the budget for picking the hottest note of a
+	// row before the full probe is spent on it. The ranking is stable this
+	// early: on the diverging DWG row the aggregate notes come out 33, 36, 28,
+	// 21, 48 at 2 s of drive and in the same order at 8 s.
+	resonanceProbeScanSeconds = 2.0
+	// resonanceProbeSettleTol is the relative movement between two adjacent
+	// one-second means below which the reading counts as settled. The slowest
+	// growth the diverging DWG row shows anywhere inside the 24 s budget is
+	// 1.2% per second, so 0.2% cannot be tripped by the plateaus in a transient
+	// that is still climbing.
+	resonanceProbeSettleTol = 0.002
+	// resonanceProbeSettleRuns is how many consecutive windows must pass the
+	// tolerance before the reading is called settled.
+	resonanceProbeSettleRuns = 2
+)
+
+// resonanceProbeSettleFraction is the fraction of the settled gain that a probe
+// run to resonanceProbeMaxSeconds recovers, measured on the hottest known
+// configuration.
+//
+// Measured 2026-08-22 by driving the diverging DWG row (default params,
+// ResonanceGain 0.0014, all 88 groups undamped, per-note filter on, note 33) for
+// 400 s: the windowed reading is 1.1173 at 24 s and 1.5299 averaged over the
+// last 50 s, by which point it has been flat for 300 s. So the 24 s budget
+// recovers about 0.73 of the limit, and an unsettled reading of g implies a
+// settled gain of roughly g/0.73. The growth is slow and monotone, so this is a
+// scale factor on a lower bound, not an error bar. It is one configuration's
+// factor, not a law: use it to read an unsettled number, not to certify one.
+const resonanceProbeSettleFraction = 0.73
+
+// resonanceProbeReading is what one probe run returns.
+type resonanceProbeReading struct {
+	// gain is the mean of the last second of windowed gain readings.
+	gain float64
+	// seconds is how much drive was spent.
+	seconds float64
+	// settled reports whether the reading stopped moving before the budget ran
+	// out. When false, gain is a LOWER BOUND on the steady-state loop gain: the
+	// drive was cut off while the resonators were still filling.
+	settled bool
+}
+
+// String renders a reading for a test log. An unsettled reading is printed with
+// the settled gain it stands for, so a log line can never be mistaken for a
+// steady state.
+func (r resonanceProbeReading) String() string {
+	if r.settled {
+		return fmt.Sprintf("%.6f (settled after %.2f s of drive)", r.gain, r.seconds)
+	}
+	return fmt.Sprintf("%.6f (lower bound after %.2f s of drive, not settled; ~%.4f at the %.2f recovery of the reference row)",
+		r.gain, r.seconds, r.gain/resonanceProbeSettleFraction, resonanceProbeSettleFraction)
+}
+
+// measureResonanceLoopGain drives the sympathetic resonance path with a sine at
+// one note's fundamental and reports how hot the open-loop gain has become by
+// the time the drive stops.
 //
 // The engine closes this loop once per block in Piano.Process: the bank renders
 // a mono mix, ResonanceEngine.InjectFromBridge band-limits it and deposits it
@@ -119,11 +187,16 @@ func newResonanceProbeBank(params *Params, sampleRate int) (*StringBank, *Resona
 // signal - the configuration the engine is actually in whenever the pedal is
 // held, and the one a per-note probe cannot see.
 //
-// The measurement is taken after five time constants of the slowest mode, so
-// the resonators have reached steady state.
-func measureResonanceLoopGain(t *testing.T, params *Params, note int, sampleRate int, aggregate bool) float64 {
-	t.Helper()
-
+// WHAT THE NUMBER IS. The gain reported is the mean over the LAST second of
+// drive, not over the whole run, so it tracks the resonators as they fill
+// instead of averaging the empty start into the answer. The run stops early
+// once that mean stops moving, and only then is the reading a steady state;
+// reading.settled says which case it is. An undamped string's transient runs
+// for minutes - the row this probe is calibrated against needs 100 s of drive
+// to flatten - so at the budgets the suite can afford most readings come back
+// unsettled, and an unsettled reading is a LOWER BOUND. Never read one as "the
+// loop gain is this"; read it as "the loop gain is at least this".
+func measureResonanceLoopGain(params *Params, note int, sampleRate int, aggregate bool, maxSeconds float64) resonanceProbeReading {
 	sb, res := newResonanceProbeBank(params, sampleRate)
 	if aggregate {
 		sb.SetSustainAmount(1)
@@ -132,42 +205,97 @@ func measureResonanceLoopGain(t *testing.T, params *Params, note int, sampleRate
 	}
 
 	f0 := float64(midiNoteToFreq(note))
-	warmupBlocks := int(0.5*float64(sampleRate)) / resonanceProbeBlock
-	measureBlocks := int(0.2*float64(sampleRate)) / resonanceProbeBlock
+	windowBlocks := int(resonanceProbeWindow*float64(sampleRate)) / resonanceProbeBlock
+	if windowBlocks < 1 {
+		windowBlocks = 1
+	}
+	// One second of readings, the span the settling test and the reported gain
+	// are both taken over.
+	perSecond := int(math.Round(1.0 / resonanceProbeWindow))
+	maxWindows := int(math.Round(maxSeconds / resonanceProbeWindow))
+	if maxWindows < 2*perSecond {
+		maxWindows = 2 * perSecond
+	}
 
 	drive := make([]float32, resonanceProbeBlock)
 	phase := 0.0
 	step := 2 * math.Pi * f0 / float64(sampleRate)
 
-	var driveSq, outSq float64
-	var samples int
-	for b := 0; b < warmupBlocks+measureBlocks; b++ {
-		for i := range drive {
-			drive[i] = float32(math.Sin(phase))
-			phase += step
-			if phase > 2*math.Pi {
-				phase -= 2 * math.Pi
+	mean := func(w []float64) float64 {
+		var s float64
+		for _, v := range w {
+			s += v
+		}
+		return s / float64(len(w))
+	}
+
+	windows := make([]float64, 0, maxWindows)
+	runs := 0
+	for w := 0; w < maxWindows; w++ {
+		var driveSq, outSq float64
+		for b := 0; b < windowBlocks; b++ {
+			for i := range drive {
+				drive[i] = float32(math.Sin(phase))
+				phase += step
+				if phase > 2*math.Pi {
+					phase -= 2 * math.Pi
+				}
+			}
+			if res.InjectFromBridge(drive, sb.targets) {
+				sb.NotifyResonanceInjected()
+			}
+			out := sb.Process(resonanceProbeBlock, nil)
+			for i := range out {
+				d := float64(drive[i])
+				o := float64(out[i])
+				driveSq += d * d
+				outSq += o * o
 			}
 		}
-		if res.InjectFromBridge(drive, sb.targets) {
-			sb.NotifyResonanceInjected()
+		if driveSq == 0 {
+			return resonanceProbeReading{}
 		}
-		out := sb.Process(resonanceProbeBlock, nil)
-		if b < warmupBlocks {
+		windows = append(windows, math.Sqrt(outSq/driveSq))
+
+		if len(windows) < 2*perSecond {
 			continue
 		}
-		for i := range out {
-			d := float64(drive[i])
-			o := float64(out[i])
-			driveSq += d * d
-			outSq += o * o
-			samples++
+		last := mean(windows[len(windows)-perSecond:])
+		prev := mean(windows[len(windows)-2*perSecond : len(windows)-perSecond])
+		if prev == 0 || math.Abs(last-prev)/prev < resonanceProbeSettleTol {
+			runs++
+		} else {
+			runs = 0
+		}
+		if runs >= resonanceProbeSettleRuns {
+			return resonanceProbeReading{
+				gain:    last,
+				seconds: float64(len(windows)) * resonanceProbeWindow,
+				settled: true,
+			}
 		}
 	}
-	if samples == 0 || driveSq == 0 {
-		t.Fatalf("note %d: probe collected no drive energy", note)
+	return resonanceProbeReading{
+		gain:    mean(windows[len(windows)-perSecond:]),
+		seconds: float64(len(windows)) * resonanceProbeWindow,
 	}
-	return math.Sqrt(outSq / driveSq)
+}
+
+// hottestResonanceLoopGain probes every note of the set with a short scan,
+// keeps the hottest, and then spends the full budget on that one.
+//
+// Spending the full budget on all of them costs more than the whole package
+// suite is worth: the modal core runs the 88-group aggregate probe at about
+// real time, so five notes at 24 s each is two minutes for a single row.
+func hottestResonanceLoopGain(params *Params, notes []int, sampleRate int, aggregate bool) (resonanceProbeReading, int) {
+	worstNote, worst := notes[0], -1.0
+	for _, note := range notes {
+		scan := measureResonanceLoopGain(params, note, sampleRate, aggregate, resonanceProbeScanSeconds)
+		if scan.gain > worst {
+			worst, worstNote = scan.gain, note
+		}
+	}
+	return measureResonanceLoopGain(params, worstNote, sampleRate, aggregate, resonanceProbeMaxSeconds), worstNote
 }
 
 // measureResonanceLoopDecay runs the resonance loop closed, with the sustain
@@ -230,31 +358,34 @@ func measureResonanceLoopDecay(t *testing.T, params *Params, sampleRate int, sec
 
 // maxResonanceLoopGain is the bound both probes assert.
 //
-// The loop is linear, so gain >= 1 forfeits the small-gain stability guarantee.
-// Half of that leaves room for the hottest measured configuration without
-// admitting a marginal one.
+// The loop is linear, so a settled gain >= 1 forfeits the small-gain stability
+// guarantee. The probes report a lower bound on that settled gain, and
+// resonanceProbeSettleFraction measures how much of it the 24 s budget
+// recovers: about 0.73. A reading of 0.5 therefore stands for a settled gain of
+// roughly 0.68, which is still under unity, so the bound survives being read
+// through the shortfall. It also leaves the hottest configuration the probes
+// cover (0.2153, the modal-calibrated knobs on the DWG core, aggregate) a factor
+// of 2.3 of headroom.
 //
-// CAVEAT, measured 2026-08-22: these probes read a TRANSIENT, not a steady
-// state, so what they report is a LOWER BOUND on the loop gain and this bound
-// is not by itself a proof of stability. An undamped piano string has a T60 of
-// tens of seconds; measureResonanceLoopGain warms up for 0.5 s. Driving the
-// same DWG configuration (ResonanceGain 0.0014, all 88 groups undamped) with
-// progressively longer warmups gives:
+// The unity line is not merely theoretical. Sweeping ResonanceGain on the DWG
+// core - the loop is linear in it, so the settled probe scales with it exactly -
+// puts the probe's unity crossing at ResonanceGain 0.00092, and the long
+// renders in PLAN.md put the divergence between 0.0007 (creeps up) and 0.0014
+// (peak 91.5 and climbing). The probe's unity crossing and the renderer's
+// divergence are the same event.
 //
-//	warmup   0.5 s   2 s     8 s     30 s
-//	pnf=true 0.1968  0.3189  0.7903  1.7135
-//
-// The reading was still climbing at 30 s, and that configuration does diverge
-// in a long render. A probe long enough to settle would cost minutes per row,
-// so the probes are kept as a cheap early warning and the actual stability
-// assertion lives in TestDWGResonanceLongRenderDecays, which closes the loop
-// through Piano.Process for 45 s. Treat a number here as "at least this hot",
-// never as "this is the loop gain".
+// READ THE READINGS AS BOUNDS. Where a probe reports "not settled" its number
+// understates the loop: the drive stopped while the resonators were still
+// filling. Passing the bound with an unsettled reading is evidence, not proof;
+// TestDWGResonanceLongRenderDecays is what actually pins the loop, and
+// TestResonanceProbeSeesKnownDivergingLoop is what keeps these probes calibrated
+// against a configuration known to diverge.
 const maxResonanceLoopGain = 0.5
 
 // resonanceProbeNotes spans the register where the loop is hottest; above note
-// 84 every measured gain is below 5e-3. Note 33 is included because it, not the
-// bottom of the keyboard, is where the DWG per-note gain peaks.
+// 84 every measured gain is below 5e-3. Notes 33 and 36 are both in the set
+// because the DWG per-note peak sits on one or the other - not at the bottom of
+// the keyboard - depending on how long the probe drives.
 var resonanceProbeNotes = []int{21, 33, 36, 48, 60, 72, 84}
 
 // TestResonanceLoopGainIsBoundedAcrossCores pins the per-note open-loop gain of
@@ -268,21 +399,25 @@ var resonanceProbeNotes = []int{21, 33, 36, 48, 60, 72, 84}
 // probed on the modal core it pins in string_model, with its own resonance
 // gain, 20 partials, excitation 4 and undamped loss 0.4.
 //
-// Re-measured on 2026-08-22 after the noteResonator unity-peak normalisation
-// (48 kHz, per-note, hottest note of each row). The "before" column is the same
-// probe on the unnormalised resonator bank; ResonanceGain is unchanged on both
-// sides, so the whole move is the normalisation:
+// Re-measured on 2026-08-22 with the windowed probe (48 kHz, per-note, hottest
+// note of each row, 24 s of drive). The "0.5 s warmup" column is what the old
+// probe reported for the same configuration - a cumulative average over 0.2 s
+// taken 0.5 s in - and the difference between the columns is the understatement
+// this probe removes:
 //
-//	params             core    before  after     note
-//	default            modal   0.0083  0.000161  36
-//	default            dwg     0.4110  0.009118  33
-//	modal-calibrated   modal   0.1062  0.002082  48
+//	params             core    0.5 s warmup  note  windowed  note  settled?
+//	default            modal   0.000161      36    0.000161  36    yes, 2.75 s
+//	default            dwg     0.009118      33    0.165995  36    no
+//	modal-calibrated   modal   0.002082      48    0.002396  48    yes, 3.75 s
 //
-// Note 33, not note 21, is where the DWG per-note gain peaks. It was outside
-// the probed set before, and it measured 0.5445 pre-fix - already over the
-// bound this test asserts.
+// Both modal rows settle inside the budget, so those two numbers are the loop
+// gain and not a bound on it. The DWG row does not settle: 0.166 is a lower
+// bound, standing for a settled gain near 0.23.
 //
-// Read these as lower bounds; see the caveat on maxResonanceLoopGain.
+// The hottest note moves with the probe. At 0.5 s of warmup the DWG core peaks
+// at note 33; driven to 24 s it peaks at note 36 (0.1660 against 0.1390), which
+// is another way of saying the old reading was a transient - the ranking it
+// produced was not the steady-state ranking either.
 func TestResonanceLoopGainIsBoundedAcrossCores(t *testing.T) {
 	const sampleRate = 48000
 
@@ -296,19 +431,28 @@ func TestResonanceLoopGainIsBoundedAcrossCores(t *testing.T) {
 		for _, model := range models {
 			for _, note := range resonanceProbeNotes {
 				t.Run(set.name+"/"+string(model)+"/note"+strconv.Itoa(note), func(t *testing.T) {
+					// Safe to parallelise: every subtest builds its own bank and
+					// engine and touches no package state. It matters here
+					// because the probe now drives for seconds, not
+					// milliseconds.
+					t.Parallel()
+
 					params := set.build(t)
 					params.StringModel = model
 					params.ResonanceEnabled = true
 					params.CouplingEnabled = false
 					params.CouplingMode = CouplingModeOff
 
-					gain := measureResonanceLoopGain(t, params, note, sampleRate, false)
-					t.Logf("%s %s note %d: per-note open-loop resonance gain %.6f", set.name, model, note, gain)
-					if math.IsNaN(gain) || math.IsInf(gain, 0) {
-						t.Fatalf("%s %s note %d: non-finite loop gain %v", set.name, model, note, gain)
+					r := measureResonanceLoopGain(params, note, sampleRate, false, resonanceProbeMaxSeconds)
+					t.Logf("%s %s note %d: per-note open-loop resonance gain %s", set.name, model, note, r)
+					if r.seconds == 0 {
+						t.Fatalf("%s %s note %d: probe collected no drive energy", set.name, model, note)
 					}
-					if gain > maxResonanceLoopGain {
-						t.Fatalf("%s %s note %d: per-note open-loop resonance gain %.4f exceeds %.2f", set.name, model, note, gain, maxResonanceLoopGain)
+					if math.IsNaN(r.gain) || math.IsInf(r.gain, 0) {
+						t.Fatalf("%s %s note %d: non-finite loop gain %v", set.name, model, note, r.gain)
+					}
+					if r.gain > maxResonanceLoopGain {
+						t.Fatalf("%s %s note %d: per-note open-loop resonance gain %.4f exceeds %.2f", set.name, model, note, r.gain, maxResonanceLoopGain)
 					}
 				})
 			}
@@ -334,34 +478,41 @@ func TestResonanceLoopGainIsBoundedAcrossCores(t *testing.T) {
 // The open-loop gain is only sufficient, not necessary, for stability, so each
 // row also runs the loop closed and requires it to decay.
 //
-// Re-measured on 2026-08-22 after the noteResonator unity-peak normalisation
-// (48 kHz, all 88 groups undamped, hottest probe note). The "before" column is
-// the same probe on the unnormalised resonator bank:
+// Re-measured on 2026-08-22 with the windowed probe (48 kHz, all 88 groups
+// undamped, hottest probe note, 24 s of drive). The "0.5 s warmup" column is
+// what the old probe reported for the same configuration, on the same code:
 //
-//	params             core    perNoteFilter   before   after    closed loop
-//	default            modal   true            0.0164   0.0002   decays to 0
-//	default            modal   false           0.0006   0.0006   decays to 0
-//	modal-calibrated   modal   true            0.1208   0.0016   decays to 0
-//	modal-calibrated   modal   false           0.0060   0.0059   decays to 0
-//	default            dwg     true            1.4276   0.0237   decays
-//	default            dwg     false           0.0315   0.0315   decays
-//	modal-calibrated   dwg     true            1.9828   0.0329   decays
-//	modal-calibrated   dwg     false           0.0438   0.0438   decays
+//	params             core    perNoteFilter  0.5 s warmup  windowed  note  settled?  closed loop
+//	default            modal   true           0.0002        0.000190  21    no        decays
+//	default            modal   false          0.0006        0.000617  36    yes, 2.50 s  decays
+//	modal-calibrated   modal   true           0.0016        0.001888  48    yes, 3.75 s  decays
+//	modal-calibrated   modal   false          0.0059        0.005993  36    yes, 3.00 s  decays
+//	default            dwg     true           0.0237        0.143659  33    no        decays
+//	default            dwg     false          0.0315        0.155013  36    no        decays
+//	modal-calibrated   dwg     true           0.0329        0.199527  33    no        decays
+//	modal-calibrated   dwg     false          0.0438        0.215297  36    no        decays
+//
+// The four DWG rows are lower bounds: 24 s of drive does not settle them.
+// Divided by resonanceProbeSettleFraction they stand for settled gains of 0.20
+// to 0.30, against the bound of 0.5. The default/modal/perNoteFilter=true row
+// does not settle either, but at 1.9e-4 it is three orders of magnitude clear of
+// the bound however it is read.
 //
 // The DWG rows were skipped against a known defect until 2026-08-22: with the
 // unnormalised resonator bank the summed loop was above unity, and through the
 // public Piano.Process a 40 s render grew from a peak of 3.2 at 1 s to 1.2e7.
-//
-// The normalisation alone answers the question the skip left open. It brings
-// the hottest DWG aggregate down 60x (1.4276 -> 0.0237) with no change to
-// ResonanceGain, so the AGGREGATION across undamped targets does not need a
-// normalisation of its own: what made the sum exceed unity was the 1/f0 tilt
-// of the per-note filters, not the summing. The perNoteFilter=false rows do not
-// move at all, because that path never goes through the resonator bank - which
-// is exactly why it was the one configuration the defect spared.
+// The 0.5 s-warmup figures for that bank were 1.4276 (default) and 1.9828
+// (modal-calibrated), against 0.0237 and 0.0329 after the normalisation - a 60x
+// drop with no change to ResonanceGain. So the AGGREGATION across undamped
+// targets does not need a normalisation of its own: what made the sum exceed
+// unity was the 1/f0 tilt of the per-note filters, not the summing. The
+// perNoteFilter=false rows barely move under either probe, because that path
+// never goes through the resonator bank - which is exactly why it was the one
+// configuration the defect spared.
 //
 // The modal rows also confirm PR #23's conclusion still holds: the modal
-// aggregate was already bounded and only gets further from the bound.
+// aggregate is bounded by three orders of magnitude, and it settles, so that is
+// a measurement and not a bound.
 func TestAggregateResonanceLoopIsBounded(t *testing.T) {
 	const sampleRate = 48000
 	const closedLoopSeconds = 3.0
@@ -375,6 +526,11 @@ func TestAggregateResonanceLoopIsBounded(t *testing.T) {
 			for _, perNoteFilter := range []bool{true, false} {
 				name := set.name + "/" + string(model) + "/perNoteFilter=" + strconv.FormatBool(perNoteFilter)
 				t.Run(name, func(t *testing.T) {
+					// Safe to parallelise, and needed: the modal aggregate probe
+					// runs at roughly real time, so the eight rows cost about
+					// two minutes of CPU between them.
+					t.Parallel()
+
 					params := set.build(t)
 					params.StringModel = model
 					params.ResonanceEnabled = true
@@ -382,19 +538,16 @@ func TestAggregateResonanceLoopIsBounded(t *testing.T) {
 					params.CouplingMode = CouplingModeOff
 					params.ResonancePerNoteFilter = perNoteFilter
 
-					worst, worstNote := 0.0, 0
-					for _, note := range aggregateNotes {
-						gain := measureResonanceLoopGain(t, params, note, sampleRate, true)
-						if math.IsNaN(gain) || math.IsInf(gain, 0) {
-							t.Fatalf("%s note %d: non-finite aggregate loop gain %v", name, note, gain)
-						}
-						if gain > worst {
-							worst, worstNote = gain, note
-						}
+					r, worstNote := hottestResonanceLoopGain(params, aggregateNotes, sampleRate, true)
+					t.Logf("%s: aggregate open-loop gain %s (hottest of notes %v, at note %d)", name, r, aggregateNotes, worstNote)
+					if r.seconds == 0 {
+						t.Fatalf("%s: probe collected no drive energy", name)
 					}
-					t.Logf("%s: aggregate open-loop gain %.6f (worst of notes %v, at note %d)", name, worst, aggregateNotes, worstNote)
-					if worst > maxResonanceLoopGain {
-						t.Fatalf("%s: aggregate open-loop resonance gain %.4f at note %d exceeds %.2f; every undamped group sums into the same bridge signal", name, worst, worstNote, maxResonanceLoopGain)
+					if math.IsNaN(r.gain) || math.IsInf(r.gain, 0) {
+						t.Fatalf("%s: non-finite aggregate loop gain %v", name, r.gain)
+					}
+					if r.gain > maxResonanceLoopGain {
+						t.Fatalf("%s: aggregate open-loop resonance gain %.4f at note %d exceeds %.2f; every undamped group sums into the same bridge signal", name, r.gain, worstNote, maxResonanceLoopGain)
 					}
 
 					first, last := measureResonanceLoopDecay(t, params, sampleRate, closedLoopSeconds)
@@ -408,6 +561,51 @@ func TestAggregateResonanceLoopIsBounded(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// divergingResonanceGain is the ResonanceGain the DWG core is known to diverge
+// at: PLAN.md records a 120 s render through Piano.Process with the pedal held
+// peaking at 91.5 and still climbing. 0.0007 only creeps up and 0.00018 - the
+// default - is flat.
+const divergingResonanceGain = 0.0014
+
+// TestResonanceProbeSeesKnownDivergingLoop calibrates the open-loop probe
+// against a configuration that is known to diverge.
+//
+// This is the test the bounded-loop probes are worth nothing without. A probe
+// that reports a small number is only evidence if the same probe reports a large
+// one when the loop really is unstable, and the old 0.5 s-warmup probe did not:
+// it reported 0.1968 for this configuration (PLAN.md; 0.1840 when re-run here),
+// under half the bound it asserts, while the renderer was running away. Driving
+// the same configuration to convergence gives 1.5299 (400 s of drive, flat for
+// the last 300 s), so the settled loop gain is above unity exactly as the
+// small-gain condition says it must be for the render to grow.
+//
+// The assertion is that the probe, inside the budget the suite can afford, still
+// sees it: the windowed reading passes 1.0 at about 20 s of drive and stands at
+// 1.1173 at 24 s.
+//
+// Sweeping ResonanceGain here would be redundant - the loop is linear in it, so
+// the settled gain is 1093 * ResonanceGain and unity falls at 0.00092, between
+// the 0.0007 that creeps and the 0.0014 that diverges.
+func TestResonanceProbeSeesKnownDivergingLoop(t *testing.T) {
+	const sampleRate = 48000
+	// Note 33 is where the DWG aggregate loop peaks.
+	const note = 33
+
+	params := NewDefaultParams()
+	params.StringModel = StringModelDWG
+	params.ResonanceEnabled = true
+	params.CouplingEnabled = false
+	params.CouplingMode = CouplingModeOff
+	params.ResonancePerNoteFilter = true
+	params.ResonanceGain = divergingResonanceGain
+
+	r := measureResonanceLoopGain(params, note, sampleRate, true, resonanceProbeMaxSeconds)
+	t.Logf("dwg resonance_gain %.4f, all groups undamped, note %d: %s", divergingResonanceGain, note, r)
+	if r.gain < 1.0 {
+		t.Fatalf("the probe reports %.4f for a configuration that diverges in a 120 s render; a probe that cannot see this one cannot certify the others", r.gain)
 	}
 }
 
