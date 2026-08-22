@@ -29,6 +29,12 @@ type coreRenderConfig struct {
 	keyUpAt      int // block index at which all keys are released, -1 to skip
 	sustainOffAt int // block index at which the sustain pedal lifts, -1 to skip
 	sampleRate   int
+
+	// modalPartials overrides Params.ModalPartials for the modal core. Zero
+	// means "leave the engine default alone", so every pre-existing caller —
+	// and every number pinned against one — keeps rendering at the shipped
+	// default of 8. Only modal_partials_test.go sets it.
+	modalPartials int
 }
 
 // defaultCoreRenderConfig is the isolated single-string scenario: no resonance
@@ -60,6 +66,11 @@ func renderCoreMono(cfg coreRenderConfig) []float64 {
 	params.CouplingEnabled = cfg.coupling
 	if cfg.coupling {
 		params.CouplingMode = cfg.couplingMode
+	}
+	// Zero keeps NewDefaultParams' ModalPartials (8). The DWG core ignores the
+	// field entirely.
+	if cfg.modalPartials > 0 {
+		params.ModalPartials = cfg.modalPartials
 	}
 
 	p := NewPiano(cfg.sampleRate, 16, params)

@@ -72,27 +72,49 @@ func BenchmarkStringBankVoiceCostPerBlock(b *testing.B) {
 // 48 kHz: 128 / 48000 s.
 const realtimeBlockBudgetNs = 128.0 / 48000.0 * 1e9
 
+// voiceCostOpts parameterises benchmarkVoiceCostPerBlock. It exists so the
+// partial-count sweep in modal_bench_test.go can reuse this measurement — same
+// block size, same retrigger discipline, same ns/voice-block and %budget
+// metrics — instead of growing a second copy of it that would drift.
+type voiceCostOpts struct {
+	model  StringModel
+	notes  []int
+	voices int
+	// coupling enables the sympathetic coupling graph. The polyphony sweep
+	// leaves it off (see the comment on BenchmarkStringBankVoiceCostPerBlock);
+	// the partial sweep turns it on because it is not measuring polyphony.
+	coupling bool
+	// partials overrides Params.ModalPartials; 0 keeps the engine default of 8.
+	// The DWG core ignores it.
+	partials int
+}
+
 func benchmarkVoiceCostPerBlock(b *testing.B, model StringModel, notes []int, voices int) {
 	b.Helper()
+	benchmarkVoiceCostPerBlockOpts(b, voiceCostOpts{model: model, notes: notes, voices: voices})
+}
 
-	sb, h := setupBenchmarkModalStringBank(model, notes, true, false)
+func benchmarkVoiceCostPerBlockOpts(b *testing.B, o voiceCostOpts) {
+	b.Helper()
+
+	sb, h := setupBenchmarkModalStringBankOpts(o.model, o.notes, true, o.coupling, o.partials)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if i > 0 && i%benchmarkRetriggerEvery == 0 {
 			b.StopTimer()
-			retriggerBenchmarkBank(sb, h, notes)
+			retriggerBenchmarkBank(sb, h, o.notes)
 			b.StartTimer()
 		}
 		_ = sb.Process(128, nil)
 	}
 	b.StopTimer()
 
-	if b.N == 0 || voices == 0 {
+	if b.N == 0 || o.voices == 0 {
 		return
 	}
 	nsPerBlock := float64(b.Elapsed().Nanoseconds()) / float64(b.N)
-	b.ReportMetric(nsPerBlock/float64(voices), "ns/voice-block")
+	b.ReportMetric(nsPerBlock/float64(o.voices), "ns/voice-block")
 	b.ReportMetric(nsPerBlock/realtimeBlockBudgetNs*100, "%budget")
 }
