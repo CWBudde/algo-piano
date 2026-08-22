@@ -55,6 +55,7 @@ func testEvalSettings() evalSettings {
 		maxDuration:     0.3,
 		decayDBFS:       -90,
 		decayHoldBlocks: 6,
+		decayRelative:   true,
 		renderBlockSize: 64,
 	}
 }
@@ -297,7 +298,7 @@ func TestOutputGainIsScoreInvariant(t *testing.T) {
 			params.OutputGain = gain
 			mono, _, err := renderCandidateFromParams(
 				params, note, 100, settings.sampleRate,
-				settings.decayDBFS, settings.decayHoldBlocks,
+				settings.decayDBFS, settings.decayHoldBlocks, settings.decayRelative,
 				settings.minDuration, settings.maxDuration,
 				settings.renderBlockSize, 0.2,
 			)

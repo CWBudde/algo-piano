@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 
+	"github.com/cwbudde/algo-piano/internal/render"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
 	"github.com/cwbudde/wav"
@@ -19,6 +20,10 @@ func main() {
 	duration := flag.Float64("duration", 2.0, "Duration in seconds")
 	decayDBFS := flag.Float64("decay-dbfs", math.Inf(1), "Auto-stop when stereo block RMS falls below this dBFS (e.g. -90). Disabled by default")
 	decayHoldBlocks := flag.Int("decay-hold-blocks", 6, "Consecutive below-threshold blocks required to stop in auto-decay mode")
+	decayRelative := flag.Bool("decay-relative", true, "Stop the auto-decay render N dB below the render's OWN running peak rather than N dB below full scale. "+
+		"Relative makes the render length independent of the absolute output level, which is what makes output_gain score-invariant; "+
+		"false restores the pre-2026-08-22 absolute threshold so numbers measured under it can be reproduced. "+
+		"Only consulted when -decay-dbfs is set")
 	minDuration := flag.Float64("min-duration", 0.5, "Minimum render duration in seconds when using -decay-dbfs")
 	maxDuration := flag.Float64("max-duration", 20.0, "Maximum render duration in seconds when using -decay-dbfs")
 	releaseAfter := flag.Float64("release-after", 0.12, "Send NoteOff after this many seconds in auto-decay mode")
@@ -94,12 +99,8 @@ func main() {
 			maxFrames = blockSize
 		}
 
-		thresholdLin := math.Pow(10.0, *decayDBFS/20.0)
+		detector := render.NewDecayDetector(*decayDBFS, *decayHoldBlocks, *decayRelative)
 		noteReleased := false
-		belowCount := 0
-		if *decayHoldBlocks < 1 {
-			*decayHoldBlocks = 1
-		}
 		for framesRendered < maxFrames {
 			framesToRender := blockSize
 			if framesRendered+framesToRender > maxFrames {
@@ -116,18 +117,20 @@ func main() {
 			framesRendered += framesToRender
 
 			if framesRendered >= minFrames {
-				if stereoRMS(block) < thresholdLin {
-					belowCount++
-					if belowCount >= *decayHoldBlocks {
-						break
-					}
-				} else {
-					belowCount = 0
+				if detector.Update(block) {
+					break
 				}
+			} else {
+				detector.Track(block)
 			}
 		}
 		totalFrames = framesRendered
-		fmt.Printf("Auto-stop at %d frames (%.3fs), threshold %.1f dBFS\n", totalFrames, float64(totalFrames)/float64(*sampleRate), *decayDBFS)
+		scale := "below full scale"
+		if *decayRelative {
+			scale = fmt.Sprintf("below the render peak %.4f", detector.Peak())
+		}
+		fmt.Printf("Auto-stop at %d frames (%.3fs), threshold %.1f dB %s\n",
+			totalFrames, float64(totalFrames)/float64(*sampleRate), *decayDBFS, scale)
 	} else {
 		for framesRendered < totalFrames {
 			framesToRender := blockSize
@@ -170,16 +173,4 @@ func main() {
 	}
 
 	fmt.Printf("Successfully wrote %s (%d frames)\n", *output, totalFrames)
-}
-
-func stereoRMS(interleaved []float32) float64 {
-	if len(interleaved) == 0 {
-		return 0
-	}
-	var sum float64
-	for _, s := range interleaved {
-		v := float64(s)
-		sum += v * v
-	}
-	return math.Sqrt(sum / float64(len(interleaved)))
 }

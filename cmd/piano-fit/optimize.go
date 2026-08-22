@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cwbudde/algo-piano/analysis"
+	"github.com/cwbudde/algo-piano/internal/render"
 	"github.com/cwbudde/algo-piano/irsynth"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/mayfly"
@@ -53,6 +54,7 @@ type optimizationConfig struct {
 	checkpointEvery  int
 	decayDBFS        float64
 	decayHoldBlocks  int
+	decayRelative    bool
 	minDuration      float64
 	maxDuration      float64
 	finalMinDuration float64
@@ -116,6 +118,7 @@ type evalSettings struct {
 	maxDuration     float64
 	decayDBFS       float64
 	decayHoldBlocks int
+	decayRelative   bool
 	renderBlockSize int
 }
 
@@ -175,6 +178,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		maxDuration:     cfg.maxDuration,
 		decayDBFS:       cfg.decayDBFS,
 		decayHoldBlocks: cfg.decayHoldBlocks,
+		decayRelative:   cfg.decayRelative,
 		renderBlockSize: cfg.renderBlockSize,
 	}
 	finalEvalSettings := evalSettings{
@@ -184,6 +188,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		maxDuration:     cfg.finalMaxDuration,
 		decayDBFS:       cfg.decayDBFS,
 		decayHoldBlocks: cfg.decayHoldBlocks,
+		decayRelative:   cfg.decayRelative,
 		renderBlockSize: cfg.renderBlockSize,
 	}
 
@@ -604,7 +609,7 @@ func renderTarget(
 		mono, _, err := renderCandidateWithDualIR(
 			params, bodyIR, roomL, roomR,
 			note, velocity, settings.sampleRate,
-			settings.decayDBFS, settings.decayHoldBlocks,
+			settings.decayDBFS, settings.decayHoldBlocks, settings.decayRelative,
 			settings.minDuration, settings.maxDuration,
 			settings.renderBlockSize, releaseAfter,
 		)
@@ -612,7 +617,7 @@ func renderTarget(
 	}
 	mono, _, err := renderCandidateFromParams(
 		params, note, velocity, settings.sampleRate,
-		settings.decayDBFS, settings.decayHoldBlocks,
+		settings.decayDBFS, settings.decayHoldBlocks, settings.decayRelative,
 		settings.minDuration, settings.maxDuration,
 		settings.renderBlockSize, releaseAfter,
 	)
@@ -728,6 +733,7 @@ func renderCandidateWithDualIR(
 	sampleRate int,
 	decayDBFS float64,
 	decayHoldBlocks int,
+	decayRelative bool,
 	minDuration float64,
 	maxDuration float64,
 	blockSize int,
@@ -743,7 +749,7 @@ func renderCandidateWithDualIR(
 	if len(roomIRL) > 0 && len(roomIRR) > 0 {
 		p.SetRoomIR(roomIRL, roomIRR)
 	}
-	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, minDuration, maxDuration, blockSize, releaseAfter)
+	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, decayRelative, minDuration, maxDuration, blockSize, releaseAfter)
 }
 
 func renderCandidateFromParams(
@@ -753,6 +759,7 @@ func renderCandidateFromParams(
 	sampleRate int,
 	decayDBFS float64,
 	decayHoldBlocks int,
+	decayRelative bool,
 	minDuration float64,
 	maxDuration float64,
 	blockSize int,
@@ -762,7 +769,7 @@ func renderCandidateFromParams(
 		return nil, nil, errors.New("nil params")
 	}
 	p := piano.NewPiano(sampleRate, 16, params)
-	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, minDuration, maxDuration, blockSize, releaseAfter)
+	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, decayRelative, minDuration, maxDuration, blockSize, releaseAfter)
 }
 
 func renderPiano(
@@ -772,6 +779,7 @@ func renderPiano(
 	sampleRate int,
 	decayDBFS float64,
 	decayHoldBlocks int,
+	decayRelative bool,
 	minDuration float64,
 	maxDuration float64,
 	blockSize int,
@@ -799,12 +807,11 @@ func renderPiano(
 		return nil, nil, errors.New("max duration too small")
 	}
 
-	threshold := math.Pow(10.0, decayDBFS/20.0)
+	detector := render.NewDecayDetector(decayDBFS, decayHoldBlocks, decayRelative)
 	if blockSize < 16 {
 		blockSize = 16
 	}
 	framesRendered := 0
-	belowCount := 0
 	noteReleased := false
 	stereo := make([]float32, 0, maxFrames*2)
 
@@ -822,14 +829,11 @@ func renderPiano(
 		framesRendered += framesToRender
 
 		if framesRendered >= minFrames {
-			if stereoRMS(block) < threshold {
-				belowCount++
-				if belowCount >= decayHoldBlocks {
-					break
-				}
-			} else {
-				belowCount = 0
+			if detector.Update(block) {
+				break
 			}
+		} else {
+			detector.Track(block)
 		}
 	}
 

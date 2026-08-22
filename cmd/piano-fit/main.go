@@ -81,6 +81,9 @@ func main() {
 	checkpointEvery := flag.Int("checkpoint-every", 1, "Write checkpoint every N best-score improvements")
 	decayDBFS := flag.Float64("decay-dbfs", -90.0, "Auto-stop threshold in dBFS")
 	decayHoldBlocks := flag.Int("decay-hold-blocks", 6, "Consecutive below-threshold blocks for stop")
+	decayRelative := flag.Bool("decay-relative", true, "Stop the auto-decay render N dB below the render's OWN running peak rather than N dB below full scale. "+
+		"Relative makes the render length independent of the absolute output level, which is what makes output_gain score-invariant; "+
+		"false restores the pre-2026-08-22 absolute threshold so numbers measured under it can be reproduced")
 	minDuration := flag.Float64("min-duration", 2.0, "Minimum render duration in seconds")
 	maxDuration := flag.Float64("max-duration", 30.0, "Maximum render duration in seconds")
 	optSampleRate := flag.Int("opt-sample-rate", 0, "Optimization-loop sample rate (0 uses --sample-rate)")
@@ -121,8 +124,10 @@ func main() {
 	sweepProfiles := flag.String("sweep-profiles", "", "Comma-separated scoring profiles to record per sample "+
 		"(empty = the pass profile first, then legacy-v1). The first profile is the primary Pareto objective")
 
-	matchOutputGainFlag := flag.Bool("match-output-gain", true, "Solve output_gain analytically after the search instead of searching it "+
-		"(analysis.Compare RMS-normalises both signals, so output_gain cannot move the score at all)")
+	matchOutputGainFlag := flag.Bool("match-output-gain", true, "Solve output_gain analytically after the search instead of searching it. "+
+		"analysis.Compare RMS-normalises both signals, and with the default --decay-relative the render length no longer depends on the "+
+		"absolute level either, so output_gain cannot move the score. Under --decay-relative=false it can: a louder render crosses the "+
+		"absolute stop threshold later and is scored over a longer window")
 
 	passFlag := flag.String("pass", "none", "Per-aspect fitting pass: none|attack|sustain|inharmonicity. Restricts which knobs may move and "+
 		"which part of the signal is compared; orthogonal to --optimize")
@@ -353,6 +358,7 @@ func main() {
 		checkpointEvery:  *checkpointEvery,
 		decayDBFS:        *decayDBFS,
 		decayHoldBlocks:  *decayHoldBlocks,
+		decayRelative:    *decayRelative,
 		minDuration:      *optMinDuration,
 		maxDuration:      *optMaxDuration,
 		finalMinDuration: *minDuration,

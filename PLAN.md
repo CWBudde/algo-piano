@@ -108,10 +108,19 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         `--polish-only --resume` is the standard finishing move on an existing
         best.
   - [x] Output gain is **solved, not searched**: `analysis.Compare`
-        RMS-normalises both signals, so `output_gain` is provably
-        score-invariant and searching it would burn budget on a flat dimension.
+        RMS-normalises both signals **and** the render auto-stop is taken
+        relative to the render's own running peak (`internal/render`,
+        2026-08-22), so the render length does not depend on the absolute level
+        either. Both halves are needed and both are tested
+        (`TestOutputGainIsScoreInvariant`,
+        `TestOutputGainDoesNotMoveTheScoreThroughRenderLength`); with only the
+        first, a louder render crossed the absolute −90 dBFS stop later and was
+        scored over a longer window. `output_gain` is therefore score-invariant
+        and searching it would burn budget on a flat dimension.
         `--match-output-gain` (default on) solves it analytically after the
         search instead, and it is deliberately excluded from the polish knobs.
+        `--decay-relative=false` restores the old absolute threshold for
+        reproducing pre-2026-08-22 numbers.
 - [ ] Add physically-meaningful fitting passes for note parameters
       (`--pass none|attack|sustain|inharmonicity` restricts the movable knobs,
       optionally windows the compare via `--pass-window`, **and** now scores with
@@ -686,17 +695,22 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         `legacy-v1` seed 1, reached `score` 0.4937 with `spectral_rmse_db` 47.5
         but `time_rmse` 0.1158 against a 0.112 fence.
 
-  - [ ] follow-up: **`piano-fit --match-output-gain` is not score-neutral.**
-        The flag's own help says `analysis.Compare` RMS-normalises both signals
-        so `output_gain` cannot move the score. It can: the auto-stop is an
-        **absolute** −90 dBFS threshold, so a louder render crosses it later,
-        produces a longer candidate and scores differently. Measured 2026-08-22
-        on one fitted preset, same knobs otherwise: `output_gain` 7.096 scores
-        0.5208, `output_gain` 1.357 scores 0.5061. Every fitted preset in the
-        C4 re-fit round had to be re-measured at the tracked preset's
-        `output_gain` because of it. Either make the auto-stop relative to the
-        candidate's own peak, or drop the claim from the flag's help and from
-        `docs/optimization-workflow.md`.
+  - [x] **`piano-fit --match-output-gain` is now score-neutral.** It was not:
+        the auto-stop was an **absolute** −90 dBFS threshold, so a louder render
+        crossed it later, produced a longer candidate and scored differently
+        (measured 2026-08-22 on one fitted preset, same knobs otherwise:
+        `output_gain` 7.096 scored 0.5208, 1.357 scored 0.5061), and every
+        fitted preset in the C4 re-fit round had to be re-measured at the
+        tracked preset's `output_gain` because of it. Fixed by making the stop
+        threshold N dB below the render's **own running peak**. The detector
+        lives in `internal/render` and is shared by `piano-fit`,
+        `piano-distance`, `piano-modal-fit` and `piano-render`, which had four
+        copies of the same loop; `--decay-relative=false` restores the absolute
+        threshold so pre-change numbers stay reproducible, bit for bit. The
+        renders got slightly longer, so `assets/thresholds/c4.json` was
+        re-baselined in the same PR: four of five caps LOOSENED, the deltas are
+        in that file's `recorded.note`. Re-fitting the C4 preset against the new
+        (longer) scoring window is the honest follow-up.
   - [ ] follow-up: **the Halton sweep caps at 8 dimensions.** The `attack` pass
         exposes 9 knobs, so `--sweep --pass attack` with a joint stage fails
         with `halton: 9 dimensions exceed the 8-prime base table` and
@@ -795,6 +809,7 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         own piece of work: the new preset changes the norm corpus, so the
         exclusion and the normalisation constants have to be re-derived together
         with it. The exclusion stays exactly as it is until then.
+
 - [ ] Add benchmarks:
   - [x] DWG vs modal CPU at fixed block size/sample rate
         (`BenchmarkStringBankStringModels` in `piano/modal_bench_test.go` runs

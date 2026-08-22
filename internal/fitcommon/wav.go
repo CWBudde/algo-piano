@@ -2,7 +2,6 @@ package fitcommon
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 
@@ -124,18 +123,4 @@ func StereoToMono64(st []float32) []float64 {
 		out[i] = 0.5 * (float64(st[i*2]) + float64(st[i*2+1]))
 	}
 	return out
-}
-
-func StereoRMS(interleaved []float32) float64 {
-	if len(interleaved) == 0 {
-		return 0
-	}
-
-	var sum float64
-	for _, s := range interleaved {
-		v := float64(s)
-		sum += v * v
-	}
-
-	return math.Sqrt(sum / float64(len(interleaved)))
 }

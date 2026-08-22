@@ -9,6 +9,16 @@ import (
 // defaultPolishKnobs is the default --polish-knobs list. It deliberately
 // excludes output_gain: that knob is score-invariant (see matchOutputGain) and
 // polishing it would waste the entire eval budget on a flat dimension.
+//
+// The invariance has two halves, and both are proved by tests rather than
+// asserted here. analysis.Compare RMS-normalises both signals
+// (TestOutputGainIsScoreInvariant), and the render auto-stop is taken relative
+// to the render's own running peak so the render length does not depend on the
+// absolute level either (TestOutputGainDoesNotMoveTheScoreThroughRenderLength
+// in gain_invariance_test.go). The second half only became true on 2026-08-22;
+// before that the auto-stop was an absolute -90 dBFS threshold and a louder
+// render was scored over a longer window. --decay-relative=false brings that
+// behaviour, and the level-dependence with it, back.
 const defaultPolishKnobs = "render.velocity,render.release_after,hammer_initial_velocity_scale"
 
 // polishConfig parameterises the deterministic coordinate-descent polish stage.

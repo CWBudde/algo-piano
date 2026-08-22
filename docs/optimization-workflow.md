@@ -320,14 +320,33 @@ selection, polish disables itself with a message rather than erroring.
 
 ### Output gain is solved, not searched
 
-`analysis.Compare` RMS-normalises both signals before scoring, which makes
-`output_gain` provably **score-invariant**: searching it burns budget on a
-perfectly flat dimension. `--match-output-gain` (default on) therefore drops the
-knob from the searched dimensions entirely and solves it in closed form after
-the search, so the written preset lands at the right absolute level without ever
-having been optimized for it. Because it is no longer a knob, the match is also
-free of the `[0.01, 5.0]` search bounds and can reach whatever level the
-reference actually needs.
+`analysis.Compare` RMS-normalises both signals before scoring, and — since
+2026-08-22 — the render auto-stop is taken relative to the render's own running
+peak rather than to full scale, so the render LENGTH no longer depends on the
+absolute level either. Together those two make `output_gain`
+**score-invariant**: searching it burns budget on a perfectly flat dimension.
+`--match-output-gain` (default on) therefore drops the knob from the searched
+dimensions entirely and solves it in closed form after the search, so the
+written preset lands at the right absolute level without ever having been
+optimized for it. Because it is no longer a knob, the match is also free of the
+`[0.01, 5.0]` search bounds and can reach whatever level the reference actually
+needs.
+
+Both halves are load-bearing and both are tested.
+`TestOutputGainIsScoreInvariant` covers the analysis stage;
+`TestOutputGainDoesNotMoveTheScoreThroughRenderLength`
+(`cmd/piano-fit/gain_invariance_test.go`) covers the render length, and it fails
+against the pre-2026-08-22 absolute auto-stop. Before that change the claim was
+simply false: a louder render crossed the absolute −90 dBFS threshold later,
+produced a longer candidate and scored differently — measured on one fitted
+preset, same knobs otherwise, `output_gain` 7.096 scored 0.5208 and 1.357 scored
+0.5061.
+
+`--decay-relative=false` (in `piano-fit`, `piano-distance`, `piano-modal-fit`
+and `piano-render`) restores the absolute threshold, so any number measured
+before the change can be reproduced exactly. It also restores the
+level-dependence, so do not use it while comparing candidates rendered at
+different output gains.
 
 Pass `--match-output-gain=false` to get the old behaviour: `output_gain` returns
 to the knob set and is searched like any other dimension. Reports written in
@@ -609,12 +628,15 @@ Four rules that this round paid for:
   Filter with `.knobs["render.velocity"]==118 and .knobs["render.release_after"]==3.5`
   — both, not just the velocity: `release_after` is not serialised into the preset
   either, so a sample that moved it reports metrics the gate cannot reproduce.
-- **`output_gain` is not score-neutral**, despite what `--match-output-gain`'s
-  help says. The auto-stop is an **absolute** −90 dBFS threshold, so a louder
-  render crosses it later, yields a longer candidate and scores differently:
-  measured on one fitted preset, same knobs otherwise, `output_gain` 7.096
-  scores 0.5208 and 1.357 scores 0.5061. Compare fitted presets only after
-  normalising `output_gain` to the tracked preset's value.
+- **`output_gain` used to be gain-dependent; since 2026-08-22 it is not.** The
+  auto-stop was an **absolute** −90 dBFS threshold, so a louder render crossed
+  it later, yielded a longer candidate and scored differently: measured on one
+  fitted preset, same knobs otherwise, `output_gain` 7.096 scored 0.5208 and
+  1.357 scored 0.5061. The stop threshold is now taken relative to the render's
+  own running peak and the dependence is gone (see _Output gain is solved, not
+  searched_). Sweep reports produced before that date were measured under the
+  old rule, so compare their fitted presets only after normalising `output_gain`
+  to the tracked preset's value — or re-measure them.
 - **The joint stage caps at 8 dimensions.** The `attack` pass exposes 9 knobs,
   so `--sweep --pass attack` with a joint stage fails with
   `halton: 9 dimensions exceed the 8-prime base table`, and
