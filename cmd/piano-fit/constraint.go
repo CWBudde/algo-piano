@@ -198,3 +198,29 @@ func applyScoreConstraints(
 	}
 	return ev
 }
+
+// postMatchEval finishes the winner's post-gain-match re-score.
+//
+// That re-score goes through scoreParams, which is the right thing — it
+// measures every constrained profile on the same fresh render, so
+// best_constraint_scores describes the preset that is written — but it folds
+// the constraints in the way it does for a SEARCH candidate. Two corrections
+// are needed, because the winner is not a search candidate:
+//
+//   - A breach there must not overwrite the primary score with the search
+//     penalty. The report still has to state a readable score; the breach is
+//     carried by constraintViolated and by the run's non-zero exit.
+//   - The re-score must not be counted as a rejection, or constraint_rejections
+//     would be off by one exactly when the run failed.
+//
+// A feasible re-score needs neither correction and is returned unchanged.
+func postMatchEval(cfg *optimizationConfig, ev optimizationEval, rejectsBefore int) optimizationEval {
+	if len(cfg.scoreConstraints) == 0 || !ev.constraintViolated {
+		return ev
+	}
+	ev.aggregate = aggregateScores(ev.notes, targetWeights(cfg.targets), cfg.aggregate)
+	if cfg.constraintRejects != nil {
+		cfg.constraintRejects.Store(int64(rejectsBefore))
+	}
+	return ev
+}

@@ -266,7 +266,7 @@ sweep-sustain-c4 preset="out/passes/attack.json" reference="reference/c4.wav" ou
 # The gate stays a separate post-hoc check: run `just gate-c4` on the output.
 #
 # Deliberately NOT part of `just ci`: it costs minutes.
-fit-sustain-constrained-c4 preset="out/passes/attack-sample17.json" reference="reference/c4.wav" output_preset="out/passes/sustain-constrained.json" floor="0.5086" time_budget="180" workers="auto" seed="1":
+fit-sustain-constrained-c4 preset="out/passes/attack-sample17.json" reference="reference/c4.wav" output_preset="out/passes/sustain-constrained.json" floor="0.5183" time_budget="180" workers="auto" seed="1":
     #!/usr/bin/env bash
     set -euo pipefail
     # just passes recipe arguments positionally, so `name=value` arrives as a raw
@@ -274,7 +274,7 @@ fit-sustain-constrained-c4 preset="out/passes/attack-sample17.json" reference="r
     # value to the parameter it names, so arguments may be given in any order.
     names=(preset reference output_preset floor time_budget workers seed)
     raw=("{{preset}}" "{{reference}}" "{{output_preset}}" "{{floor}}" "{{time_budget}}" "{{workers}}" "{{seed}}")
-    defaults=("out/passes/attack-sample17.json" "reference/c4.wav" "out/passes/sustain-constrained.json" "0.5086" "180" "auto" "1")
+    defaults=("out/passes/attack-sample17.json" "reference/c4.wav" "out/passes/sustain-constrained.json" "0.5183" "180" "auto" "1")
     declare -A arg=()
     for i in "${!names[@]}"; do
         arg["${names[$i]}"]="${defaults[$i]}"

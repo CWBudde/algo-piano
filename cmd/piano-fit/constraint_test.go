@@ -432,3 +432,66 @@ func TestConstraintFieldsReachTheReport(t *testing.T) {
 		}
 	})
 }
+
+// TestPostMatchEval covers the two corrections applied to the winner's
+// post-gain-match re-score. That re-score runs through scoreParams, which folds
+// the constraints in the way it does for a search candidate; the winner is not
+// one.
+func TestPostMatchEval(t *testing.T) {
+	newCfg := func(cs []scoreConstraint) *optimizationConfig {
+		return &optimizationConfig{
+			targets:           []noteTarget{{note: 60, weight: 1}},
+			aggregate:         aggregateMean,
+			scoreConstraints:  cs,
+			constraintRejects: new(atomic.Int64),
+		}
+	}
+
+	t.Run("a breach restores the readable primary score", func(t *testing.T) {
+		cfg := newCfg(legacyConstraint(t, 0.5121))
+		cfg.constraintRejects.Store(43)
+		ev := optimizationEval{
+			// What scoreParams returns for a breaching candidate: the penalty
+			// in place of the aggregate, the per-note primary scores intact.
+			aggregate:          constraintPenaltyBase + 0.01,
+			notes:              []noteReport{{Note: 60, Score: 0.3625}},
+			constraintScores:   map[string]float64{analysis.ProfileLegacyV1: 0.5221},
+			constraintViolated: true,
+		}
+		got := postMatchEval(cfg, ev, 42)
+		if got.aggregate != 0.3625 {
+			t.Fatalf("aggregate = %v, want the primary 0.3625", got.aggregate)
+		}
+		if !got.constraintViolated {
+			t.Fatal("the breach must survive: it is what fails the run")
+		}
+		if n := cfg.constraintRejects.Load(); n != 42 {
+			t.Fatalf("rejects = %d, want the pre-re-score 42", n)
+		}
+	})
+
+	t.Run("a feasible re-score is untouched", func(t *testing.T) {
+		cfg := newCfg(legacyConstraint(t, 0.5121))
+		cfg.constraintRejects.Store(7)
+		ev := optimizationEval{
+			aggregate:        0.3625,
+			notes:            []noteReport{{Note: 60, Score: 0.3625}},
+			constraintScores: map[string]float64{analysis.ProfileLegacyV1: 0.5024},
+		}
+		got := postMatchEval(cfg, ev, 7)
+		if !reflect.DeepEqual(got, ev) {
+			t.Fatalf("got %+v, want the eval unchanged", got)
+		}
+		if n := cfg.constraintRejects.Load(); n != 7 {
+			t.Fatalf("rejects = %d, want 7", n)
+		}
+	})
+
+	t.Run("an unconstrained run is untouched", func(t *testing.T) {
+		cfg := newCfg(nil)
+		ev := optimizationEval{aggregate: 0.42, constraintViolated: true}
+		if got := postMatchEval(cfg, ev, 0); !reflect.DeepEqual(got, ev) {
+			t.Fatalf("got %+v, want the eval unchanged", got)
+		}
+	})
+}

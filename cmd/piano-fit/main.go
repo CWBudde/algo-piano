@@ -512,6 +512,20 @@ func main() {
 			fmt.Printf("  note %d score=%.4f similarity=%.2f%% (%s)\n", nr.Note, nr.Score, nr.Similarity*100.0, nr.ReferencePath)
 		}
 	}
+
+	// A constrained run that found no feasible candidate must not exit 0: the
+	// preset it produced is known to breach the ceiling, and both downstream
+	// tooling and a human reading the report would otherwise trust it.
+	//
+	// The preset and the report ARE still written, deliberately: they are the
+	// only evidence of what the run explored, and a failed run whose evidence
+	// is discarded cannot be diagnosed. The non-zero exit, plus
+	// best_constraint_scores in the report, is what marks the result as
+	// unpublishable.
+	if result.constraintInfeasible {
+		die("no feasible candidate: the written preset breaches a score constraint (%s)",
+			formatConstraintScores(scoreConstraints, result.bestConstraintScores))
+	}
 }
 
 func parseWorkersFlag(raw string) (int, error) {

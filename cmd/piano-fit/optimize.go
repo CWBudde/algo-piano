@@ -172,6 +172,11 @@ type optimizationResult struct {
 	// constraints rejected. Without both the run is unauditable.
 	bestConstraintScores map[string]float64
 	constraintRejections int
+	// constraintInfeasible records that the run ended on a candidate that
+	// breaches a constraint — the seed was infeasible and the budget never
+	// found a feasible point, or the post-gain-match re-check found one. Such
+	// a run must not report success, however good its primary score looks.
+	constraintInfeasible bool
 }
 
 type optimizationState struct {
@@ -601,6 +606,14 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 			// about to be written. Re-rendering once per target at final
 			// settings is negligible next to a fitting run and keeps the
 			// reported score and metrics honest in both decay modes.
+			// The same re-score also re-checks every score constraint: it goes
+			// through scoreParams, which measures the constrained profiles on
+			// the very same render, so best_constraint_scores describes the
+			// preset that is written rather than the candidate as the search
+			// last saw it. rejectsBefore is read first because this re-score
+			// is the winner, not a search candidate: it must not be counted as
+			// a rejection (see postMatchEval).
+			rejectsBefore := constraintRejectCount(cfg)
 			rescored, rerr := scoreParams(
 				cfg, finalEval.params, finalEval.bodyIR, finalEval.roomIRL, finalEval.roomIRR,
 				finalEval.velocity, finalEval.releaseAfter, finalEvalSettings,
@@ -608,10 +621,15 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 			if rerr != nil {
 				fmt.Fprintf(os.Stderr, "output-gain re-score skipped: %v\n", rerr)
 			} else {
+				rescored = postMatchEval(cfg, rescored, rejectsBefore)
 				if rescored.aggregate != finalEval.aggregate {
 					fmt.Printf("Re-scored after gain match: %.6f -> %.6f\n", finalEval.aggregate, rescored.aggregate)
 				}
 				finalEval = rescored
+				if len(cfg.scoreConstraints) > 0 {
+					fmt.Printf("Post-gain-match constrained scores: %s\n",
+						formatConstraintScores(cfg.scoreConstraints, finalEval.constraintScores))
+				}
 			}
 		}
 	}
@@ -636,6 +654,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 
 		bestConstraintScores: finalEval.constraintScores,
 		constraintRejections: constraintRejectCount(cfg),
+		constraintInfeasible: len(cfg.scoreConstraints) > 0 && finalEval.constraintViolated,
 	}, nil
 }
 
