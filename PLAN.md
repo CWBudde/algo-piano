@@ -212,6 +212,50 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         constrain what the gate actually measures — a second
         `--score-constraint` on the gated metric, or a gate-aware profile — not
         to re-run the same recipe until one passes.
+        **That step is now built and measured, and the box still stays open —
+        for a different reason.** `piano-fit` gained `--gate-thresholds` and
+        `--metric-constraint`: RAW-metric ceilings enforced during the search,
+        resolved by the same `internal/gate` code `just gate-c4` uses. A score
+        ceiling could never have fixed this, and that is a mechanism rather than
+        a guess: `legacy-v1` SATURATES its spectral component (`clamp01` pins it
+        at 1.0 above `analysis.NormSpectral = 30.0`; every preset in the repo
+        measures 47.8-68.6 dB), so `spectral_rmse_db` — the one metric that
+        fails the gate — contributes a constant to `score` with no gradient and
+        is invisible to `decay-v1` and to the `legacy-v1` floor alike.
+        `just fit-sustain-constrained-c4` now passes
+        `assets/thresholds/c4.json` by default, on top of the unchanged floor.
+        Re-measured on the current renderer, the floor is `0.518264`, so the
+        recipe's `0.5183` default still holds, and sample #17 itself clears the
+        gate with 98% of the `spectral_rmse_db` budget used. Two 180 s runs plus
+        one control, every figure measured on the WRITTEN preset:
+
+        | run                       | evals | rejected | `decay-v1` | `legacy-v1` | `spectral_rmse_db` | `just gate-c4` |
+        | ------------------------- | ----- | -------- | ---------- | ----------- | ------------------ | -------------- |
+        | seed #17                  | —     | —        | 0.3927     | 0.5183      | 60.90              | PASS (98%)     |
+        | seed 1, gated             | 2505  | 2433     | **0.3903** | **0.5092**  | 56.46              | **PASS** (91%) |
+        | seed 7, gated             | 2521  | 2437     | **0.3788** | **0.5106**  | 61.01              | **PASS** (98%) |
+        | seed 1, floor only (twin) | 2512  | 2367     | 0.3689     | 0.5180      | 65.64              | **FAIL**       |
+
+        The twin is the control and it is the whole argument: same seed, same
+        budget, same machine, same floor, only the raw fence removed — and it
+        lands 5.4% past the cap, the same failure mode as the two runs above.
+        With the fence both seeds clear the gate, beat #17 on `decay-v1` and
+        hold the floor, so a gate PASS is now a property of the method rather
+        than of how many evaluations the wall clock bought.
+        Why the box nevertheless stays open. (1) The fence is BINDING, not
+        slack — seed 7 finishes at 98% of the spectral budget — so the search is
+        now shaping itself against the fence, and the un-gated metrics are where
+        the payment shows: seed 1 pays `partial_level_rmse_db` 15.20 → 15.49,
+        `attack_centroid_rmse_oct` 0.178 → 0.243 and
+        `decay_segment_rmse_db_per_s` 11.51 → 12.49, while seed 7 pays only
+        `partial_freq_rmse_cents` 35.64 → 36.40 and improves the other two.
+        (2) The `decay-v1` gain over #17 is 0.0024 and 0.0139 — real, but two
+        seeds on one machine is not a distribution. (3) Nothing was shipped:
+        promoting one of these presets means replacing the tracked gate baseline
+        preset and re-baselining `assets/thresholds/c4.json` against it, which
+        is a separate change with its own evidence requirements and cannot ride
+        along with the commit that builds the fence. No threshold and no floor
+        was touched to make any of these runs pass.
         Also honest: neither run beats sample #17 on the primary objective by a
         margin that survives the gate. The sweep never promised otherwise.
         Two findings worth carrying forward. (1) The floor choice is not

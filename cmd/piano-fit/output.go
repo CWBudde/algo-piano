@@ -65,6 +65,16 @@ type runReport struct {
 	ScoreConstraints     []scoreConstraint  `json:"score_constraints,omitempty"`
 	ConstraintRejections int                `json:"constraint_rejections,omitempty"`
 	BestConstraintScores map[string]float64 `json:"best_constraint_scores,omitempty"`
+	// GateThresholds is the threshold file --gate-thresholds loaded,
+	// MetricConstraints the raw-metric ceilings that were enforced (the file's
+	// non-null entries plus any ad-hoc --metric-constraint), and
+	// BestMetricValues the WINNER's value for each of them. The path alone is
+	// not enough: threshold files are re-baselined, so a report that named
+	// only the path would stop describing what the run actually enforced the
+	// first time the file moved.
+	GateThresholds    string             `json:"gate_thresholds,omitempty"`
+	MetricConstraints []metricConstraint `json:"metric_constraints,omitempty"`
+	BestMetricValues  map[string]float64 `json:"best_metric_values,omitempty"`
 
 	// OutputGainMatched is the closed-form multiplier applied to
 	// piano.OutputGain after the search finished. It is reported separately
@@ -131,6 +141,10 @@ type outputRequest struct {
 	scoreConstraints     []scoreConstraint
 	constraintRejections int
 	bestConstraintScores map[string]float64
+
+	gateThresholds    string
+	metricConstraints []metricConstraint
+	bestMetricValues  map[string]float64
 }
 
 func writeOutputs(req outputRequest) error {
@@ -230,6 +244,10 @@ func writeOutputs(req outputRequest) error {
 		ScoreConstraints:     req.scoreConstraints,
 		ConstraintRejections: req.constraintRejections,
 		BestConstraintScores: req.bestConstraintScores,
+
+		GateThresholds:    req.gateThresholds,
+		MetricConstraints: req.metricConstraints,
+		BestMetricValues:  req.bestMetricValues,
 
 		Polish:            req.polish,
 		OutputGainMatched: req.outputGainMatched,

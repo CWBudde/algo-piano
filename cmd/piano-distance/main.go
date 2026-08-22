@@ -9,6 +9,7 @@ import (
 
 	dspresample "github.com/cwbudde/algo-dsp/dsp/resample"
 	"github.com/cwbudde/algo-piano/analysis"
+	"github.com/cwbudde/algo-piano/internal/gate"
 	"github.com/cwbudde/algo-piano/internal/render"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
@@ -142,19 +143,15 @@ func runGate(path string, m analysis.Metrics) {
 	if path == "" {
 		return
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		die("failed to read thresholds: %v", err)
-	}
-	var spec gateSpec
-	if err := json.Unmarshal(raw, &spec); err != nil {
-		die("failed to parse thresholds %s: %v", path, err)
-	}
-	breaches, worstUsed, worstMetric, err := evaluateGate(spec, m)
+	spec, err := gate.LoadSpec(path)
 	if err != nil {
 		die("%v", err)
 	}
-	enforced := spec.enforcedCount()
+	breaches, worstUsed, worstMetric, err := gate.Evaluate(spec, m)
+	if err != nil {
+		die("%v", err)
+	}
+	enforced := spec.EnforcedCount()
 	if len(breaches) > 0 {
 		for _, b := range breaches {
 			fmt.Fprintln(os.Stderr, formatBreach(b))
@@ -164,7 +161,7 @@ func runGate(path string, m analysis.Metrics) {
 	}
 	fmt.Printf("gate: PASS %d enforced metrics within thresholds\n", enforced)
 	if worstMetric != "" {
-		values := metricsByJSONTag(m)
+		values := gate.MetricsByJSONTag(m)
 		fmt.Printf("gate: worst headroom %s %.2f/%.2f (%.0f%% of budget used)\n",
 			worstMetric, values[worstMetric], *spec.Max[worstMetric], worstUsed*100.0)
 	}

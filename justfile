@@ -263,18 +263,26 @@ sweep-sustain-c4 preset="out/passes/attack.json" reference="reference/c4.wav" ou
 # measure it with `just distance-c4 reference/c4.wav <preset> ""` first. A stale
 # floor from an older renderer constrains nothing.
 #
-# The gate stays a separate post-hoc check: run `just gate-c4` on the output.
+# `thresholds` constrains what the gate MEASURES, which the floor cannot. The
+# two are complementary, not alternatives: the floor fences the comparable
+# legacy-v1 SCORE, while the threshold file fences the RAW metrics `just gate-c4`
+# checks - above all `spectral_rmse_db`, which legacy-v1 saturates (clamp01 pins
+# its spectral component at 1.0 above analysis.NormSpectral = 30.0, and every
+# preset in the repo measures 47.8-68.6 dB) and therefore cannot see at all.
+# Pass thresholds="" to drop the raw fence and keep only the floor.
+#
+# The gate stays a separate post-hoc check too: run `just gate-c4` on the output.
 #
 # Deliberately NOT part of `just ci`: it costs minutes.
-fit-sustain-constrained-c4 preset="out/passes/attack-sample17.json" reference="reference/c4.wav" output_preset="out/passes/sustain-constrained.json" floor="0.5183" time_budget="180" workers="auto" seed="1":
+fit-sustain-constrained-c4 preset="out/passes/attack-sample17.json" reference="reference/c4.wav" output_preset="out/passes/sustain-constrained.json" floor="0.5183" thresholds="assets/thresholds/c4.json" time_budget="180" workers="auto" seed="1":
     #!/usr/bin/env bash
     set -euo pipefail
     # just passes recipe arguments positionally, so `name=value` arrives as a raw
     # string in whatever slot it landed in. Strip the `name=` prefix and route the
     # value to the parameter it names, so arguments may be given in any order.
-    names=(preset reference output_preset floor time_budget workers seed)
-    raw=("{{preset}}" "{{reference}}" "{{output_preset}}" "{{floor}}" "{{time_budget}}" "{{workers}}" "{{seed}}")
-    defaults=("out/passes/attack-sample17.json" "reference/c4.wav" "out/passes/sustain-constrained.json" "0.5183" "180" "auto" "1")
+    names=(preset reference output_preset floor thresholds time_budget workers seed)
+    raw=("{{preset}}" "{{reference}}" "{{output_preset}}" "{{floor}}" "{{thresholds}}" "{{time_budget}}" "{{workers}}" "{{seed}}")
+    defaults=("out/passes/attack-sample17.json" "reference/c4.wav" "out/passes/sustain-constrained.json" "0.5183" "assets/thresholds/c4.json" "180" "auto" "1")
     declare -A arg=()
     for i in "${!names[@]}"; do
         arg["${names[$i]}"]="${defaults[$i]}"
@@ -295,6 +303,7 @@ fit-sustain-constrained-c4 preset="out/passes/attack-sample17.json" reference="r
     reference="${arg[reference]}"
     output_preset="${arg[output_preset]}"
     floor="${arg[floor]}"
+    thresholds="${arg[thresholds]}"
     time_budget="${arg[time_budget]}"
     workers="${arg[workers]}"
     seed="${arg[seed]}"
@@ -313,6 +322,10 @@ fit-sustain-constrained-c4 preset="out/passes/attack-sample17.json" reference="r
         echo "  (or point the recipe elsewhere: just fit-sustain-constrained-c4 preset=<path>)" >&2
         exit 1
     fi
+    extra_thresholds=()
+    if [ -n "$thresholds" ]; then
+        extra_thresholds=(--gate-thresholds "$thresholds")
+    fi
     mkdir -p "$(dirname "$output_preset")"
     GOCACHE="${GOCACHE:-/tmp/gocache}" go run -tags asm ./cmd/piano-fit \
         --pass sustain \
@@ -320,6 +333,7 @@ fit-sustain-constrained-c4 preset="out/passes/attack-sample17.json" reference="r
         --reference "$reference" \
         --output-preset "$output_preset" \
         --score-constraint "legacy-v1:$floor" \
+        "${extra_thresholds[@]}" \
         --work-dir out/fit-sustain-constrained \
         --optimize piano,mix \
         --note 60 \

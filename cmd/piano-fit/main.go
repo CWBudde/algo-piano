@@ -136,6 +136,27 @@ func main() {
 		"ceiling stays comparable to `just distance-c4`. The gate (assets/thresholds/*.json) remains a separate "+
 		"post-hoc check")
 
+	// --gate-thresholds / --metric-constraint block. Both default off, and with
+	// both empty the search path is bit-identical to what it was before they
+	// existed — the same invariant --score-constraint carries.
+	//
+	// They exist because --score-constraint cannot see the metric that fails
+	// the gate. legacy-v1 saturates its spectral component (clamp01 pins it at
+	// 1.0 above analysis.NormSpectral = 30.0, and every preset in the repo
+	// measures 47.8-68.6 dB), so `spectral_rmse_db` is invisible to a legacy-v1
+	// ceiling and to every pass profile. The gate checks it as a RAW dB value,
+	// so the constraint has to be a raw-metric one.
+	gateThresholdsFlag := flag.String("gate-thresholds", "", "Gate threshold JSON path, e.g. assets/thresholds/c4.json. "+
+		"Every NON-NULL entry of its \"max\" block is enforced on each candidate exactly as `just gate-c4` enforces it "+
+		"afterwards, so the search optimises inside the fence it is later measured against instead of discovering the "+
+		"breach at the end. Null entries stay unenforced, and an unknown key is an error")
+	var metricConstraintFlags stringListFlag
+	flag.Var(&metricConstraintFlags, "metric-constraint", "Raw-metric ceiling \"<json_tag>:<max>\", repeatable, e.g. "+
+		"--metric-constraint spectral_rmse_db:62.3. The tag is a float64 field of analysis.Metrics named exactly as the "+
+		"gate threshold files name it. Combines with --gate-thresholds and overrides that file's entry for the same "+
+		"metric. Every constrained metric is read from ONE extra full-signal legacy-v1 compare of the same rendered "+
+		"buffer — the raw fields are profile-independent, and legacy-v1 is what makes the gated `score` comparable")
+
 	matchOutputGainFlag := flag.Bool("match-output-gain", true, "Solve output_gain analytically after the search instead of searching it. "+
 		"analysis.Compare RMS-normalises both signals, and with the default --decay-relative the render length no longer depends on the "+
 		"absolute level either, so output_gain cannot move the score. Under --decay-relative=false it can: a louder render crosses the "+
@@ -208,6 +229,23 @@ func main() {
 	scoreConstraints, err := parseScoreConstraints(scoreConstraintFlags)
 	if err != nil {
 		die("invalid --score-constraint: %v", err)
+	}
+	adHocMetricConstraints, err := parseMetricConstraints(metricConstraintFlags)
+	if err != nil {
+		die("invalid --metric-constraint: %v", err)
+	}
+	var gateMetricConstraints []metricConstraint
+	if *gateThresholdsFlag != "" {
+		gateMetricConstraints, err = loadGateThresholdConstraints(*gateThresholdsFlag)
+		if err != nil {
+			die("invalid --gate-thresholds: %v", err)
+		}
+	}
+	metricConstraints := mergeMetricConstraints(gateMetricConstraints, adHocMetricConstraints)
+	gateThresholdsPath := *gateThresholdsFlag
+	metricProfiles, err := metricConstraintProfiles(metricConstraints)
+	if err != nil {
+		die("%v", err)
 	}
 	referencePaths, err := resolveReferences(notes, refMap, *referencePath)
 	if err != nil {
@@ -354,6 +392,25 @@ func main() {
 		}
 	}
 
+	if len(metricConstraints) > 0 {
+		if *sweep {
+			// Same reasoning as for --score-constraint: the sweep records the
+			// full analysis.Metrics per sample and filters afterwards, so a
+			// search-time fence has nothing to act on here. Say so rather than
+			// pretending it applied.
+			fmt.Println("sweep: --gate-thresholds/--metric-constraint ignored (every sample carries its full metrics; filter the report)")
+			metricConstraints = nil
+			metricProfiles = nil
+			gateThresholdsPath = ""
+		} else {
+			if gateThresholdsPath != "" {
+				fmt.Printf("Gate thresholds: %s\n", gateThresholdsPath)
+			}
+			fmt.Printf("Metric constraints: %s (full-signal %s, checked on the same rendered buffer)\n",
+				formatMetricConstraints(metricConstraints), metricConstraintProfile)
+		}
+	}
+
 	polishIndices := []int(nil)
 	if *polish {
 		knobsRaw := *polishKnobs
@@ -411,8 +468,11 @@ func main() {
 		scorer: passScore,
 		pass:   passSpecification.Name,
 
-		scoreConstraints:  scoreConstraints,
-		constraintRejects: &atomic.Int64{},
+		scoreConstraints:   scoreConstraints,
+		metricConstraints:  metricConstraints,
+		metricProfiles:     metricProfiles,
+		gateThresholdsPath: gateThresholdsPath,
+		constraintRejects:  &atomic.Int64{},
 
 		polish:            *polish,
 		polishOnly:        *polishOnly,
@@ -495,6 +555,10 @@ func main() {
 		scoreConstraints:     scoreConstraints,
 		constraintRejections: result.constraintRejections,
 		bestConstraintScores: result.bestConstraintScores,
+
+		gateThresholds:    gateThresholdsPath,
+		metricConstraints: metricConstraints,
+		bestMetricValues:  result.bestMetricValues,
 	}); err != nil {
 		die("failed to write outputs: %v", err)
 	}
@@ -506,6 +570,11 @@ func main() {
 			formatScoreConstraints(scoreConstraints),
 			result.constraintRejections,
 			formatConstraintScores(scoreConstraints, result.bestConstraintScores))
+	}
+	if len(metricConstraints) > 0 {
+		fmt.Printf("Metric constraints: rejected=%d (both kinds count one rejection per candidate), winner %s\n",
+			result.constraintRejections,
+			formatMetricValues(metricConstraints, result.bestMetricValues))
 	}
 	if len(result.bestNotes) > 1 {
 		for _, nr := range result.bestNotes {
@@ -523,8 +592,9 @@ func main() {
 	// best_constraint_scores in the report, is what marks the result as
 	// unpublishable.
 	if result.constraintInfeasible {
-		die("no feasible candidate: the written preset breaches a score constraint (%s)",
-			formatConstraintScores(scoreConstraints, result.bestConstraintScores))
+		die("no feasible candidate: the written preset breaches a constraint (scores: %s; metrics: %s)",
+			formatConstraintScores(scoreConstraints, result.bestConstraintScores),
+			formatMetricValues(metricConstraints, result.bestMetricValues))
 	}
 }
 

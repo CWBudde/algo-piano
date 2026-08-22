@@ -60,6 +60,55 @@ The idea: alternate between piano-only and IR stages so each builds on the previ
   preset and the report are still written in that case, deliberately: they are
   the only evidence of what the run explored. The non-zero exit is what stops
   downstream tooling from treating a known-breaching preset as a result.
+- `--gate-thresholds <path>` and `--metric-constraint <json_tag>:<max>`: The
+  same fence as `--score-constraint`, but on the **raw** metrics rather than on
+  a profile score. `--gate-thresholds assets/thresholds/c4.json` enforces every
+  non-`null` entry of that file's `max` block on each candidate — the exact set
+  `just gate-c4` enforces afterwards, resolved by the same code
+  (`internal/gate`), so the search optimises inside the fence it is later
+  measured against instead of discovering the breach at the end.
+  `--metric-constraint` adds or overrides one ceiling ad hoc and is repeatable.
+  Both default off, and with both empty the search path is unchanged.
+
+  **Why a raw-metric fence has to exist at all.** `legacy-v1` **saturates** its
+  spectral component: `clamp01` pins it at 1.0 for everything above
+  `analysis.NormSpectral = 30.0`, and every preset in the repo measures 47.8-68.6
+  dB. `spectral_rmse_db` therefore contributes a _constant_ to `legacy-v1`'s
+  `score`, with no gradient — so a `--score-constraint legacy-v1:<floor>` cannot
+  see the one metric that actually fails `just gate-c4`, and neither can the
+  pass profiles that steer the search. The gate checks it as a raw dB value.
+  It is a raw-metric problem, so the fix is a raw-metric constraint; the two
+  flags are complementary, not alternatives.
+
+  **One extra compare, not one per metric.** Every raw field of
+  `analysis.Metrics` is profile-independent — the weights only ever enter
+  `Score` and `Similarity` — so one comparison yields all of them. It cannot be
+  an arbitrary comparison, because `score` _is_ a gated key in `c4.json` and
+  `score` does depend on the weights: the constrained metrics come from an
+  **unwindowed `legacy-v1`** compare of the same rendered buffer, the same
+  comparison `just distance-c4` makes. A run that also carries a `legacy-v1`
+  score constraint reuses that one comparison rather than repeating it.
+
+  **The violation is relative.** A breach adds `got/max - 1` per metric, not
+  `got - max`. Score violations live in `[0,1]` while a `spectral_rmse_db`
+  violation is tens of dB, so a raw sum would let the dB metric own the entire
+  penalty gradient. The ratio is scale-free: 10% over budget costs the same
+  whether the budget is `0.569` or `62.3`. It folds into the same finite
+  `constraintPenaltyBase + violation` aggregate the score constraints use, for
+  the same mayfly reason, and a candidate breaching both kinds is charged both
+  violations but counted as **one** rejection.
+
+  **NaN cannot clear a fence.** `got > max` is false for `NaN`, and unlike
+  `Score` — which `Sanitized()` maps to the worst case 1.0 — the raw dB fields
+  carry no such mapping, so an unmeasurable render is tested explicitly and
+  breaches. The winner's post-`--match-output-gain` re-render re-measures every
+  raw ceiling too, is not counted as a rejection, leaves the reported primary
+  score readable, and makes the run exit non-zero if it breaches — exactly as
+  for the score ceilings. The report records `gate_thresholds`,
+  `metric_constraints` and `best_metric_values` alongside
+  `constraint_rejections`. The path alone would not be enough: threshold files
+  get re-baselined, so the enforced numbers are recorded with it.
+
 - `--sweep`: Replaces the optimizer with a deterministic sensitivity + Pareto
   sweep over whatever knobs the current `--pass`/`--optimize` selection leaves
   active. It renders, measures, writes one JSON report and exits — no preset, no
@@ -603,9 +652,14 @@ just fit-sustain-constrained-c4
 #       --preset out/passes/attack-sample17.json --reference reference/c4.wav \
 #       --output-preset out/passes/sustain-constrained.json \
 #       --score-constraint legacy-v1:0.5183 \
+#       --gate-thresholds assets/thresholds/c4.json \
 #       --note 60 --velocity 118 --release-after 3.5 --sample-rate 48000 \
 #       --time-budget 180 --workers auto --seed 1 --resume=false
 ```
+
+The `--gate-thresholds` half arrived on 2026-08-22; the runs in the table below
+it predate it and were fenced by the floor alone. See
+"Constraining what the gate measures" at the end of this section.
 
 **First, the renderer moved — twice.** Commits #23/#26/#29 landed after the
 sweep above, and #30 then made the render auto-stop relative to the render's own
@@ -652,9 +706,8 @@ reproduce. Two pre-#30 runs failed the same way (`spectral_rmse_db` 61.88 and
 parallel workers, so a faster machine spends the same 180 s on ~60% more
 evaluations, converges further on `decay-v1`, and drives `spectral_rmse_db`
 through the fence. Read the gate column as a property of the run's budget, not
-of the method. Constraining what the gate actually measures — a second
-`--score-constraint`, or a gate-aware profile — is the missing piece; re-running
-until a run passes is not.
+of the method. Constraining what the gate actually measures is the missing
+piece; re-running until a run passes is not. That piece is below.
 
 **History: `--match-output-gain` used to move the score.** Until #30 the render
 auto-stop was an absolute `-90 dBFS` threshold, so a louder render simply ran
@@ -686,6 +739,55 @@ window, so both profile scores are full-signal and comparable to
 `just distance-c4`. If that ever changes, the scores become windowed and stop
 being comparable to anything in this document. The report records `pass_window`
 and the tool prints a warning when it is set.
+
+### Constraining what the gate measures (2026-08-22)
+
+The runs above name their own next step: fence the metric that actually fails,
+rather than re-running until one passes. `--gate-thresholds` is that fence.
+`just fit-sustain-constrained-c4` now passes `assets/thresholds/c4.json` to it
+by default, on top of the unchanged `legacy-v1` floor.
+
+Re-measured floor first, because a stale floor constrains nothing:
+`just distance-c4 reference/c4.wav out/passes/attack-sample17.json ""` gives
+`legacy-v1 0.518264` on the current renderer, so the recipe's `0.5183` default
+still holds. Sample #17 itself clears the gate with almost nothing to spare —
+`spectral_rmse_db` 60.90 against the 62.30 cap, 98% of budget.
+
+Two 180 s runs, `--workers auto`, seeded from sample #17, floor `0.5183`, and
+`--gate-thresholds assets/thresholds/c4.json`. Every figure is measured on the
+**written** preset:
+
+| run                       | evals | rejected | `decay-v1` | `legacy-v1` | `spectral_rmse_db` | `just gate-c4`                |
+| ------------------------- | ----- | -------- | ---------- | ----------- | ------------------ | ----------------------------- |
+| sample #17 (seed)         | —     | —        | 0.3927     | 0.5183      | 60.90              | PASS (98% of budget)          |
+| seed 1, gated             | 2505  | 2433     | **0.3903** | **0.5092**  | 56.46              | **PASS** (91% of budget)      |
+| seed 7, gated             | 2521  | 2437     | **0.3788** | **0.5106**  | 61.01              | **PASS** (98% of budget)      |
+| seed 1, floor only (twin) | 2512  | 2367     | 0.3689     | 0.5180      | 65.64              | **FAIL** (`spectral_rmse_db`) |
+
+The last row is the control, and it is the whole argument: same seed, same
+budget, same machine, same floor — only the raw fence removed. It lands at
+`spectral_rmse_db` 65.64, 5.4% past the cap, exactly the failure mode the two
+earlier runs showed. With the fence, both seeds clear the gate, improve
+`decay-v1` on the seed, and hold the floor with room to spare. A gate PASS is
+now a property of the method rather than of how many evaluations the wall clock
+happened to buy.
+
+What it costs, honestly. The fence is **binding**, not slack: seed 7 finishes at
+98% of the `spectral_rmse_db` budget and seed 1 at 91%, so the search is now
+shaping itself against the fence and the un-gated metrics are where the payment
+shows. Against sample #17, seed 7 moves `partial_level_rmse_db` 15.20 → 15.15,
+`attack_centroid_rmse_oct` 0.178 → 0.110 and `decay_segment_rmse_db_per_s`
+11.51 → 11.61, and pays `partial_freq_rmse_cents` 35.64 → 36.40. Seed 1 is the
+worse trade of the two: `partial_level_rmse_db` 15.20 → 15.49,
+`attack_centroid_rmse_oct` 0.178 → 0.243, `decay_segment_rmse_db_per_s`
+11.51 → 12.49. Neither run's `decay-v1` gain over #17 is large — 0.0024 and
+0.0139 — and this is two seeds on one machine, not a distribution.
+
+Nothing was shipped from these runs and no threshold was touched. Promoting one
+of them would mean replacing the tracked gate baseline preset and re-baselining
+`assets/thresholds/c4.json` with it, which is a separate change with its own
+evidence requirements — not something to fold into the commit that builds the
+fence.
 
 ### First joint sweep over the attack knobs (2026-08-22)
 
