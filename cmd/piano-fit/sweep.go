@@ -959,6 +959,7 @@ func runSweepMode(cfg *optimizationConfig, args sweepModeArgs) {
 		maxDuration:     cfg.finalMaxDuration,
 		decayDBFS:       cfg.decayDBFS,
 		decayHoldBlocks: cfg.decayHoldBlocks,
+		decayRelative:   cfg.decayRelative,
 		renderBlockSize: cfg.renderBlockSize,
 	}
 

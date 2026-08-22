@@ -5,11 +5,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"math"
 	"os"
 
 	dspresample "github.com/cwbudde/algo-dsp/dsp/resample"
 	"github.com/cwbudde/algo-piano/analysis"
+	"github.com/cwbudde/algo-piano/internal/render"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
 	"github.com/cwbudde/wav"
@@ -25,6 +25,9 @@ func main() {
 	sampleRate := flag.Int("sample-rate", 48000, "Analysis sample rate in Hz")
 	decayDBFS := flag.Float64("decay-dbfs", -90.0, "Auto-stop threshold in dBFS for rendered candidate")
 	decayHoldBlocks := flag.Int("decay-hold-blocks", 6, "Consecutive below-threshold blocks required for stop")
+	decayRelative := flag.Bool("decay-relative", true, "Stop the auto-decay render N dB below the render's OWN running peak rather than N dB below full scale. "+
+		"Relative makes the render length independent of the absolute output level, which is what makes output_gain score-invariant; "+
+		"false restores the pre-2026-08-22 absolute threshold so numbers measured under it can be reproduced")
 	minDuration := flag.Float64("min-duration", 2.0, "Minimum rendered duration in seconds")
 	maxDuration := flag.Float64("max-duration", 30.0, "Maximum rendered duration in seconds")
 	releaseAfter := flag.Float64("release-after", 2.0, "Note hold time before NoteOff for rendered candidate")
@@ -60,6 +63,7 @@ func main() {
 			*sampleRate,
 			*decayDBFS,
 			*decayHoldBlocks,
+			*decayRelative,
 			*minDuration,
 			*maxDuration,
 			*releaseAfter,
@@ -223,6 +227,7 @@ func renderCandidate(
 	sampleRate int,
 	decayDBFS float64,
 	decayHoldBlocks int,
+	decayRelative bool,
 	minDuration float64,
 	maxDuration float64,
 	releaseAfter float64,
@@ -258,10 +263,9 @@ func renderCandidate(
 		return nil, nil, errors.New("max duration too small")
 	}
 
-	threshold := math.Pow(10.0, decayDBFS/20.0)
+	detector := render.NewDecayDetector(decayDBFS, decayHoldBlocks, decayRelative)
 	blockSize := 128
 	framesRendered := 0
-	belowCount := 0
 	noteReleased := false
 	stereo := make([]float32, 0, maxFrames*2)
 
@@ -279,14 +283,11 @@ func renderCandidate(
 		framesRendered += framesToRender
 
 		if framesRendered >= minFrames {
-			if stereoRMS(block) < threshold {
-				belowCount++
-				if belowCount >= decayHoldBlocks {
-					break
-				}
-			} else {
-				belowCount = 0
+			if detector.Update(block) {
+				break
 			}
+		} else {
+			detector.Track(block)
 		}
 	}
 
@@ -371,18 +372,6 @@ func stereoToMono64(st []float32) []float64 {
 		out[i] = 0.5 * (float64(st[i*2]) + float64(st[i*2+1]))
 	}
 	return out
-}
-
-func stereoRMS(interleaved []float32) float64 {
-	if len(interleaved) == 0 {
-		return 0
-	}
-	var sum float64
-	for _, s := range interleaved {
-		v := float64(s)
-		sum += v * v
-	}
-	return math.Sqrt(sum / float64(len(interleaved)))
 }
 
 func die(format string, args ...any) {

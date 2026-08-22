@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cwbudde/algo-piano/analysis"
+	"github.com/cwbudde/algo-piano/internal/render"
 	"github.com/cwbudde/algo-piano/irsynth"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/mayfly"
@@ -53,6 +54,7 @@ type optimizationConfig struct {
 	checkpointEvery  int
 	decayDBFS        float64
 	decayHoldBlocks  int
+	decayRelative    bool
 	minDuration      float64
 	maxDuration      float64
 	finalMinDuration float64
@@ -116,6 +118,7 @@ type evalSettings struct {
 	maxDuration     float64
 	decayDBFS       float64
 	decayHoldBlocks int
+	decayRelative   bool
 	renderBlockSize int
 }
 
@@ -175,6 +178,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		maxDuration:     cfg.maxDuration,
 		decayDBFS:       cfg.decayDBFS,
 		decayHoldBlocks: cfg.decayHoldBlocks,
+		decayRelative:   cfg.decayRelative,
 		renderBlockSize: cfg.renderBlockSize,
 	}
 	finalEvalSettings := evalSettings{
@@ -184,6 +188,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		maxDuration:     cfg.finalMaxDuration,
 		decayDBFS:       cfg.decayDBFS,
 		decayHoldBlocks: cfg.decayHoldBlocks,
+		decayRelative:   cfg.decayRelative,
 		renderBlockSize: cfg.renderBlockSize,
 	}
 
@@ -546,6 +551,27 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 			outputGainRatio = ratio
 			finalEval.params.OutputGain *= float32(ratio)
 			fmt.Printf("Matched output_gain x%.4f -> %.4f\n", ratio, finalEval.params.OutputGain)
+			// Re-score the matched parameters. Under the default relative
+			// decay this is a no-op up to float32 rounding -- output_gain is
+			// score-invariant, which is exactly what this branch relies on --
+			// but under --decay-relative=false a louder render crosses the
+			// fixed stop threshold later and is scored over a longer window,
+			// so the pre-match score would not describe the preset that is
+			// about to be written. Re-rendering once per target at final
+			// settings is negligible next to a fitting run and keeps the
+			// reported score and metrics honest in both decay modes.
+			rescored, rerr := scoreParams(
+				cfg, finalEval.params, finalEval.bodyIR, finalEval.roomIRL, finalEval.roomIRR,
+				finalEval.velocity, finalEval.releaseAfter, finalEvalSettings,
+			)
+			if rerr != nil {
+				fmt.Fprintf(os.Stderr, "output-gain re-score skipped: %v\n", rerr)
+			} else {
+				if rescored.aggregate != finalEval.aggregate {
+					fmt.Printf("Re-scored after gain match: %.6f -> %.6f\n", finalEval.aggregate, rescored.aggregate)
+				}
+				finalEval = rescored
+			}
 		}
 	}
 
@@ -604,7 +630,7 @@ func renderTarget(
 		mono, _, err := renderCandidateWithDualIR(
 			params, bodyIR, roomL, roomR,
 			note, velocity, settings.sampleRate,
-			settings.decayDBFS, settings.decayHoldBlocks,
+			settings.decayDBFS, settings.decayHoldBlocks, settings.decayRelative,
 			settings.minDuration, settings.maxDuration,
 			settings.renderBlockSize, releaseAfter,
 		)
@@ -612,7 +638,7 @@ func renderTarget(
 	}
 	mono, _, err := renderCandidateFromParams(
 		params, note, velocity, settings.sampleRate,
-		settings.decayDBFS, settings.decayHoldBlocks,
+		settings.decayDBFS, settings.decayHoldBlocks, settings.decayRelative,
 		settings.minDuration, settings.maxDuration,
 		settings.renderBlockSize, releaseAfter,
 	)
@@ -656,9 +682,25 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchPath stri
 		params.RoomIRWavPath = ""
 	}
 
+	return scoreParams(cfg, params, bodyIR, roomL, roomR, evalVelocity, evalReleaseAfter, settings)
+}
+
+// scoreParams renders every note target with an already-built parameter set
+// and scores it. evaluateCandidate uses it to score a candidate; the analytic
+// output-gain match uses it to re-score the winner AFTER the gain has been
+// folded into the parameters, so the reported score and metrics always belong
+// to the preset that is actually written.
+func scoreParams(
+	cfg *optimizationConfig,
+	params *piano.Params,
+	bodyIR, roomL, roomR []float32,
+	velocity int,
+	releaseAfter float64,
+	settings evalSettings,
+) (optimizationEval, error) {
 	reports := make([]noteReport, 0, len(cfg.targets))
 	for _, t := range cfg.targets {
-		mono, err := renderTarget(cfg, params, bodyIR, roomL, roomR, t.note, evalVelocity, evalReleaseAfter, settings)
+		mono, err := renderTarget(cfg, params, bodyIR, roomL, roomR, t.note, velocity, releaseAfter, settings)
 		if err != nil {
 			return optimizationEval{}, err
 		}
@@ -683,8 +725,8 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchPath stri
 		bodyIR:       bodyIR,
 		roomIRL:      roomL,
 		roomIRR:      roomR,
-		velocity:     evalVelocity,
-		releaseAfter: evalReleaseAfter,
+		velocity:     velocity,
+		releaseAfter: releaseAfter,
 	}, nil
 }
 
@@ -728,6 +770,7 @@ func renderCandidateWithDualIR(
 	sampleRate int,
 	decayDBFS float64,
 	decayHoldBlocks int,
+	decayRelative bool,
 	minDuration float64,
 	maxDuration float64,
 	blockSize int,
@@ -743,7 +786,7 @@ func renderCandidateWithDualIR(
 	if len(roomIRL) > 0 && len(roomIRR) > 0 {
 		p.SetRoomIR(roomIRL, roomIRR)
 	}
-	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, minDuration, maxDuration, blockSize, releaseAfter)
+	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, decayRelative, minDuration, maxDuration, blockSize, releaseAfter)
 }
 
 func renderCandidateFromParams(
@@ -753,6 +796,7 @@ func renderCandidateFromParams(
 	sampleRate int,
 	decayDBFS float64,
 	decayHoldBlocks int,
+	decayRelative bool,
 	minDuration float64,
 	maxDuration float64,
 	blockSize int,
@@ -762,7 +806,7 @@ func renderCandidateFromParams(
 		return nil, nil, errors.New("nil params")
 	}
 	p := piano.NewPiano(sampleRate, 16, params)
-	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, minDuration, maxDuration, blockSize, releaseAfter)
+	return renderPiano(p, note, velocity, sampleRate, decayDBFS, decayHoldBlocks, decayRelative, minDuration, maxDuration, blockSize, releaseAfter)
 }
 
 func renderPiano(
@@ -772,6 +816,7 @@ func renderPiano(
 	sampleRate int,
 	decayDBFS float64,
 	decayHoldBlocks int,
+	decayRelative bool,
 	minDuration float64,
 	maxDuration float64,
 	blockSize int,
@@ -799,12 +844,11 @@ func renderPiano(
 		return nil, nil, errors.New("max duration too small")
 	}
 
-	threshold := math.Pow(10.0, decayDBFS/20.0)
+	detector := render.NewDecayDetector(decayDBFS, decayHoldBlocks, decayRelative)
 	if blockSize < 16 {
 		blockSize = 16
 	}
 	framesRendered := 0
-	belowCount := 0
 	noteReleased := false
 	stereo := make([]float32, 0, maxFrames*2)
 
@@ -822,14 +866,11 @@ func renderPiano(
 		framesRendered += framesToRender
 
 		if framesRendered >= minFrames {
-			if stereoRMS(block) < threshold {
-				belowCount++
-				if belowCount >= decayHoldBlocks {
-					break
-				}
-			} else {
-				belowCount = 0
+			if detector.Update(block) {
+				break
 			}
+		} else {
+			detector.Track(block)
 		}
 	}
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cwbudde/algo-piano/analysis"
+	"github.com/cwbudde/algo-piano/internal/render"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
 	"github.com/cwbudde/mayfly"
@@ -69,6 +70,7 @@ type renderSettings struct {
 	sampleRate     int
 	decayDBFS      float64
 	decayHold      int
+	decayRelative  bool
 	minDurationSec float64
 	maxDurationSec float64
 	blockSize      int
@@ -100,6 +102,9 @@ func main() {
 	sampleRate := flag.Int("sample-rate", 48000, "Render/analysis sample rate")
 	decayDBFS := flag.Float64("decay-dbfs", -90.0, "Auto-stop threshold in dBFS")
 	decayHoldBlocks := flag.Int("decay-hold-blocks", 6, "Consecutive below-threshold blocks required to stop")
+	decayRelative := flag.Bool("decay-relative", true, "Stop the auto-decay render N dB below the render's OWN running peak rather than N dB below full scale. "+
+		"Relative makes the render length independent of the absolute output level, which is what makes output_gain score-invariant; "+
+		"false restores the pre-2026-08-22 absolute threshold so numbers measured under it can be reproduced")
 	minDuration := flag.Float64("min-duration", 2.0, "Minimum render duration in seconds")
 	maxDuration := flag.Float64("max-duration", 14.0, "Maximum render duration in seconds")
 	blockSize := flag.Int("render-block-size", 128, "Render block size")
@@ -166,6 +171,7 @@ func main() {
 		sampleRate:     *sampleRate,
 		decayDBFS:      *decayDBFS,
 		decayHold:      *decayHoldBlocks,
+		decayRelative:  *decayRelative,
 		minDurationSec: *minDuration,
 		maxDurationSec: *maxDuration,
 		blockSize:      *blockSize,
@@ -597,9 +603,8 @@ func renderNote(params *piano.Params, rs renderSettings) ([]float64, error) {
 		return nil, errors.New("invalid max duration")
 	}
 
-	threshold := math.Pow(10.0, rs.decayDBFS/20.0)
+	detector := render.NewDecayDetector(rs.decayDBFS, rs.decayHold, rs.decayRelative)
 	frames := 0
-	belowCount := 0
 	noteReleased := false
 	stereo := make([]float32, 0, maxFrames*2)
 
@@ -621,14 +626,11 @@ func renderNote(params *piano.Params, rs renderSettings) ([]float64, error) {
 		frames += block
 
 		if frames >= minFrames {
-			if stereoRMS(out) < threshold {
-				belowCount++
-				if belowCount >= rs.decayHold {
-					break
-				}
-			} else {
-				belowCount = 0
+			if detector.Update(out) {
+				break
 			}
+		} else {
+			detector.Track(out)
 		}
 	}
 
@@ -643,18 +645,6 @@ func renderNote(params *piano.Params, rs renderSettings) ([]float64, error) {
 		mono[i] = v
 	}
 	return mono, nil
-}
-
-func stereoRMS(interleaved []float32) float64 {
-	if len(interleaved) == 0 {
-		return 0
-	}
-	var sum float64
-	for _, s := range interleaved {
-		v := float64(s)
-		sum += v * v
-	}
-	return math.Sqrt(sum / float64(len(interleaved)))
 }
 
 func parseNotes(raw string) ([]int, error) {
