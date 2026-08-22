@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 
-	dspconv "github.com/cwbudde/algo-dsp/dsp/conv"
 	dspresample "github.com/cwbudde/algo-dsp/dsp/resample"
 	"github.com/cwbudde/wav"
 )
@@ -75,12 +74,9 @@ type SoundboardConvolver struct {
 	partSize   int
 	irLen      int
 
-	leftOLA  *dspconv.StreamingOverlapAddT[float32, complex64]
-	rightOLA *dspconv.StreamingOverlapAddT[float32, complex64]
-
-	// Pre-allocated buffers for zero-allocation processing
-	leftOut  []float32
-	rightOut []float32
+	stream blockStream
+	left   *olaLane
+	right  *olaLane
 }
 
 // NewSoundboardConvolver creates a new soundboard convolver.
@@ -94,52 +90,23 @@ func NewSoundboardConvolver(sampleRate int) *SoundboardConvolver {
 }
 
 // Process convolves mono input with IR and returns stereo output.
+//
+// The input length is arbitrary and need not be a multiple of the partition
+// size: successive calls form one continuous stream, and the output for a given
+// sample does not depend on how the caller chunked it. See convolver_stream.go
+// for the two paths this takes and why the partSize-aligned one is untouched.
 func (c *SoundboardConvolver) Process(input []float32) []float32 {
 	output := make([]float32, len(input)*2)
 	if len(input) == 0 {
 		return output
 	}
 
-	// Handle arbitrary input lengths by processing in partSize blocks
-	processed := 0
+	c.stream.run(input, c.left, c.right)
 
-	for processed < len(input) {
-		blockEnd := processed + c.partSize
-		if blockEnd > len(input) {
-			blockEnd = len(input)
-		}
-		blockLen := blockEnd - processed
-		block := input[processed:blockEnd]
-
-		// Pad to partSize if needed (for last block)
-		if blockLen < c.partSize {
-			padded := make([]float32, c.partSize)
-			copy(padded, block)
-			block = padded
-		}
-
-		// Process block with zero-allocation streaming convolvers
-		errL := c.leftOLA.ProcessBlockTo(c.leftOut, block)
-		errR := c.rightOLA.ProcessBlockTo(c.rightOut, block)
-		if errL != nil || errR != nil {
-			// Fallback: pass through for this block
-			for i := 0; i < blockLen; i++ {
-				output[(processed+i)*2] = input[processed+i]
-				output[(processed+i)*2+1] = input[processed+i]
-			}
-			processed = blockEnd
-			continue
-		}
-
-		// Interleave stereo output for this block
-		for i := 0; i < blockLen; i++ {
-			output[(processed+i)*2] = c.leftOut[i]
-			output[(processed+i)*2+1] = c.rightOut[i]
-		}
-
-		processed = blockEnd
+	for i := range input {
+		output[i*2] = c.left.out[i]
+		output[i*2+1] = c.right.out[i]
 	}
-
 	return output
 }
 
@@ -152,13 +119,13 @@ func (c *SoundboardConvolver) SetIR(leftIR []float32, rightIR []float32) {
 		rightIR = []float32{1.0}
 	}
 
-	leftOLA, errL := dspconv.NewStreamingOverlapAdd32(leftIR, c.partSize)
-	rightOLA, errR := dspconv.NewStreamingOverlapAdd32(rightIR, c.partSize)
+	left, errL := newOLALane(leftIR, c.partSize)
+	right, errR := newOLALane(rightIR, c.partSize)
 	if errL != nil || errR != nil {
 		return
 	}
-	c.leftOLA = leftOLA
-	c.rightOLA = rightOLA
+	c.left = left
+	c.right = right
 	c.irLen = len(leftIR)
 	if len(rightIR) > c.irLen {
 		c.irLen = len(rightIR)
@@ -167,9 +134,7 @@ func (c *SoundboardConvolver) SetIR(leftIR []float32, rightIR []float32) {
 		c.irLen = 1
 	}
 
-	// Allocate output buffers
-	c.leftOut = make([]float32, c.partSize)
-	c.rightOut = make([]float32, c.partSize)
+	c.stream.configure(c.partSize, c.left, c.right)
 
 	c.Reset()
 }
@@ -244,20 +209,22 @@ func (c *SoundboardConvolver) SetIRFromReader(r io.ReadSeeker, name string) erro
 
 // Reset clears convolver history and overlap buffers.
 func (c *SoundboardConvolver) Reset() {
-	if c.leftOLA != nil {
-		c.leftOLA.Reset()
+	if c.left != nil {
+		c.left.reset()
 	}
-	if c.rightOLA != nil {
-		c.rightOLA.Reset()
+	if c.right != nil {
+		c.right.reset()
 	}
+	c.stream.reset()
 }
 
 // BodyConvolver implements mono-to-mono partitioned convolution for body coloration.
 type BodyConvolver struct {
 	sampleRate int
 	partSize   int
-	ola        *dspconv.StreamingOverlapAddT[float32, complex64]
-	out        []float32
+
+	stream blockStream
+	lane   *olaLane
 }
 
 // NewBodyConvolver creates a new mono body convolver with a passthrough IR.
@@ -271,36 +238,17 @@ func NewBodyConvolver(sampleRate int) *BodyConvolver {
 }
 
 // Process convolves mono input with the body IR and returns mono output.
+//
+// As with SoundboardConvolver.Process the input length is arbitrary and the
+// stream is continuous across calls.
 func (c *BodyConvolver) Process(input []float32) []float32 {
 	output := make([]float32, len(input))
 	if len(input) == 0 {
 		return output
 	}
 
-	processed := 0
-	for processed < len(input) {
-		blockEnd := processed + c.partSize
-		if blockEnd > len(input) {
-			blockEnd = len(input)
-		}
-		blockLen := blockEnd - processed
-		block := input[processed:blockEnd]
-
-		if blockLen < c.partSize {
-			padded := make([]float32, c.partSize)
-			copy(padded, block)
-			block = padded
-		}
-
-		if err := c.ola.ProcessBlockTo(c.out, block); err != nil {
-			copy(output[processed:blockEnd], input[processed:blockEnd])
-			processed = blockEnd
-			continue
-		}
-
-		copy(output[processed:blockEnd], c.out[:blockLen])
-		processed = blockEnd
-	}
+	c.stream.run(input, c.lane)
+	copy(output, c.lane.out)
 	return output
 }
 
@@ -309,12 +257,12 @@ func (c *BodyConvolver) SetIR(ir []float32) {
 	if len(ir) == 0 {
 		ir = []float32{1.0}
 	}
-	ola, err := dspconv.NewStreamingOverlapAdd32(ir, c.partSize)
+	lane, err := newOLALane(ir, c.partSize)
 	if err != nil {
 		return
 	}
-	c.ola = ola
-	c.out = make([]float32, c.partSize)
+	c.lane = lane
+	c.stream.configure(c.partSize, c.lane)
 	c.Reset()
 }
 
@@ -392,9 +340,10 @@ func (c *BodyConvolver) SetIRFromReader(r io.ReadSeeker, name string, targetRate
 
 // Reset clears convolver history.
 func (c *BodyConvolver) Reset() {
-	if c.ola != nil {
-		c.ola.Reset()
+	if c.lane != nil {
+		c.lane.reset()
 	}
+	c.stream.reset()
 }
 
 func (c *SoundboardConvolver) resampleIfNeeded(in []float32, inRate int) ([]float32, error) {

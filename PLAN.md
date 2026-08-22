@@ -624,19 +624,79 @@ cut sustained-decay cost from 4.2 ms to 0.59 ms — a larger win than the SIMD w
         (`piano/tuning_test.go` covers the whole MIDI 21-108 compass with
         per-register tolerances, worst measured 0.64 cents below MIDI 104 and
         3.48 cents in the top five notes.)
-  - [ ] Convolver correctness bound
+  - [x] Convolver correctness bound
+        (`piano/convolver_test.go`: direct-convolution comparison at 512 and
+        8192 taps for both convolvers, a block-size continuity table, an impulse
+        case and a mid-stream `Reset()`, all against a relative bound of 1e-05.
+        It closed on a real defect — see below.)
   - [x] Stability tests: long render without NaNs/denorm storms
         (`piano/integration_test.go` NaN/Inf, `piano/denormal_test.go` denormals)
 - [ ] Benchmarks
   - [x] Use `go test -bench=.` benchmarks
   - [x] Voice cost per block at 48k/128 frames
         (`BenchmarkStringBankVoiceCostPerBlock`, `ns/voice-block` metric)
-  - [x] Convolution cost by IR length/partition size
-        (`piano/convolver_bench_test.go`)
+  - [x] Convolution cost by IR length/partition size/caller block size
+        (`piano/convolver_bench_test.go`; BENCHMARKS.md "Partition size became a
+        lever, and callback alignment became the bigger one")
   - [x] Polyphony sweep (e.g. 16/32/64/128 voices)
         (`BenchmarkStringBankVoiceCostPerBlock`; a voice is one sounding string,
         and the sweep stops at MIDI 91 to stay clear of the DWG treble collapse
         below, so the 128-voice case is 130 strings over keys 36-91)
+
+**Resolved — convolver non-`partSize` block handling (2026-08-22).** Writing the
+correctness bound turned up a defect rather than confirming a bound. Both
+`SoundboardConvolver.Process` and `BodyConvolver.Process` sliced the input into
+128-sample partitions and zero-padded a trailing short block up to 128 before
+handing it to `dspconv.StreamingOverlapAddT.ProcessBlockTo`, which accepts
+exactly `blockSize` samples. The output samples of that block were right — a
+zero-padded tail cannot corrupt the outputs before it — but the overlap-add
+state advanced by a whole partition, so `partSize - blockLen` zeros were spliced
+into the stream and every later sample convolved the wrong signal. Successive
+`Process` calls of a non-128 length were therefore not the convolution of the
+concatenated input.
+
+Measured by streaming a 1000-sample sine through a 512-tap decaying IR in fixed
+chunks and comparing against `directConvolve`, reference peak 15.92:
+
+| chunk | before (max abs) | after (max abs) |
+| ----- | ---------------- | --------------- |
+| 1     | 1.57e+01         | 5.72e-06        |
+| 63    | 1.04e+01         | 5.72e-06        |
+| 64    | 9.72e+00         | 7.63e-06        |
+| 100   | 2.47e+01         | 5.72e-06        |
+| 128   | 7.63e-06         | 7.63e-06        |
+| 256   | 7.63e-06         | 7.63e-06        |
+| 333   | 6.60e+00         | 7.63e-06        |
+
+The 7.63e-06 floor is float32 round-off through the FFT, 4.8e-07 relative.
+Nothing caught this because every renderer in the tree drives the convolvers at
+128 (`cmd/piano-render`, the fit render path, the AudioWorklet render quantum)
+and emits a short block only as the very last one, whose own output is still
+correct. It was reachable through the pinned public API — `Process(1)` and
+`Process(64)` in `piano/api_compat_test.go` — and through
+`cmd/piano-fit --render-block-size`, which accepts values down to 16.
+
+The fix (`piano/convolver_stream.go`) feeds the overlap-add stage complete
+partitions only. Samples the caller asks for before their partition is complete
+are computed the zero-latency way instead, by splitting the convolution into a
+direct `h[:128]` head over the retained input history plus a second overlap-add
+stage carrying `h[128:]`, which can run a partition ahead because it only reads
+committed input. That keeps `Process(n)` returning `n` samples with no added
+latency, which `piano/radiation_test.go` pins. The `partSize`-aligned path is
+untouched and byte-identical: rendering `assets/presets/fitted-c4-mayfly.json`
+(note 60, velocity 118, release-after 3.5, 48 kHz) with `cmd/piano-render` built
+from before and after the change produces identical WAVs, so
+`assets/thresholds/c4.json` and every tracked report stay valid.
+
+Re-measuring the convolver benchmarks against the corrected code flipped a
+documented conclusion: with the stream correct at every partition size, raising
+`partSize` above 128 now cuts the one-second room IR from 0.91 ms to 0.40 ms per
+128-frame callback at 1024, because a partition larger than the callback is
+amortized instead of discarded. The new cost to watch is caller alignment — a
+call size that is not a multiple of `partSize` costs 3.05x on that room path.
+BENCHMARKS.md carries both tables and retracts the two passages that said the
+stream was unfixably wrong above 128 and that cross-callback buffering would cost
+a partition of latency.
 
 **Resolved — DWG treble collapse (2026-08-21).** Extending tuning coverage past
 MIDI 92 turned up two independent defects in the DWG core. Both are fixed;
