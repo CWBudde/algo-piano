@@ -69,6 +69,19 @@ func main() {
 	polishShrink := flag.Float64("polish-shrink", 0.5, "Step shrink factor applied after a sweep that improves nothing")
 	polishMinStep := flag.Float64("polish-min-step", 0.004, "Polish stops once the step falls below this")
 
+	// --sweep-* block. Every flag here is INERT unless --sweep is set: they
+	// configure the deterministic sensitivity/Pareto sweep in sweep.go, which
+	// short-circuits the optimizer entirely.
+	sweep := flag.Bool("sweep", false, "Run a deterministic sensitivity + Pareto sweep over the active knobs instead of the optimizer. "+
+		"Renders, measures, writes one JSON report and exits: no preset, no run report, no RNG")
+	sweepOut := flag.String("sweep-out", "", "Sweep report JSON path (default: out/sweep/<pass>-note<N>.json)")
+	sweepSamples := flag.Int("sweep-samples", 9, "One-at-a-time samples per knob, endpoints inclusive")
+	sweepJointEvals := flag.Int("sweep-joint-evals", 2048, "Joint-stage sample count (0 disables the joint stage)")
+	sweepJointSkip := flag.Int("sweep-joint-skip", 64, "Halton index offset (burn-in) for the joint stage")
+	sweepJointMaxDims := flag.Int("sweep-joint-max-dims", 8, "Refuse the joint stage above this dimensionality")
+	sweepProfiles := flag.String("sweep-profiles", "", "Comma-separated scoring profiles to record per sample "+
+		"(empty = the pass profile first, then legacy-v1). The first profile is the primary Pareto objective")
+
 	matchOutputGainFlag := flag.Bool("match-output-gain", true, "Solve output_gain analytically after the search instead of searching it "+
 		"(analysis.Compare RMS-normalises both signals, so output_gain cannot move the score at all)")
 
@@ -228,7 +241,14 @@ func main() {
 		groups,
 		*matchOutputGainFlag,
 	)
-	if *resume {
+	// --resume is deliberately ignored in sweep mode: a stale checkpoint would
+	// silently move the sweep's baseline off --preset, and the baseline is the
+	// point every sensitivity span and the constrained set are measured
+	// against. See the matching --time-budget notice below.
+	if *resume && *sweep {
+		fmt.Println("sweep: --resume ignored (the baseline must be exactly --preset)")
+	}
+	if *resume && !*sweep {
 		resumePath := *resumeReport
 		if resumePath == "" {
 			if *reportPath != "" {
@@ -330,6 +350,30 @@ func main() {
 		matchOutputGain: *matchOutputGainFlag,
 	}
 
+	var passWindow *windowSpec
+	if !passSpecification.Window.isZero() {
+		w := passSpecification.Window
+		passWindow = &w
+	}
+
+	if *sweep {
+		runSweepMode(cfg, sweepModeArgs{
+			outPath:      *sweepOut,
+			samples:      *sweepSamples,
+			jointEvals:   *sweepJointEvals,
+			jointSkip:    *sweepJointSkip,
+			jointMaxDims: *sweepJointMaxDims,
+			profilesRaw:  *sweepProfiles,
+			passProfile:  passSpecification.profileName(),
+			passName:     passSpecification.Name,
+			passWindow:   passWindow,
+			note:         notes[0],
+			workers:      parsedWorkers,
+			timeBudget:   *timeBudget,
+		})
+		return
+	}
+
 	result, err := runOptimization(cfg)
 	if err != nil {
 		die("optimization failed: %v", err)
@@ -337,12 +381,6 @@ func main() {
 
 	if *noResonance && result.bestParams != nil {
 		result.bestParams.ResonanceEnabled = presetResonance
-	}
-
-	var passWindow *windowSpec
-	if !passSpecification.Window.isZero() {
-		w := passSpecification.Window
-		passWindow = &w
 	}
 
 	if err := writeOutputs(outputRequest{
