@@ -200,9 +200,9 @@ func main() {
 	if err != nil {
 		die("failed to load preset: %v", err)
 	}
-	if baseParams.IRWavPath == "" {
-		baseParams.IRWavPath = piano.DefaultIRWavPath
-	}
+	// Fall back to the shipped IR as the *room* stage of the radiation path, so
+	// fitting never silently selects the legacy single-IR path as its default.
+	piano.ApplyDefaultRoomIR(baseParams)
 	// --no-resonance is an optimization-speed knob, not a model change: it
 	// silences the sympathetic resonance while candidates are scored but must
 	// not leak into the written preset. Remember the preset's own setting and

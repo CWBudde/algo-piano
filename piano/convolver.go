@@ -13,6 +13,62 @@ import (
 
 const DefaultIRWavPath = "assets/ir/default_96k.wav"
 
+// ApplyDefaultRoomIR installs the shipped IR as the *room* stage of the linear
+// radiation path when a preset names no impulse response at all.
+//
+// The locked chain is `string-bank bridge mix -> body IR -> room IR`, so the
+// only sensible slot for a single shipped reverberant IR is the room stage.
+// Command-line tools used to default the deprecated Params.IRWavPath instead,
+// which made the legacy single-IR path the *default* rather than a fallback for
+// presets that still spell it that way.
+//
+// The remap of the deprecated mix fields below is what keeps the swap
+// behaviour-preserving: filling IRWavPath used to trigger exactly this mapping
+// inside the render path (see resolveRadiationMix), so applying it here yields
+// bit-identical output while leaving the engine reading dual-IR semantics only.
+//
+// Presets that set any IR path themselves — legacy or dual — are left untouched,
+// so an explicitly configured IRWavPath is still honoured as a fallback.
+//
+// The remap is additionally conditional on the dual-IR mix still being at its
+// defaults (see dualIRMixIsDefault). A configuration that names no path but does
+// set the first-class fields — say BodyIRGain=2, BodyDryMix=0.5, RoomWetMix=0.25
+// — asks for a dual-IR mix, and installing the shipped room IR must not throw
+// those values away in favour of the legacy ones.
+//
+// Residual limitation: Params carries no field-presence information (preset.File
+// has it, but LoadJSON folds the optional pointers into NewDefaultParams before
+// anything gets here), so a caller that explicitly spells out exactly the default
+// mix is indistinguishable from one that spelled out nothing and still gets the
+// legacy remap. That is the behaviour-preserving choice — the default render path
+// must stay bit-identical — and it only affects a request that is a no-op anyway.
+func ApplyDefaultRoomIR(params *Params) {
+	if params == nil {
+		return
+	}
+	if params.BodyIRWavPath != "" || params.RoomIRWavPath != "" || params.IRWavPath != "" {
+		return
+	}
+	params.RoomIRWavPath = DefaultIRWavPath
+	if !dualIRMixIsDefault(params) {
+		return
+	}
+	params.BodyDryMix = params.IRDryMix
+	params.RoomWetMix = params.IRWetMix
+	params.RoomGain = params.IRGain
+	params.BodyIRGain = DefaultBodyIRGain
+}
+
+// dualIRMixIsDefault reports whether none of the first-class dual-IR mix fields
+// has been moved off the value NewDefaultParams installs, i.e. whether the caller
+// plausibly never asked for a dual-IR mix at all.
+func dualIRMixIsDefault(params *Params) bool {
+	return params.BodyIRGain == DefaultBodyIRGain &&
+		params.BodyDryMix == DefaultBodyDryMix &&
+		params.RoomWetMix == DefaultRoomWetMix &&
+		params.RoomGain == DefaultRoomGain
+}
+
 // SoundboardConvolver implements partitioned convolution for the soundboard/body.
 type SoundboardConvolver struct {
 	sampleRate int

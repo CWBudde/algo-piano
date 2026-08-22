@@ -271,10 +271,11 @@ This phase is split into execution subphases to make progress and ownership expl
   - [x] Sustain pedal up reapplies damping deterministically to non-held strings.
   - [x] If partial pedal is supported, map to physical damping coefficients (not timer-based release logic).
 - [ ] Lock linear radiation path around bank output:
-  - [ ] enforce `string-bank bridge mix -> body IR -> room IR`
-  - [ ] keep body/room separation first-class in params/presets
-  - [ ] keep legacy single-IR path as fallback only
+  - [x] enforce `string-bank bridge mix -> body IR -> room IR` (fenced by `piano/radiation_test.go`: pure-delay body/room IRs driven through `Piano.Process`, room contribution must land at the sum of both delays)
+  - [x] keep body/room separation first-class in params/presets (legacy single-IR mix normalised once in `resolveRadiationMix`, at construction and in `SetIRMix`, so the per-block path reads dual-IR fields only)
+  - [x] keep legacy single-IR path as fallback only (`piano.ApplyDefaultRoomIR` points the `piano-render` / `piano-fit` / `piano-distance` defaults at `RoomIRWavPath`; `IRWavPath` is honoured only when set explicitly)
   - [x] complete WASM runtime IR apply (`wasmLoadIR`)
+  - [ ] follow-up: ship a body IR asset and give `assets/presets/default.json` a `body_ir_wav_path` — deferred, there is no shipped body IR and picking one is a separate modelling decision
 - [ ] Web/demo compatibility:
   - [ ] keep JS/WASM note + pedal API stable
   - [x] retire sustain timer release behavior in web layer once physical pedal semantics are active
