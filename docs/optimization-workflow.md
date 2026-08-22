@@ -382,8 +382,10 @@ baseline:
 | `sustain`, chained from `attack` | 0.5436       | decay diff 5.2 → 2.8 dB/s               |
 
 The `attack` pass is still the only net win, and it is now a bigger one: at
-0.5214 it beats the shipping preset and clears every threshold in
-`assets/thresholds/c4.json`.
+0.5214 it beats the tracked C4 gate baseline and clears every threshold in
+`assets/thresholds/c4.json`. That is an improvement over the fitting baseline,
+not over the preset users receive — `cmd/piano-render` still defaults to
+`assets/presets/default.json`.
 
 **The `sustain` pass still regresses, and the earlier explanation was only half
 right.** The old diagnosis was that `NormSpectral = 30.0` was saturated, so
@@ -395,10 +397,18 @@ RMSE (0.0978 → 0.1299), spectral (51.7 → 56.0 dB) and partial level (11.3 �
 dB). The time RMSE alone breaches the gate's `0.112`, so the result could not
 ship regardless of the score.
 
-So this is a **model** finding, not a harness finding: at C4 the model cannot be
-pulled onto the reference decay without pulling its spectrum off. Keep the pass
-out of the shipping chain, and treat closing that conflict as string-model work
-rather than as more fitting.
+Treat that as an **observed trade-off under this search**, not as a proven
+limitation of the string model. What the run actually establishes is narrower
+than it first looks: one 180 s stochastic search, one seed, one strategy, over
+the restricted sustain knob set, found no candidate that improves decay without
+costing spectrum and time. A different budget, seed, search strategy or a wider
+knob surface could still find one, so "the model cannot do it" is not yet
+supported.
+
+Keep the pass out of the chain on the evidence. Before redirecting effort into
+string-model work, run a parameter-sensitivity or Pareto sweep over the sustain
+knobs — if the trade-off holds across that surface, _then_ it is a model
+finding.
 
 Run `inharmonicity` from the attack-pass preset rather than the sustain-pass
 preset. Done that way it is very slightly negative (0.5214 → 0.5234) and leaves

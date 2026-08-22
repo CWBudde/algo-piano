@@ -118,17 +118,18 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
       the profile that describes the aspect — `attack-v1`, `decay-v1`,
       `inharmonicity-v1`. `--profile` overrides that and works with `--pass none`
       too; the profile is recorded as `score_profile` in the report.
-      `just fit-c4-passes` runs all three and ends with `legacy-v1` distance
-      reports, the only numbers comparable across passes; its final artifact chains
-      `attack` → `inharmonicity` and leaves the regressing `sustain` pass out.
-      Measurements below.)
+      `just fit-c4-passes` runs all three and ends with a `legacy-v1` distance
+      report for **each** pass output — the only numbers comparable across
+      passes, since each fit is scored with its own profile. Its final artifact
+      chains `attack` → `inharmonicity` and leaves the regressing `sustain` pass
+      out. Measurements below, all reproducible from that recipe.)
   - [x] Attack pass: fit hammer hardness/contact settings to reduce early-window spectral error
         (re-measured 2026-08-22 on the post-#14 renderer under
         `analysis.CalibratedNorms()`; 180 s from `fitted-c4-mayfly.json`,
         `--pass-window 0:0.35`: legacy score `0.5330` → **`0.5214`**, attack
         centroid error `0.545` → `0.130` octaves. Still the one pass that is a
-        net win, and it now beats the shipping preset outright — see the re-fit
-        follow-up below.)
+        net win, and it now beats the tracked C4 gate baseline outright — see
+        the re-fit follow-up below.)
   - [ ] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
         (**re-run 2026-08-22 on the post-#14 renderer under the calibrated norms.
         It still regresses the comparable score — it stays out of the shipping
@@ -142,11 +143,16 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         even if the score had held.
         The earlier diagnosis was that saturated norms let this happen unseen.
         That was only half right: `CalibratedNorms()` did remove the saturation
-        from `decay-v1`, and the pass still makes the same trade, so the cause is
-        not purely a blind objective. What the pass optimises genuinely conflicts
-        with the rest of the metric at C4 — the model cannot currently match the
-        reference decay without breaking its spectrum. That is a model finding,
-        not a fitting-harness finding, and it is what the box is now waiting on.)
+        from `decay-v1`, and the pass still makes the same trade, so a blind
+        objective is not the whole cause.
+        What this run establishes is an **observed trade-off**, not a proven
+        model limitation: one 180 s stochastic run over the sustain knob set,
+        one seed, one search strategy, found no non-regressing candidate. A
+        different budget, seed, or a wider knob surface could still find one.
+        Before concluding the string model itself cannot match the reference
+        decay without breaking its spectrum, the next step is a
+        parameter-sensitivity or Pareto sweep over the sustain knobs — that is
+        what this box is now waiting on.)
   - [ ] Inharmonicity pass: fit dispersion/inharmonicity via partial-frequency error
         (re-run 2026-08-22: still no leverage, and now marginally negative rather
         than neutral. From the attack preset, legacy score `0.5214` → `0.5234`,
@@ -225,7 +231,7 @@ run and are all `legacy-v1`, so they are comparable with each other and with the
 
 | Preset                                   | legacy-v1 score | vs baseline |
 | ---------------------------------------- | --------------- | ----------- |
-| `fitted-c4-mayfly.json` (shipping)       | 0.5330          | —           |
+| `fitted-c4-mayfly.json` (gate baseline)  | 0.5330          | —           |
 | attack pass                              | **0.5214**      | −0.0116     |
 | attack → inharmonicity (recipe artifact) | 0.5234          | −0.0096     |
 | sustain pass (not chained)               | 0.5436          | +0.0106     |
@@ -233,12 +239,16 @@ run and are all `legacy-v1`, so they are comparable with each other and with the
 - **Confirmed:** the sustain pass still regresses, so it stays out of the chain.
   The norm saturation was not the whole story — see the box above.
 - **Confirmed:** the inharmonicity pass still has no leverage at C4.
-- **Changed:** the attack pass alone now beats the shipping preset by 0.0116,
-  and clears every threshold in `assets/thresholds/c4.json`. That is direct
-  evidence for the re-fit follow-up that `assets/thresholds/c4.json` already
-  names ("the honest fix for the two loosened numbers is to re-fit the C4 preset
-  against the corrected core"). Re-fitting and re-baselining the gate is
-  deliberately **not** part of this measurement, because it moves the CI fence.
+- **Changed:** the attack pass alone now beats `fitted-c4-mayfly.json` by
+  0.0116 and clears every threshold in `assets/thresholds/c4.json`. Read that as
+  an improvement over the **tracked C4 fitting/gate baseline**, not over what
+  users get: `cmd/piano-render` and the README still default to
+  `assets/presets/default.json`, and `fitted-c4-mayfly.json` is a single-note C4
+  artifact, not a shipped instrument preset. It is direct evidence for the
+  re-fit follow-up that `assets/thresholds/c4.json` already names ("the honest
+  fix for the two loosened numbers is to re-fit the C4 preset against the
+  corrected core"). Re-fitting and re-baselining the gate is deliberately **not**
+  part of this measurement, because it moves the CI fence.
 
 ---
 

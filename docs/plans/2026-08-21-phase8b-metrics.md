@@ -141,6 +141,13 @@ Every profile's weights are non-negative and sum to 1.0 (`Weights.Validate`).
   error dominates; the rest is present only to stop the optimizer trading
   everything else away for a cents match.
 
+> **Historical — superseded.** The paragraph below describes the state on
+> 2026-08-21, when this note was written. The wiring has since landed: each
+> `--pass` now scores with the profile that describes its aspect, `passScorer`
+> in `cmd/piano-fit/pass.go` calls `analysis.CompareWithOptions`, and the
+> profile is recorded as `score_profile` in the fit report. See PLAN.md 8B and
+> `docs/optimization-workflow.md` for the current behaviour.
+
 The per-aspect profiles are **defined but not yet wired into `--pass`**:
 `passScorer` in `cmd/piano-fit/pass.go` still calls `analysis.Compare`, and
 swapping in `CompareWithWeights` there is a deliberate one-line seam left for a

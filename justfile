@@ -379,6 +379,14 @@ fit-c4-passes time_budget="180" preset="assets/presets/fitted-c4-mayfly.json":
         "extra=--pass inharmonicity --pass-window 0.2:2.0"
     # distance-c4 routes its arguments positionally, so the reference has to be
     # named even though it is the default.
+    #
+    # Each piano-fit run above scores with its own per-aspect profile, so none of
+    # those numbers are comparable with each other. Every pass output therefore
+    # gets a legacy-v1 distance here, including the attack pass on its own: that
+    # is the number the docs quote, and without this call it would not be
+    # reproducible from this recipe.
+    echo "=== Legacy-v1 distance of the attack pass ==="
+    just distance-c4 "reference/c4.wav" "$out_dir/attack.json" ""
     echo "=== Legacy-v1 distance of the sustain pass (measured, NOT chained) ==="
     just distance-c4 "reference/c4.wav" "$out_dir/sustain.json" ""
     echo "=== Legacy-v1 distance of attack -> inharmonicity (the final artifact) ==="
