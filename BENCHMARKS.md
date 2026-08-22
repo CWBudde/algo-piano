@@ -504,6 +504,73 @@ Re-measure with:
 go test ./piano/ -run='^$' -bench='VoiceCostPerBlock|CouplingGraphDensity' -benchmem -count=5
 ```
 
+## Retained heap (memory footprint comparison)
+
+_Measured 2026-08-22, Go 1.26.5, same machine as the `## Machine` section above
+(12th Gen Intel Core i7-1255U, Linux 6.8.0 amd64) — this is the same host, so
+that description is reused verbatim. The machine was under concurrent load
+(load average 9 to 18) while this ran. That affects the `sec/op` column only:
+the heap figures come from `runtime.ReadMemStats` after a forced GC and are
+not timing-sensitive, and the `-benchtime=1x` and `-benchtime=20x` runs agreed
+to within 112 bytes on every case._
+
+`BenchmarkStringBankRetainedHeap`, PLAN.md 12.4's "memory footprint comparison".
+This is the **retained live Go heap** of a **constructed** full-compass bank —
+`NewStringBank` + `NewHammerExciter` over MIDI 21-108, physical coupling at 10
+neighbours — not a per-block allocation count. Every other benchmark here
+reports zero allocations per block, which says nothing about how many bytes a
+constructed bank keeps alive for the lifetime of the instance, so that is
+measured directly: `runtime.GC` + `ReadMemStats` before and after construction,
+with the bank kept reachable across the second reading, median of five samples.
+
+**These are not resident-set (RSS) numbers and must not be used as a plugin or
+shipping memory budget.** `MemStats.HeapAlloc` counts only bytes in live Go heap
+objects; it excludes heap-span slack and fragmentation, allocator and runtime
+metadata, goroutine stacks, and all other non-heap resident memory, so the real
+resident set of a plugin instance is strictly larger. What the figures do
+support — and all PLAN.md 12.4 asks of them — is a stable, attributable
+comparison of the two cores' data structures against each other, and of how the
+modal core scales with `modal_partials`.
+
+A **voice is one sounding string**, as in the polyphony sweep above. The 88-key
+compass holds 196 strings.
+
+| Core               | B/bank  | KiB/bank | B/voice | vs DWG |
+| ------------------ | ------- | -------- | ------- | ------ |
+| DWG                | 331,536 | 324      | 1,692   | —      |
+| Modal, 1 partial   | 176,096 | 172      | 898     | −47%   |
+| Modal, 4 partials  | 224,752 | 219      | 1,147   | −32%   |
+| Modal, 8 (default) | 288,192 | 281      | 1,470   | −13%   |
+| Modal, 16 partials | 385,408 | 376      | 1,966   | +16%   |
+| Modal, 32 partials | 537,424 | 525      | 2,742   | +62%   |
+
+Construction cost, incidental but recorded because the benchmark reports it: 72
+to 90 ms for one bank pair, with 1266 allocations (DWG) or 1055 (modal). That is
+a plugin-instantiation cost, not an audio-thread cost.
+
+What the numbers say:
+
+- **The data structures are small.** A full 88-key bank retains a third of a
+  megabyte of live heap at the defaults, either core. Even allowing generously
+  for the non-heap memory this metric cannot see, memory is not a constraint on
+  this design at any point in the sweep, and it should not be an argument in the
+  core choice.
+- **Modal is cheaper than DWG at the default 8 partials, by 13%** — 281 KiB
+  against 324 KiB. This is the first metric on which modal actually wins;
+  the CPU comparison above found the two within noise.
+- **The modal retained heap is linear in `modal_partials`**, at about 11.7 kB per
+  partial per bank (59 B per string per partial), on a fixed ~176 kB base. The
+  break-even against DWG lands at roughly **13 partials**: above that, modal is
+  the larger core.
+- The DWG figure has no equivalent knob — its per-string cost is a delay line
+  sized by pitch, averaging 1.7 kB across the compass.
+
+This closes the last missing input to `PIANO-406` on the memory side. It does
+not settle the profile decision, which remains blocked on how far
+`modal_partials` can drop before quality suffers: the retained-heap curve says a
+low partial count is cheap, but says nothing about whether it still sounds like
+a piano.
+
 ## Reproducing the before/after comparison
 
 The pre-refactor numbers were taken from a worktree at the parent commit of the

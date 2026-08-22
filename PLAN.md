@@ -455,9 +455,31 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         the distance sits at 0.83-0.84.)
   - [ ] long-render stability (NaN/Inf free)
 - [ ] Add benchmarks:
-  - [ ] DWG vs modal CPU at fixed block size/sample rate
-  - [ ] polyphony scaling comparison
-  - [ ] memory footprint comparison
+  - [x] DWG vs modal CPU at fixed block size/sample rate
+        (`BenchmarkStringBankStringModels` in `piano/modal_bench_test.go` runs
+        both cores over the shared benchmark cases at 48 kHz and a 128-frame
+        block with coupling on. The DWG-vs-modal figures it produces are
+        tabulated in BENCHMARKS.md "Polyphony scaling" and "Voice cost per block
+        and polyphony sweep", which measure the same pair at the same block size
+        and rate; the coupled variant itself has no separate table.)
+  - [x] polyphony scaling comparison
+        (covered twice: `BenchmarkModalPolyphonyScaling` in
+        `piano/modal_bench_test.go`, tabulated in BENCHMARKS.md "Polyphony
+        scaling"; and `BenchmarkStringBankVoiceCostPerBlock` in
+        `piano/polyphony_bench_test.go`, tabulated in BENCHMARKS.md "Voice cost
+        per block and polyphony sweep". Both cores, 1-130 voices — they are
+        within noise of each other.)
+  - [x] memory footprint comparison
+        (`BenchmarkStringBankRetainedHeap` in `piano/memory_bench_test.go`
+        measures the retained **live Go heap** of a constructed 88-key bank via
+        `runtime.ReadMemStats`. **A full bank retains 324 KiB (DWG) against
+        281 KiB (modal at the default 8 partials) — modal is 13% smaller**, and
+        the modal figure is linear in `modal_partials` at ~11.7 kB per partial,
+        crossing DWG at ~13 partials. This is `HeapAlloc` after a forced GC, not
+        RSS: it excludes heap-span slack and fragmentation, allocator metadata,
+        stacks and other non-heap memory, so it compares the two cores' data
+        structures and does not serve as a resident or plugin memory budget.
+        Recorded in BENCHMARKS.md "Retained heap".)
 - [ ] Define shipping rule:
   - [ ] “low CPU” profile defaults to modal core
   - [ ] “high accuracy” profile defaults to DWG core
@@ -508,6 +530,14 @@ package in v0.7.0. `algo-piano` therefore calls `algo-vecmath` directly.
   - [ ] determine how far `modal_partials` can drop before quality suffers, then
         re-evaluate the mapping on measured numbers
   - [ ] keep DWG profile as high-accuracy reference for regression checks
+  - **Retained heap is now measured** (2026-08-22,
+    `BenchmarkStringBankRetainedHeap`, BENCHMARKS.md "Retained heap"), so the
+    missing memory input to this decision is closed: a full bank retains 324 KiB
+    of live heap (DWG) vs 281 KiB (modal at 8 partials), and the modal figure is
+    linear in `modal_partials`. That is `HeapAlloc` after a forced GC, not RSS,
+    so it compares the two cores rather than sizing a plugin budget — but the
+    gap between them is small on either reading, so memory does not decide the
+    profile. This item stays open on the quality question above.
 
 **Lesson worth keeping.** Calling `algo-vecmath` once _per note_ was measured
 **slower** than the scalar loop it replaced (+8% to +11% at high polyphony): one
