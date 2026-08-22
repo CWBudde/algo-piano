@@ -4,7 +4,8 @@ import "testing"
 
 // BenchmarkModalResonanceInjection measures the sympathetic-resonance path,
 // which is the heaviest excitation consumer in the modal core: with the sustain
-// pedal down every one of the 128 groups is an undamped target, so the render
+// pedal down every one of the bank's 88 groups (MIDI 21-108) is an undamped
+// target, so the render
 // loop drives injectAtPosition once per group per sample.
 //
 // The other modal benchmarks run with ResonanceEnabled = false, and a bank

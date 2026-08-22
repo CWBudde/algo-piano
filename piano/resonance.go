@@ -55,11 +55,22 @@ func (r *ResonanceEngine) bandLimit(x float32) float32 {
 // target, reporting whether any energy was actually deposited so the caller can
 // enroll the groups that started resonating.
 //
-// This is the production entry point. StringBank.processWithBridge calls it once
-// per sample from inside its render loop, so the string state advances between
-// consecutive deposits and the drive is spread across the block in time. Before
-// 2026-08-22 the whole block was deposited into a frozen state by
-// InjectFromBridge, which summed the block coherently — see the note there.
+// It is the ONLY injection entry point. StringBank.processWithBridge calls it
+// once per sample from inside its render loop, so the string state advances
+// between consecutive deposits and the drive is spread across the block in time.
+//
+// Until 2026-08-22 there was a second, block-at-a-time entry point
+// (InjectFromBridge) that Piano.Process called with a finished block. No string
+// state advanced between its deposits, so all of a block's samples landed on the
+// same delay-line tap / modal state: for a mode at angular frequency w that
+// deposits |sum x[i]| — the block's DC content — rather than
+// |sum x[i]*exp(-jwi)|, the drive at w. A 128-tap boxcar at block rate, in other
+// words, with ~+42 dB at DC and a first null at fs/128 = 375 Hz. It is gone
+// rather than merely unused: closing the loop from outside the bank WAS the
+// defect, and the two RingingState forwarders that let a caller reach it
+// (ResonanceTargets, NotifyResonanceInjected) went with it. Probes that need to
+// drive the bank with a known signal use the drive seam on
+// StringBank.processWithBridge instead.
 //
 // It must stay allocation-free: StringBank.Process is pinned at zero heap
 // allocations per block. No variadics, no closures, no per-sample slice
@@ -84,32 +95,6 @@ func (r *ResonanceEngine) injectSample(x float32, targets []resonanceTarget) boo
 		}
 		t.injectResonance(vEnergy)
 		injected = true
-	}
-	return injected
-}
-
-// InjectFromBridge feeds a whole block of bridge signal into every undamped
-// target and reports whether any energy was actually deposited.
-//
-// It is an OPEN-LOOP entry point only: nothing in the render path calls it, and
-// calling it on a bank that has an engine attached via SetResonanceEngine would
-// inject twice. It exists for callers that drive the bank with a known signal
-// rather than with its own output.
-//
-// Note what it does NOT do: no string state advances between the samples of
-// `bridge`, so all of them land on the same delay-line tap / modal state. For a
-// mode at angular frequency w that deposits |sum x[i]| — the block's DC content —
-// rather than |sum x[i]*exp(-jwi)|, the drive at w. Driving the render loop this
-// way was the defect this split fixed.
-func (r *ResonanceEngine) InjectFromBridge(bridge []float32, targets []resonanceTarget) bool {
-	if r == nil || r.injectionGain <= 0 || len(bridge) == 0 || len(targets) == 0 {
-		return false
-	}
-	injected := false
-	for i := range bridge {
-		if r.injectSample(bridge[i], targets) {
-			injected = true
-		}
 	}
 	return injected
 }

@@ -215,9 +215,12 @@ block was handed to `InjectFromBridge`, which deposited every sample of it into
 string state that never advanced in between. That summed the block coherently —
 for a mode at angular frequency `w` the string received `|sum x[i]|`, the block's
 DC content, instead of `|sum x[i]*exp(-jwi)|`, the drive at `w` — which is a
-128-tap boxcar at block rate. `InjectFromBridge` survives as an **open-loop**
-entry point for probes that drive the bank with a known signal; it must not be
-called on a bank that has an engine attached, or every sample is injected twice.
+128-tap boxcar at block rate. `InjectFromBridge` has been **removed** along with
+the `RingingState.ResonanceTargets` and `RingingState.NotifyResonanceInjected`
+forwarders that were the only way to reach it: closing the loop from outside the
+bank was the defect itself, so there is deliberately no second injection path
+left. Probes that need to drive the bank with a known signal pass a `drive`
+slice to `processWithBridge`.
 
 One thing deliberately stayed at block rate: `syncResonatingNotes` enrolls
 newly energized groups once per block, because `activeNotes` and the modal arena

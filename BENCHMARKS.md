@@ -278,8 +278,8 @@ _Measured 2026-08-21, Go 1.26.5, same machine as above._
 `injectAtPosition` evaluated `math.Sin` once per mode per call to get the mode
 shape at the strike position. Every excitation path went through it: the hammer
 during contact, each coupling edge, and — by far the heaviest — sympathetic
-resonance, which with the sustain pedal down drives all 128 groups once per
-sample.
+resonance, which with the sustain pedal down drives all 88 groups of the
+full-compass bank (MIDI 21-108) once per sample.
 
 The shape vector depends only on `(order[], strikePos)`, and `order` is fixed at
 construction, so it is now cached per group: one precomputed slot for each of the
@@ -306,8 +306,9 @@ refills on every call. It is not a regression — the refill costs what the old
 inline computation cost — and it only occurs while two strikes with different
 positions overlap on the same note.
 
-At block level, `BenchmarkModalResonanceInjection` (8 keys, sustain held, all 128
-groups undamped targets, physical coupling), the same interleaved comparison
+At block level, `BenchmarkModalResonanceInjection` (8 keys, sustain held, all 88
+groups of the full-compass bank undamped targets, physical coupling), the same
+interleaved comparison
 over 10 runs:
 
 | Config                    | Before  | After   | Change                     |

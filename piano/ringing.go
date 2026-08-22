@@ -757,8 +757,8 @@ func (sb *StringBank) syncResonatingNotes() {
 // SetResonanceEngine attaches (or, with nil, detaches) the sympathetic engine
 // the render loop drives per sample. A bank with no engine renders exactly as it
 // did before the loop moved inside StringBank, which is what the open-loop
-// probes rely on — do NOT also call InjectFromBridge on a wired bank, or every
-// sample is injected twice.
+// probes rely on. Injection is reachable no other way: it happens only from
+// inside the render loop, so there is no second path that could deposit twice.
 func (sb *StringBank) SetResonanceEngine(engine *ResonanceEngine) {
 	if sb == nil {
 		return
@@ -787,16 +787,6 @@ func (sb *StringBank) injectResonanceSample(i int, drive []float32) {
 	if sb.resonance.injectSample(x, sb.targets) {
 		sb.resonancePending = true
 	}
-}
-
-// NotifyResonanceInjected tells the bank that a resonance deposit happened, so
-// the next block has to look for groups that need enrolling. Without the flag
-// the idle bank would pay for the sweep on every block.
-//
-// The render loop sets the flag itself now; this stays exported for open-loop
-// callers that drive the targets through InjectFromBridge.
-func (sb *StringBank) NotifyResonanceInjected() {
-	sb.resonancePending = true
 }
 
 func (sb *StringBank) SetKeyDown(note int, down bool) {

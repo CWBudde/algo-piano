@@ -631,10 +631,13 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         driving a frozen string state.** Done 2026-08-22. The loop now runs
         inside `StringBank`'s per-sample render loop, driven by the previous
         sample's own bank output, so the delay is one SAMPLE rather than one
-        block. `ResonanceEngine.injectSample` is the production entry point;
-        `InjectFromBridge` survives as an open-loop one for probes, with a
-        `processWithBridge` drive seam so the probes measure the loop production
-        actually runs. `Piano` still owns the engine and re-attaches it after
+        block. `ResonanceEngine.injectSample` is now the ONLY injection entry
+        point: `InjectFromBridge` and the `RingingState.ResonanceTargets` /
+        `NotifyResonanceInjected` forwarders that were the only way to reach it
+        are removed, because closing the loop from outside the bank was the
+        defect. Probes use a `processWithBridge` drive seam instead, so they
+        measure the loop production actually runs. `Piano` owns the engine and
+        re-attaches it after
         every rebuild of the ringing state (`attachResonance`), which
         `TestSetStringModelKeepsResonanceWired` pins because `SetStringModel`
         would otherwise silently drop it. Cost is unchanged — the old code
