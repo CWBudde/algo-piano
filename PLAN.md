@@ -517,7 +517,32 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         149.63, the same as `modal-physical-pedal-release`, well under the 1024
         runaway limit. `TestResonanceLoopGainIsBoundedAcrossCores` and
         `TestModalResonanceEnergyStaysBounded` in
-        `piano/modal_resonance_test.go` guard the loop gain and the decay.)
+        `piano/modal_resonance_test.go` guard the loop gain and the decay.
+        Review of that change asked whether a per-note bound can bound the loop
+        at all, since `InjectFromBridge` drives _every_ undamped group and
+        `StringBank.Process` sums all of their responses back into the same
+        bridge signal. Measured with the whole bank sustained
+        (`TestAggregateResonanceLoopIsBounded`): the modal aggregate is bounded
+        with margin — 0.0164 at defaults and 0.1208 under
+        `assets/presets/modal-calibrated.json`, both with
+        `ResonancePerNoteFilter` true, and roughly 20x lower with it false — and
+        the closed loop decays to zero in every modal row, so the fix holds for
+        the summed loop and not only per note.)
+  - [ ] follow-up: **the DWG core's aggregate resonance loop grows with the
+        sustain pedal held.** Found while answering the review above; it
+        predates the modal fix, which touches no DWG file. With all 88 groups
+        undamped the aggregate open-loop gain is 1.43 at defaults and 1.98 under
+        `modal-calibrated.json`'s resonance gain (per-note it is only 0.41), and
+        through the public `Piano.Process` the render grows from a peak of 11 at
+        1 s to 6.2e8 at 40 s (3.0e12 with the hotter gain). It is invisible today
+        because `dwg-off-resonance` in `TestLongRenderHasNoNaNOrInf` runs 4 s,
+        over which the growth is only a few dB. The mechanism is the aggregation
+        itself, so a fix has to normalise the injection across the undamped bank
+        or size `ResonanceGain` from the full loop — both move DWG output and
+        need a `gate-c4` re-baseline, which is why the DWG rows of
+        `TestAggregateResonanceLoopIsBounded` are skipped rather than asserted.
+        Note `ResonancePerNoteFilter=false` is _not_ affected (aggregate 0.03),
+        so the unnormalised `noteResonator` bank below is the likely amplifier.
   - [ ] follow-up: interleave `InjectFromBridge` with rendering instead of
         driving a frozen string state - the loop is currently closed once per
         block in `Piano.Process`, so a whole block of bridge force is deposited
