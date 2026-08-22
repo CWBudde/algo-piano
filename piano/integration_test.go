@@ -64,6 +64,11 @@ type stabilityRenderConfig struct {
 	// so a combination that is currently broken stays visible in the table -
 	// and turns back into a real assertion the moment the defect is fixed -
 	// instead of being quietly deleted from the cross product.
+	//
+	// Currently unused: the modal+resonance divergence it was introduced for is
+	// fixed (see resonanceForceScale in modal_group.go) and that row asserts
+	// again. The field and its t.Skip below are kept deliberately, as the
+	// mechanism for the next such defect.
 	knownDefect string
 }
 
@@ -73,30 +78,6 @@ type stabilityRenderConfig struct {
 // is a separate, already-tracked defect, and including those notes here would
 // make this test fail for a reason it is not meant to police.
 var stabilityNotes = []int{36, 48, 60, 67, 72, 84}
-
-// modalResonanceDivergenceDefect records a real divergence this test found, and
-// which this PR deliberately does not fix - it is a test-only change, and the
-// fix belongs in the resonance engine, not here.
-//
-// Measured on 2026-08-22 (Go 1.26.5, linux/amd64), modal core with
-// ResonanceEnabled, sustain held, 48 kHz, blocks of 128 frames:
-//
-//	notes            coupling   first non-finite block   peak before it
-//	60               off        108 (0.288 s)            1.81e36
-//	60               static     108 (0.288 s)            1.81e36
-//	60               physical   108 (0.288 s)            1.81e36
-//	36,48,60,67,72,84 off       104 (0.277 s)            2.48e36
-//	36,48,60,67,72,84 static    104 (0.277 s)            2.48e36
-//	36,48,60,67,72,84 physical  104 (0.277 s)            2.48e36
-//
-// The coupling mode makes no difference at all, and a single note is enough, so
-// the coupling graph is not involved: the loop is the resonance engine feeding
-// the modal bank, which returns more energy than it received. The same
-// configuration on the DWG core ("dwg-off-resonance" above) is stable for the
-// full four seconds. The web client currently ships the modal core with a
-// two-partial calibrated profile rather than the eight-partial default used
-// here, which is likely why this has not been heard in the browser.
-const modalResonanceDivergenceDefect = "known defect: modal core + ResonanceEnabled diverges to NaN after ~0.29 s (peak 2.5e36) regardless of coupling mode, on a single note as well as a chord; the DWG core with the same settings is stable"
 
 const stabilityBlockSize = 128 // the AudioWorklet render quantum
 
@@ -178,12 +159,15 @@ func renderStabilityBlocks(t *testing.T, cfg stabilityRenderConfig, check func(b
 //   - "dwg-physical-partial-44k" covers partial damping and a non-48 kHz rate,
 //     which changes every filter coefficient in the engine.
 //   - "modal-physical-pedal-release" is the modal twin of the heaviest DWG row,
-//     minus the resonance engine (see the skipped row below).
+//     minus the resonance engine.
 //   - "modal-static-96k" covers the modal core at the highest rate the web
 //     client can hand it, where the per-partial rotation runs closest to its
 //     stability limit.
-//   - "modal-physical-resonance" is skipped: this test found that combination to
-//     be genuinely divergent. See modalResonanceDivergenceDefect.
+//   - "modal-physical-resonance" is the modal core with every feedback path on
+//     at once. This test originally found that combination to be genuinely
+//     divergent (NaN after ~0.29 s); it is fixed by resonanceForceScale in
+//     modal_group.go, and TestResonanceLoopGainIsBoundedAcrossCores in
+//     modal_resonance_test.go guards the loop gain that caused it.
 //
 // Note that TestModalLongRenderIsFiniteAcrossKernels in modal_parity_test.go
 // covers a different axis - the same render under every modal kernel - and is
@@ -258,15 +242,14 @@ func TestLongRenderHasNoNaNOrInf(t *testing.T) {
 			pedals:     partial,
 		},
 		{
-			name:        "modal-physical-resonance",
-			model:       StringModelModal,
-			coupling:    CouplingModePhysical,
-			resonance:   true,
-			sampleRate:  48000,
-			seconds:     4,
-			notes:       stabilityNotes,
-			pedals:      held,
-			knownDefect: modalResonanceDivergenceDefect,
+			name:       "modal-physical-resonance",
+			model:      StringModelModal,
+			coupling:   CouplingModePhysical,
+			resonance:  true,
+			sampleRate: 48000,
+			seconds:    4,
+			notes:      stabilityNotes,
+			pedals:     held,
 		},
 	}
 
@@ -299,6 +282,7 @@ func TestLongRenderHasNoNaNOrInf(t *testing.T) {
 			//	dwg-physical-partial-44k      10.95
 			//	modal-physical-pedal-release 149.73
 			//	modal-static-96k             293.72
+			//	modal-physical-resonance     149.63
 			//
 			// The three DWG rows agree to the last digit because the peak is
 			// the hammer attack, which neither coupling nor resonance nor the
@@ -309,10 +293,11 @@ func TestLongRenderHasNoNaNOrInf(t *testing.T) {
 			// test is not about: the modal core's raw output really is 150-294
 			// on a six-note chord under the eight-partial default profile,
 			// which is a gain-staging question, not a stability one. A genuine
-			// divergence is not marginal - the skipped modal+resonance row
-			// reaches 2.5e36 within 0.3 s - so 1024, roughly 3.5x the worst
-			// measured peak and 33 orders of magnitude below a real runaway,
-			// separates the two cleanly.
+			// divergence is not marginal - before the fix the modal+resonance
+			// row reached 2.5e36 within 0.3 s, and it now peaks at the same
+			// 149.63 as the resonance-free modal row - so 1024, roughly 3.5x
+			// the worst measured peak and 33 orders of magnitude below a real
+			// runaway, separates the two cleanly.
 			const runawayLimit = 1024.0
 			if peak > runawayLimit {
 				t.Fatalf("peak magnitude %g exceeds the runaway limit %g: the render is finite but diverging", peak, runawayLimit)

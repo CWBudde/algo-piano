@@ -59,6 +59,12 @@ This maps each split source file to its direct and indirect test coverage.
 - `TestModalSoAOffsetsAreConsistent` (`modal_parity_test.go`)
 - `TestModalFallbackSingleModeLayout` (`modal_parity_test.go`)
 - `TestModalLongRenderIsFiniteAcrossKernels` (`modal_parity_test.go`)
+- `TestModalResonanceEnergyStaysBounded` (`modal_resonance_test.go`) — the modal core with
+  resonance and the sustain pedal held must be decaying by the end of a 6 s render, not
+  merely finite
+- `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — `resonanceForceScale`
+- `TestAggregateResonanceLoopIsBounded` (`modal_resonance_test.go`) — the same loop with the
+  whole bank sustained, so every undamped group sums into one bridge signal
 
 ## `modal_kernel.go`
 
@@ -102,6 +108,14 @@ assert equality with no tolerance.
 
 - `TestSympatheticResonanceEnergizesSilentHeldString` (`resonance_test.go`)
 - `TestPerNoteResonanceFilterIsFrequencySelective` (`resonance_test.go`)
+- `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — per-note open-loop
+  gain of the bridge-injection loop, notes 21-84, on both cores at the defaults and on the
+  modal core with the knobs of `assets/presets/modal-calibrated.json`; the loop is linear, so
+  a gain below 1 is sufficient for stability
+- `TestAggregateResonanceLoopIsBounded` (`modal_resonance_test.go`) — the same loop with all 88
+  groups undamped, both `ResonancePerNoteFilter` settings, plus a closed-loop run that must
+  decay. The DWG rows are skipped: that core's aggregate loop grows, a pre-existing defect
+  tracked as a Phase 9.6 follow-up in `PLAN.md`
 
 ## `convolver.go`
 

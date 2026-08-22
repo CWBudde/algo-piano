@@ -315,6 +315,17 @@ over 10 runs:
 | `perNoteFilter` (default) | 6.12 ms | 1.78 ms | **−70.9%** (p=0.000, n=10) |
 | `flatDrive`               | 5.77 ms | 1.48 ms | **−74.4%** (p=0.000, n=10) |
 
+Re-measured 2026-08-22 (Go 1.26.5, same machine, `-benchtime 200x -count 10`)
+after the modal resonance divergence fix (`resonanceForceScale` in
+`piano/modal_group.go`). The figures above were taken while the modal bank in
+this benchmark was in fact diverging, so its mode state ran far outside the
+normal float32 range; the fix keeps it in range, and the cost is unchanged:
+median 0.68 ms (`perNoteFilter`) and 0.62 ms (`flatDrive`) with the fix against
+0.73 ms and 0.66 ms with the scale reverted on the same run — within this
+machine's noise, and both still allocation-free. The absolute numbers differ
+from the table above because of the shorter `-benchtime`; only the paired
+comparison is meaningful.
+
 With resonance **disabled** the change is not measurable above this machine's
 noise. `BenchmarkModalPolyphonyScaling` (all 10 sub-benchmarks) and
 `BenchmarkStringBankCouplingModes` (all 30) report `~`.
