@@ -640,11 +640,31 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
         not a stability criterion. A settled probe costs minutes per row, so the
         real assertion currently lives in `TestDWGResonanceLongRenderDecays`;
         replacing the probe with something both cheap and sound is open.
-  - [ ] follow-up: make `cmd/piano-modal-fit` disable resonance during fitting
+  - [x] follow-up: make `cmd/piano-modal-fit` disable resonance during fitting
         the way `cmd/piano-fit/main.go:212-214` does.
         `assets/presets/modal-calibrated.json` was very likely fitted against
         diverging renders, which would explain why `analysis/norms.go:55`
         excludes it as a degenerate outlier.
+        `cmd/piano-modal-fit` now takes the same `--no-resonance` flag with the
+        same save/restore semantics as `cmd/piano-fit`: it silences resonance on
+        both sides of the match (the DWG references and the modal candidates are
+        rendered from the same base params) while `finalizeOutputParams`
+        restores the input preset's own `ResonanceEnabled` before the preset is
+        written, so a staged run cannot leak resonance-off into the output. The
+        default is `false`, matching `cmd/piano-fit`: with the divergence
+        defects fixed (#23, #26) a resonance-on fit is sound again, and a
+        differing default between the two fitting tools is exactly the drift
+        this follow-up was about. Pinned by
+        `TestFinalizeOutputParamsRestoresPresetResonance` and
+        `TestWritePresetResonanceRoundTrip` in
+        `cmd/piano-modal-fit/main_test.go`.
+  - [ ] follow-up: **re-fit `assets/presets/modal-calibrated.json`.** The tool is
+        now capable of a clean fit, but the shipped preset is still the one
+        produced against diverging resonance renders, and `analysis/norms.go:55`
+        still has to exclude it as a degenerate outlier. Re-fitting it is its
+        own piece of work: the new preset changes the norm corpus, so the
+        exclusion and the normalisation constants have to be re-derived together
+        with it. The exclusion stays exactly as it is until then.
 - [ ] Add benchmarks:
   - [x] DWG vs modal CPU at fixed block size/sample rate
         (`BenchmarkStringBankStringModels` in `piano/modal_bench_test.go` runs

@@ -1,10 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/cwbudde/algo-piano/analysis"
+	"github.com/cwbudde/algo-piano/piano"
+	"github.com/cwbudde/algo-piano/preset"
 )
 
 func TestSanitizeMetricsReplacesNonFiniteValues(t *testing.T) {
@@ -99,5 +104,65 @@ func TestNewMayflyConfigVariantValidation(t *testing.T) {
 	}
 	if cfg.NPop != 8 || cfg.NPopF != 8 {
 		t.Fatalf("population mismatch: male=%d female=%d", cfg.NPop, cfg.NPopF)
+	}
+}
+
+// --no-resonance is a calibration-speed knob, not a model change. A preset
+// fitted with resonance silenced must still be written with the input preset's
+// own resonance_enabled, otherwise a staged pipeline would hand every later
+// stage a preset with sympathetic resonance permanently switched off.
+func TestFinalizeOutputParamsRestoresPresetResonance(t *testing.T) {
+	for _, presetResonance := range []bool{true, false} {
+		// The fitting copy is what --no-resonance silences.
+		base := piano.NewDefaultParams()
+		base.ResonanceEnabled = false
+
+		out := finalizeOutputParams(base, knobSet{ModalPartials: 12}, presetResonance)
+		if out.ResonanceEnabled != presetResonance {
+			t.Fatalf("ResonanceEnabled: got %v want %v", out.ResonanceEnabled, presetResonance)
+		}
+		if out.StringModel != piano.StringModelModal {
+			t.Fatalf("StringModel: got %v want modal", out.StringModel)
+		}
+		// The restore must not write back through the fitting params.
+		if base.ResonanceEnabled {
+			t.Fatalf("finalizeOutputParams mutated the fitting params")
+		}
+	}
+}
+
+// The restored value has to survive the write, so pin the whole round-trip:
+// the JSON must state resonance_enabled explicitly (no omitempty dropping the
+// false) and reload to the same value.
+func TestWritePresetResonanceRoundTrip(t *testing.T) {
+	for _, presetResonance := range []bool{true, false} {
+		base := piano.NewDefaultParams()
+		base.ResonanceEnabled = false
+		out := finalizeOutputParams(base, knobSet{ModalPartials: 12}, presetResonance)
+
+		path := filepath.Join(t.TempDir(), "modal-calibrated.json")
+		if err := writePreset(path, out); err != nil {
+			t.Fatalf("writePreset: %v", err)
+		}
+
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if _, ok := fields["resonance_enabled"]; !ok {
+			t.Fatalf("resonance_enabled missing from preset written with %v:\n%s", presetResonance, raw)
+		}
+
+		loaded, err := preset.LoadJSON(path)
+		if err != nil {
+			t.Fatalf("LoadJSON: %v", err)
+		}
+		if loaded.ResonanceEnabled != presetResonance {
+			t.Fatalf("resonance_enabled round-trip: got %v want %v", loaded.ResonanceEnabled, presetResonance)
+		}
 	}
 }
