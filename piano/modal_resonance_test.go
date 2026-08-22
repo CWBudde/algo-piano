@@ -262,7 +262,15 @@ func measureResonanceLoopGain(params *Params, note int, sampleRate int, aggregat
 		}
 		last := mean(windows[len(windows)-perSecond:])
 		prev := mean(windows[len(windows)-2*perSecond : len(windows)-perSecond])
-		if prev == 0 || math.Abs(last-prev)/prev < resonanceProbeSettleTol {
+		// A zero previous mean is NOT convergence. Relative tolerance is
+		// undefined against zero, and the one way a row reaches it is the one
+		// case that must never be called settled: a resonance path that has gone
+		// silent reads last == prev == 0 forever, so treating it as within
+		// tolerance would report "settled, gain 0" and sail through the < 0.5
+		// bound. Every row this file probes is nonzero (the smallest measured is
+		// 1.6e-4), so requiring prev != 0 costs nothing on a working loop and
+		// spends the full budget only on a broken one.
+		if prev != 0 && math.Abs(last-prev)/prev < resonanceProbeSettleTol {
 			runs++
 		} else {
 			runs = 0
@@ -604,6 +612,17 @@ func TestResonanceProbeSeesKnownDivergingLoop(t *testing.T) {
 
 	r := measureResonanceLoopGain(params, note, sampleRate, true, resonanceProbeMaxSeconds)
 	t.Logf("dwg resonance_gain %.4f, all groups undamped, note %d: %s", divergingResonanceGain, note, r)
+	// Screen the reading before comparing it. NaN fails every ordered
+	// comparison, so `r.gain < 1.0` is false for NaN and this calibration would
+	// pass on a reading that measured nothing at all - the exact inversion of
+	// what the test is for. A zero-length reading (driveSq == 0) means the probe
+	// never ran and must not be read as a crossing either.
+	if math.IsNaN(r.gain) || math.IsInf(r.gain, 0) {
+		t.Fatalf("non-finite loop gain %v on the diverging calibration row; the probe measured nothing usable", r.gain)
+	}
+	if r.seconds <= 0 {
+		t.Fatalf("the probe returned an empty reading (%.2f s of drive) on the diverging calibration row", r.seconds)
+	}
 	if r.gain < 1.0 {
 		t.Fatalf("the probe reports %.4f for a configuration that diverges in a 120 s render; a probe that cannot see this one cannot certify the others", r.gain)
 	}
