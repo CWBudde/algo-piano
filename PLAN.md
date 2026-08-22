@@ -906,7 +906,9 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
   - [ ] “high accuracy” profile defaults to DWG core
   - Still open, and `PIANO-406` below holds the current state of the evidence.
     One thing about the rule's shape is now settled by measurement: a “low
-    CPU” profile must **not** be implemented by lowering `modal_partials`.
+    CPU” profile must **not** be implemented by lowering `modal_partials` —
+    the knob's fixed-cost floor leaves too little CPU on the table for it to
+    be worth doing, independent of what the quality cost turns out to be.
 
 ### 12.5 — Upstream SIMD integration follow-up (`algo-dsp` + `algo-vecmath`)
 
@@ -964,32 +966,47 @@ package in v0.7.0. `algo-piano` therefore calls `algo-vecmath` directly.
         shipping rule on a number whose disagreement with the previous number is
         unexplained is not better than leaving the rule unadopted. See
         BENCHMARKS.md "Modal partials: quality vs CPU", last subsection.
-  - [x] determine how far `modal_partials` can drop before quality suffers, then
+  - [ ] determine how far `modal_partials` can drop before quality suffers, then
         re-evaluate the mapping on measured numbers
         (**Measured 2026-08-22**, `TestModalPartialsQualityCurve` in
         `piano/modal_partials_test.go` and `BenchmarkModalPartialsSweep` in
         `piano/modal_bench_test.go`, both sweeping 1/2/3/4/5/6/8/12/16/24
         partials; tabulated in BENCHMARKS.md "Modal partials: quality vs CPU".
-        **Answer: it cannot drop at all without a measurable cost, and the
-        mapping does not need it to.** The quality curve is smooth and monotone
-        all the way down — there is no knee below the shipped default of 8 and
-        no partial count that is free. Dropping 8 to 4 buys 19% (uncoupled) or
-        23% (coupled) of the string-bank block cost and costs 13.8 dB of
-        `partial_level_rmse_db` at C4 against the same core at 32 partials; 8 to
-        1 buys 38-40% and costs 26.9 dB. For scale, the whole remaining envelope
-        headroom of the C4 gate is 0.84 dB. The CPU curve is _not_ flat in
-        `modal_partials` — it is roughly affine, about 28 ns per active string
-        per block per partial on a ~280 ns floor, so ~55% of the cost at 8
-        partials is fixed and no reduction can reach it. Two limits on this
-        result, both real: the "quality" axis is distance from the same core at
-        32 partials, not absolute quality — nothing here says the 32-partial
-        render is right; and `analysis` tracks at most 16 harmonics
-        (`analysis/features.go`), so whether the default of 8 is too _low_ is a
-        question these tools cannot answer at all. The DWG-referenced score was
-        measured too, as 12.4 asks, and is useless for this: it moves 0.004
-        across a 24x change in partial count because it saturates spectrally,
-        and at C2 it gets _worse_ as partials are added, since a richer modal
-        spectrum diverges further from DWG's sparse impulse train.)
+        **The CPU half of this box is answered; the quality half is not, and
+        this box was briefly marked closed on the strength of an overclaim that
+        PR #34 review caught.** What _is_ established: the CPU curve is not flat
+        in `modal_partials` — it is roughly affine, about 28 ns per active
+        string per block per partial on a ~280 ns floor, so ~55% of the cost at
+        8 partials is fixed and no reduction can reach it. Dropping 8 to 4 buys
+        only 19% (uncoupled) or 23% (coupled) of the string-bank block cost and
+        8 to 1 buys 38-40%, so the knob cannot deliver a substantial CPU saving
+        whatever quality one is willing to pay. What is **not** established: the
+        quality curve is smooth and monotone all the way down, with no knee
+        below the shipped default of 8 — 8 to 4 costs 13.8 dB of
+        `partial_level_rmse_db` at C4 against the same core at 32 partials and
+        8 to 1 costs 26.9 dB — but that only shows the renders _differ_ from the
+        32-partial reference. Nothing here shows the difference is audible or
+        unacceptable: there is no listening test, and `partial_level_rmse_db`
+        has no calibrated acceptance threshold in this repo
+        (`assets/thresholds/c4.json` lists it as `null`, and its numbers are
+        regression fences rather than quality targets). A previous revision of
+        this box compared the 13.8 dB against the 0.84 dB of remaining
+        _envelope_ headroom in the C4 gate; that is a comparison between two
+        different metrics and establishes nothing. It has been removed. Two
+        further limits, both real: the "quality" axis is distance from the same
+        core at 32 partials, not absolute quality — nothing here says the
+        32-partial render is right; and `analysis` tracks at most 16 harmonics
+        (`analysis/features.go`), so a difference confined entirely above the
+        16th harmonic is invisible to `partial_level_rmse_db` — harmonics 9-16
+        and the full-spectrum metrics do remain sensitive. The DWG-referenced
+        score was measured too, as 12.4 asks, and is useless for this: it moves
+        0.004 across a 24x change in partial count because it saturates
+        spectrally, and at C2 it gets _worse_ as partials are added, since a
+        richer modal spectrum diverges further from DWG's sparse impulse train.)
+    - [ ] follow-up: calibrate an acceptance threshold for
+          `partial_level_rmse_db`, or run a listening test, so the quality half
+          of this box can be closed on evidence rather than on a difference
+          measurement with no scale attached.
   - [ ] keep DWG profile as high-accuracy reference for regression checks
   - **Retained heap is now measured** (2026-08-22,
     `BenchmarkStringBankRetainedHeap`, BENCHMARKS.md "Retained heap"), so the
@@ -1004,9 +1021,13 @@ package in v0.7.0. `algo-piano` therefore calls `algo-vecmath` directly.
     on every measurement taken on a quiet machine modal is the cheaper core, by
     36-39% uncoupled and by 37% with coupling on at 8 partials. It is blocked on
     the fact that this contradicts the figure recorded a day earlier and the
-    contradiction is unexplained. The quality half of the question is closed and
-    it settles one thing about the rule's _shape_: a "low CPU" profile must not
-    be implemented by lowering `modal_partials`. If the rule is adopted it is
+    contradiction is unexplained. The partials sweep settles one thing about the
+    rule's _shape_, and it does so on the CPU axis alone: a "low CPU" profile
+    must not be implemented by lowering `modal_partials`, because the knob's
+    fixed-cost floor means there is not enough CPU there to be had. The quality
+    half of that sweep is _not_ closed — the lower-partial renders demonstrably
+    differ from the 32-partial reference, but no calibrated threshold or
+    listening test says whether the difference matters. If the rule is adopted it is
     adopted as "low CPU ⇒ modal core at the default 8 partials", with the
     partial count left alone.
     - [ ] follow-up: re-measure "Voice cost per block and polyphony sweep" in

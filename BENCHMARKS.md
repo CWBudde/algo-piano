@@ -657,8 +657,8 @@ What the numbers say:
 This closes the last missing input to `PIANO-406` on the memory side. It does
 not settle the profile decision. The retained-heap curve says a low partial
 count is cheap, but says nothing about whether it still sounds like a piano —
-that question is answered in "Modal partials: quality vs CPU" below, and the
-answer is that a low partial count is not cheap in the way that matters.
+that question is taken up in "Modal partials: quality vs CPU" below, where the
+CPU saving turns out to be small and the quality cost real but uncalibrated.
 
 ## Modal partials: quality vs CPU
 
@@ -672,8 +672,10 @@ trace. Separate invocations interleave the cases over time instead. Load average
 during these runs was 1.3 to 4.2. Quality figures are deterministic renders and
 carry no run-to-run spread at all._
 
-This section closes the open input to `PIANO-406`: **how far can
+This section addresses the open input to `PIANO-406`: **how far can
 `modal_partials` drop before quality suffers, and what does dropping it buy?**
+It answers the second half outright and the first half only as far as the
+repository's instruments reach — see "What the two curves say together".
 The two halves are `TestModalPartialsQualityCurve`
 (`piano/modal_partials_test.go`) and `BenchmarkModalPartialsSweep`
 (`piano/modal_bench_test.go`), which sweep the same partial counts. The
@@ -810,19 +812,40 @@ Concretely, from 8 partials:
 - **There is no knee below the default.** The quality curve is smooth and
   monotone all the way down; nothing in it marks a partial count below 8 as
   "free". Every partial removed costs measurable spectral content, and the cost
-  is steepest exactly where the CPU saving is largest. Dropping 8 to 4 buys 19%
-  of the string-bank cost for 14 dB of partial-level error at C4. For scale, the
-  entire remaining envelope headroom of the C4 gate is 0.84 dB (10.83 dB
-  measured against an 11.67 dB threshold). **`modal_partials` is not a viable
-  low-CPU knob.**
+  is steepest exactly where the CPU saving is largest.
+- **The CPU half of the low-CPU question is settled, and the answer is no.**
+  Because roughly 55% of the cost at 8 partials is fixed overhead, dropping 8 to
+  4 buys only 19% (uncoupled) or 23% (coupled) of the string-bank block cost,
+  and even 8 to 1 buys 38-40%. A "low CPU" profile that needs a substantial
+  reduction cannot get one from this knob, whatever the quality cost turns out
+  to be. **`modal_partials` is not a useful low-CPU knob.**
+- **The quality half is measured but not calibrated.** The sweep establishes
+  that lower-partial renders _differ_ from the 32-partial internal reference,
+  and by how much: 13.8 dB of `partial_level_rmse_db` at C4 for 8 to 4, 26.9 dB
+  for 8 to 1. It does **not** establish that those differences are audible or
+  unacceptable. There is no listening test behind them, and
+  `partial_level_rmse_db` has no calibrated acceptance threshold anywhere in
+  this repo — `assets/thresholds/c4.json` lists it as `null`, explicitly
+  uncalibrated, and that file's numbers are regression fences rather than
+  quality targets in any case. Closing this half properly needs one of two
+  inputs that do not exist yet: a calibrated `partial_level_rmse_db` acceptance
+  threshold, or a listening test.
 - **The largest quality cliffs are at the bottom.** 1 to 2 partials is worth 6 dB
   at C4 and 2 partials is not a piano note by any reading; the sweep includes 1
   and 2 to bound the axis, not because they are candidates.
-- **`modal_partials` above 8 is not measurable with the tools in this repo.**
-  The 16-harmonic ceiling in `analysis` means the 12-to-32 range can only be
-  compared spectrally, and against DWG not at all. Whether the shipped default
-  of 8 is too low is a question this measurement cannot answer; it can only say
-  that going lower is expensive.
+- **Above 8 partials, part of the difference is measurable and part is not.**
+  Harmonics 9-16 are inside the analyzer's range: the table above shows
+  `partial_level_rmse_db` moving substantially between 8, 12 and 16 partials in
+  every register, and the full-spectrum metrics (`spectral_rmse_db`,
+  `spectral_high_rmse_db`) stay sensitive above harmonic 16 as well. What is
+  hidden is a difference confined **entirely** above the 16th harmonic:
+  `analysis` tracks at most 16 harmonics, so the ᶜ rows at 16 and 24 partials
+  sit on that ceiling and their near-zero partial-level readings are blind, not
+  equal. Whether the shipped default of 8 is too _low_ is therefore a question
+  these tools can partly address — through the full-spectrum metrics and through
+  the partial-level metric up to harmonic 16 — but cannot settle on the
+  partial-level metric alone, and cannot address against DWG at all, since that
+  score saturates.
 
 ### An unexplained disagreement with the recorded polyphony numbers
 
