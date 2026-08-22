@@ -52,8 +52,8 @@ import (
 // replaying the retained input history through it on the same partition grid the
 // main stage saw. A caller that stays on the partSize grid — cmd/piano-render,
 // the fit render path and the AudioWorklet render quantum all do — never
-// allocates it and pays nothing beyond a memcpy of the input into the history
-// ring.
+// allocates it and pays nothing beyond a copy of the input into the history
+// window.
 //
 // # Bit-identity
 //
@@ -202,11 +202,28 @@ func (l *olaLane) reset() {
 // blockStream owns the input-side state shared by every lane of one convolver:
 // the samples of the current, still incomplete partition and the input history
 // the off-grid path reads.
+//
+// The history lives in a sliding window over buf: hist() is always the histLen
+// samples ending at end, oldest first, zero-filled before the start of the
+// stream. buf carries histSlack samples of headroom past that so consuming
+// input is a copy of the input alone; only when the headroom runs out is the
+// window moved back to the front, which costs O(histLen) once per histSlack
+// samples rather than once per call. That distinction matters: histLen is on
+// the order of the IR length, so compacting on every call would put an
+// O(len(IR)) term back into a path whose whole point is to avoid one.
 type blockStream struct {
 	partSize int
 	pending  []float32
-	hist     []float32
+
+	buf     []float32
+	histLen int
+	end     int
 }
+
+// histSlack is the headroom past the history window. One partition would be
+// enough for correctness; 4096 makes the amortized compaction cost negligible
+// for a sample-at-a-time caller at the price of 16 KB.
+const histSlack = 4096
 
 // configure sizes the stream for a set of lanes. histLen covers the longest
 // lane's priming window plus one partition, which is also enough for the
@@ -220,26 +237,38 @@ func (s *blockStream) configure(partSize int, lanes ...*olaLane) {
 		}
 	}
 	s.pending = make([]float32, 0, partSize)
-	s.hist = make([]float32, histLen)
+	s.histLen = histLen
+	s.buf = make([]float32, histLen+histSlack)
+	s.end = histLen
+}
+
+// hist is the current history window: the histLen most recent input samples,
+// oldest first.
+func (s *blockStream) hist() []float32 {
+	return s.buf[s.end-s.histLen : s.end]
 }
 
 // reset drops the partial partition and the input history.
 func (s *blockStream) reset() {
 	s.pending = s.pending[:0]
-	clear(s.hist)
+	clear(s.buf)
+	s.end = s.histLen
 }
 
-// pushHist appends consumed input to the history ring.
+// pushHist appends consumed input to the history window.
 func (s *blockStream) pushHist(x []float32) {
-	if len(s.hist) == 0 {
+	n := len(x)
+	if n >= s.histLen {
+		copy(s.buf[:s.histLen], x[n-s.histLen:])
+		s.end = s.histLen
 		return
 	}
-	if len(x) >= len(s.hist) {
-		copy(s.hist, x[len(x)-len(s.hist):])
-		return
+	if s.end+n > len(s.buf) {
+		copy(s.buf[:s.histLen], s.buf[s.end-s.histLen:s.end])
+		s.end = s.histLen
 	}
-	copy(s.hist, s.hist[len(x):])
-	copy(s.hist[len(s.hist)-len(x):], x)
+	copy(s.buf[s.end:s.end+n], x)
+	s.end += n
 }
 
 // run convolves input through every lane, leaving each lane's mono result in
@@ -286,10 +315,11 @@ func (s *blockStream) run(input []float32, lanes ...*olaLane) {
 			}
 			s.pending = s.pending[:0]
 		} else {
-			committedEnd := len(s.hist) - len(s.pending)
+			hist := s.hist()
+			committedEnd := len(hist) - len(s.pending)
 			for _, l := range lanes {
-				l.ensureTail(s.hist, committedEnd)
-				l.emitDirect(s.hist, len(s.hist), take, blockOff, l.out[i:i+take])
+				l.ensureTail(hist, committedEnd)
+				l.emitDirect(hist, len(hist), take, blockOff, l.out[i:i+take])
 			}
 		}
 		i += take

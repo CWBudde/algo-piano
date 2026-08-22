@@ -87,12 +87,12 @@ func BenchmarkBodyConvolverIRLength(b *testing.B) {
 // directly instead of measuring how much audio one call happens to consume.
 //
 // The audio is delivered in 128-frame calls because that is the shape the
-// engine actually runs in. It matters: SoundboardConvolver.Process pads any
-// call shorter than partSize up to partSize, advances a whole overlap-add
-// partition, and then returns only the first len(input) samples. Handing the
-// convolver all 4096 frames in one call would therefore measure an offline
-// throughput number that no realtime caller can obtain, and dividing it by 32
-// would understate the true per-callback cost for every partSize above 128.
+// engine actually runs in. It matters: handing the convolver all 4096 frames in
+// one call amortizes each partition over far more output than a realtime caller
+// ever gets, so dividing that by 32 would produce a per-callback cost nobody can
+// obtain. A callback shorter than partSize now takes the head/tail path in
+// convolver_stream.go rather than being padded out, which is both correct and
+// the thing worth measuring for partSize above 128.
 const (
 	convolverBenchAudioFrames    = 4096
 	convolverBenchCallbackFrames = 128
@@ -142,6 +142,66 @@ func BenchmarkBodyConvolverPartitionSize(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				processInCallbacks(c.Process, input)
+			}
+		})
+	}
+}
+
+// processInBlocks feeds input to fn in size-sized slices, including a short
+// final slice when size does not divide the input. Unlike processInCallbacks it
+// therefore renders exactly the same amount of audio for every size, which is
+// what makes the callback-size sweep below comparable across sizes.
+func processInBlocks(fn func([]float32) []float32, input []float32, size int) {
+	for off := 0; off < len(input); off += size {
+		end := min(off+size, len(input))
+		_ = fn(input[off:end])
+	}
+}
+
+// convolverCallbackSizes sweeps the size of the caller's Process calls at the
+// production partition size of 128.
+//
+// Anything that is not a whole multiple of 128 takes the off-grid path: the
+// overlap-add stage is still only ever fed complete partitions, and the samples
+// the caller asks for before their partition closes are produced by the direct
+// h[:128] head plus the lazily built h[128:] stage (see convolver_stream.go).
+// That path is correct at any call size but costs more than the aligned one, and
+// this is where that cost is on record.
+func convolverCallbackSizes() []int {
+	return []int{64, 100, 128, 256, 512}
+}
+
+// BenchmarkSoundboardConvolverCallbackSize renders the same 4096 frames through
+// a fixed partSize=128 convolver in differently sized Process calls.
+func BenchmarkSoundboardConvolverCallbackSize(b *testing.B) {
+	input := benchmarkInput(convolverBenchAudioFrames)
+	ir := benchmarkIR(48000)
+	for _, size := range convolverCallbackSizes() {
+		b.Run(fmt.Sprintf("call%d", size), func(b *testing.B) {
+			c := NewSoundboardConvolver(48000)
+			c.SetIR(ir, ir)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				processInBlocks(c.Process, input, size)
+			}
+		})
+	}
+}
+
+// BenchmarkBodyConvolverCallbackSize is the mono equivalent at the shorter IR
+// length a body response actually uses.
+func BenchmarkBodyConvolverCallbackSize(b *testing.B) {
+	input := benchmarkInput(convolverBenchAudioFrames)
+	ir := benchmarkIR(8192)
+	for _, size := range convolverCallbackSizes() {
+		b.Run(fmt.Sprintf("call%d", size), func(b *testing.B) {
+			c := NewBodyConvolver(48000)
+			c.SetIR(ir)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				processInBlocks(c.Process, input, size)
 			}
 		})
 	}

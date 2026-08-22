@@ -635,8 +635,9 @@ cut sustained-decay cost from 4.2 ms to 0.59 ms — a larger win than the SIMD w
   - [x] Use `go test -bench=.` benchmarks
   - [x] Voice cost per block at 48k/128 frames
         (`BenchmarkStringBankVoiceCostPerBlock`, `ns/voice-block` metric)
-  - [x] Convolution cost by IR length/partition size
-        (`piano/convolver_bench_test.go`)
+  - [x] Convolution cost by IR length/partition size/caller block size
+        (`piano/convolver_bench_test.go`; BENCHMARKS.md "Partition size became a
+        lever, and callback alignment became the bigger one")
   - [x] Polyphony sweep (e.g. 16/32/64/128 voices)
         (`BenchmarkStringBankVoiceCostPerBlock`; a voice is one sounding string,
         and the sweep stops at MIDI 91 to stay clear of the DWG treble collapse
@@ -686,6 +687,16 @@ untouched and byte-identical: rendering `assets/presets/fitted-c4-mayfly.json`
 (note 60, velocity 118, release-after 3.5, 48 kHz) with `cmd/piano-render` built
 from before and after the change produces identical WAVs, so
 `assets/thresholds/c4.json` and every tracked report stay valid.
+
+Re-measuring the convolver benchmarks against the corrected code flipped a
+documented conclusion: with the stream correct at every partition size, raising
+`partSize` above 128 now cuts the one-second room IR from 0.91 ms to 0.40 ms per
+128-frame callback at 1024, because a partition larger than the callback is
+amortized instead of discarded. The new cost to watch is caller alignment — a
+call size that is not a multiple of `partSize` costs 3.05x on that room path.
+BENCHMARKS.md carries both tables and retracts the two passages that said the
+stream was unfixably wrong above 128 and that cross-callback buffering would cost
+a partition of latency.
 
 **Resolved — DWG treble collapse (2026-08-21).** Extending tuning coverage past
 MIDI 92 turned up two independent defects in the DWG core. Both are fixed;
