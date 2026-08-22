@@ -27,6 +27,12 @@ type RingingStringGroup struct {
 	gains      []float32
 	resFilters []noteResonator
 
+	// stringOut holds this sample's per-string output so processSample can
+	// subtract a string's own contribution from the bridge mix. It is sized
+	// once in the constructor and only ever overwritten, so the per-sample
+	// coupling stays allocation-free.
+	stringOut []float32
+
 	keyDown       bool
 	sustainAmount float32
 	active        bool
@@ -53,7 +59,7 @@ func newRingingStringGroup(sampleRate int, note int, params *Params) *RingingStr
 	highFreqDamping := float32(0.05)
 	inharmonicity := float32(0.0)
 	unisonDetuneScale := float32(1.0)
-	unisonCrossfeed := float32(0.0008)
+	unisonCrossfeed := DefaultUnisonCrossfeed
 	_ = unisonCrossfeed // configured on bank level, kept here for parameter parity.
 
 	if params != nil {
@@ -87,10 +93,11 @@ func newRingingStringGroup(sampleRate int, note int, params *Params) *RingingStr
 	}
 
 	g := &RingingStringGroup{
-		note:    note,
-		f0:      freq,
-		strings: strings,
-		gains:   append([]float32(nil), gains...),
+		note:      note,
+		f0:        freq,
+		strings:   strings,
+		gains:     append([]float32(nil), gains...),
+		stringOut: make([]float32, len(strings)),
 	}
 	g.initResonanceFilters(sampleRate)
 	return g
@@ -179,11 +186,7 @@ func (g *RingingStringGroup) injectResonance(energy float32) {
 		return
 	}
 	for i, s := range g.strings {
-		sg := float32(1.0)
-		if i < len(g.gains) {
-			sg = g.gains[i]
-		}
-		s.InjectForceAtPosition(energy*sg, 0.82)
+		s.InjectForceAtPosition(energy*g.stringGain(i), 0.82)
 	}
 	g.active = true
 	g.resonanceEnergized = true
@@ -216,32 +219,123 @@ func (g *RingingStringGroup) injectCouplingForce(force float32) {
 		return
 	}
 	for i, s := range g.strings {
-		sg := float32(1.0)
-		if i < len(g.gains) {
-			sg = g.gains[i]
-		}
-		s.InjectForceAtPosition(force*sg, 0.9)
+		s.InjectForceAtPosition(force*g.stringGain(i), 0.9)
 	}
 	g.active = true
 	g.quietBlocks = 0
 }
 
+// unisonCouplingStrikePos is where the bridge coupling force is written into
+// each string's delay line, and it is a stability parameter, not a voicing one.
+//
+// injectionOffset maps [0,1] onto the observable slots [delayHeadroom, len-1],
+// and a force written at offset k is first read out k-delayHeadroom samples
+// later. Position 0 therefore means "read back on the very next sample" and is
+// the only choice that keeps the coupling term acting on the same signal it was
+// computed from. Any larger position delays the force by a fraction of a round
+// trip, and a delayed difference-force is only dissipative where that delay is
+// small in phase: at partial n the lag is 2*pi*n*pos radians, so as soon as
+// n*pos passes a half cycle the same term becomes ANTI-damping. That is not
+// hypothetical - see the measurements on processSample.
+//
+// injectionOffset clamps its input to [0.01, 0.99], so 0.01 is the freshest
+// slot reachable.
+const unisonCouplingStrikePos = float32(0.01)
+
+// maxUnisonCrossfeed bounds the coupling strength a preset may ask for.
+//
+// The difference form below is dissipative in the instantaneous sense at any
+// coupling strength, but the injection still costs one sample of delay, and at
+// a large enough gain that single sample is enough to turn it around. Measured
+// 2026-08-23 on the 120 s pedal-held chord render, peak of the last window over
+// the 25-30 s window: 0.1322x at c = 0.02, 0.1323x at 0.05, 1.8e14x at 0.1, and
+// non-finite at 0.25 and above. The transition is abrupt, so the bound is set
+// well inside the stable region rather than close to the cliff: 0.02 is 2.5x
+// under the largest value verified stable and 4x above the 0.005 ceiling
+// cmd/piano-fit/knobs.go gives the unison_crossfeed knob, so no fit can reach
+// it and no shipped preset is affected (the largest in assets/presets is 0.005).
+const maxUnisonCrossfeed = float32(0.02)
+
+// processSample advances every string of the group by one sample, mixes them
+// with the unison gains, and couples them to each other through the bridge.
+//
+// The coupling force on string i is proportional to mix - y_i, the difference
+// between the common bridge motion and that string's own contribution to it.
+// The subtraction is what makes the term dissipative, and it is not a detail:
+// with unison gains that sum to one, the energy the coupling adds per sample is
+// c*(mix^2 - sum(g_i*y_i^2)), which is <= 0 by Jensen's inequality and is zero
+// exactly when the strings already move together. A string louder than the
+// bridge gives energy away, a string quieter than the bridge takes it, and the
+// group as a whole can only lose. That is also the physical picture - the
+// strings of a unison exchange energy through a shared, slightly compliant
+// bridge termination - and it is what produces the beating and two-stage decay
+// a real unison has.
+//
+// Until 2026-08-23 the force was c*mix, with no subtraction, injected into
+// every string including the one that produced the sample, at strike position
+// 0.92. That is not coupling but a bare positive feedback loop wrapped around an
+// already resonant string, and it added energy unconditionally: the loop
+// reflection loses 2e-4 per round trip while the crossfeed injects c per
+// sample. Measured over 120 s, pedal held, one note struck and nothing else
+// driving the bank, peak of the 115-120 s window over the 25-30 s window:
+//
+//	                       before   after   c = 0 (no coupling at all)
+//	note 33 (1 string)     0.1469   0.1469   0.1469
+//	note 36 (1 string)     0.0980   0.0980   0.0980
+//	note 45 (2 strings)    0.5583   0.0036   0.0256
+//	note 52 (2 strings)    1.2545   0.0003   0.0063
+//	note 60 (2 strings)    1.7159   0.0000   0.0003
+//
+// Single-string notes are bit-identical because they have no coupling path at
+// all, which is what identified the crossfeed as the source. Note that the
+// corrected coupling decays FASTER than c = 0 on every multi-string note - it
+// takes energy out, as a dissipative term must.
+//
+// The strike position moved with it. The difference form alone still diverged at
+// c = 0.005, the value assets/presets/fitted-c4.json ships: at 0.92 the force
+// comes back nearly a full round trip late, and the phase argument in
+// unisonCouplingStrikePos says what that does. Same chord render, 120 s:
+//
+//	                     pos 0.92    pos 0.01
+//	c = 0.0008             0.1166      0.1275
+//	c = 0.0025             0.2014      0.1315
+//	c = 0.0050            88.4618      0.1328
+//	c = 0.0100                  -      0.1322
+//
+// At the freshest slot the growth is flat across the whole knob range instead of
+// exploding at one end of it. maxUnisonCrossfeed fences the rest.
+//
+// The DC half of this same defect was patched once already, by putting a DC
+// blocker inside the string loop - see the "DC runaway" paragraph in
+// tuning_test.go, which names "unison crossfeed injects into every string of the
+// group on every sample" as the cause. This is its AC half, fixed at the source
+// rather than downstream.
 func (g *RingingStringGroup) processSample(unisonCrossfeed float32) float32 {
 	sample := float32(0)
 	for i, s := range g.strings {
-		sg := float32(1.0)
-		if i < len(g.gains) {
-			sg = g.gains[i]
-		}
-		sample += s.Process() * sg
+		y := s.Process()
+		g.stringOut[i] = y
+		sample += y * g.stringGain(i)
 	}
 	if len(g.strings) > 1 && unisonCrossfeed > 0 {
-		cross := sample * unisonCrossfeed
-		for _, s := range g.strings {
-			s.InjectForceAtPosition(cross, 0.92)
+		for i, s := range g.strings {
+			// The gain weight has to be the SAME one used to build the mix,
+			// otherwise the energy argument above no longer closes.
+			force := unisonCrossfeed * g.stringGain(i) * (sample - g.stringOut[i])
+			s.InjectForceAtPosition(force, unisonCouplingStrikePos)
 		}
 	}
 	return sample
+}
+
+// stringGain returns the unison gain for string i, defaulting to unity. It
+// mirrors ModalStringGroup.stringGain so the two cores weight their unisons the
+// same way.
+func (g *RingingStringGroup) stringGain(i int) float32 {
+	if i < len(g.gains) {
+		return g.gains[i]
+	}
+	return 1.0
 }
 
 func (g *RingingStringGroup) endBlock(blockEnergy float64, frames int) bool {
@@ -337,7 +431,7 @@ func sanitizeNoteRange(minNote int, maxNote int) (int, int) {
 }
 
 func NewStringBank(sampleRate int, params *Params) *StringBank {
-	unisonCrossfeed := float32(0.0008)
+	unisonCrossfeed := DefaultUnisonCrossfeed
 	stringModel := StringModelDWG
 	minNote := 21
 	maxNote := 108
@@ -354,6 +448,13 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 
 	if params != nil && params.UnisonCrossfeed >= 0 {
 		unisonCrossfeed = params.UnisonCrossfeed
+	}
+	// A preset is a JSON file a human can edit, so the coupling strength is
+	// clamped rather than trusted. See maxUnisonCrossfeed for the measurements
+	// this bound comes from; nothing in assets/presets or reachable by
+	// cmd/piano-fit is affected by it.
+	if unisonCrossfeed > maxUnisonCrossfeed {
+		unisonCrossfeed = maxUnisonCrossfeed
 	}
 	if params != nil {
 		if params.StringModel != "" {

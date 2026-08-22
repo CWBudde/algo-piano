@@ -126,7 +126,7 @@ assert equality with no tolerance.
   five-second window may exceed 1.5x the first sustain window. This is the assertion the
   divergence escaped: it stayed finite for well over 40 s, so the 4 s
   `TestLongRenderHasNoNaNOrInf` rows never saw it. Its 45 s horizon has a blind spot of its
-  own — see `resonance_growth_test.go`, which needs 120 s to make the growth unambiguous
+  own — see `resonance_growth_test.go`, which needs 120 s to make the decay unambiguous
 - `TestResonanceLoopGainIsBoundedAcrossCores` (`modal_resonance_test.go`) — per-note open-loop
   gain of the bridge-injection loop, notes 21-84, on both cores at the defaults and on the
   modal core with the knobs of `assets/presets/modal-calibrated.json`. Subtests run in
@@ -161,15 +161,38 @@ assert equality with no tolerance.
   allocations per block with the loop closed and all 88 groups undamped. The older alloc
   tests build via `NewStringBank`, which leaves the bank unwired, so they never reach the
   injection path at all
-- `TestDWGSustainedBankGrowsWithoutResonance` (`resonance_growth_test.go`) — records a
-  **pre-existing defect**: six notes struck once under a held pedal, resonance off, coupling
-  off, and the DWG output still grows 1.21x over 120 s (5.41x over 300 s), geometrically. The
-  numbers are bit-identical before and after the interleave. The fence is set just above the
-  measurement so a worsening fails; it is not a claim that the growth is acceptable
-- `TestDWGResonanceSustainedGrowthIsFenced` (`resonance_growth_test.go`) — the same render with
-  the loop on at the shipped `resonance_gain` 0.00025 grows 5.06x, against 1.14x on the
-  block-deposit loop. **A fence on a known-bad number.** Lowering the gain does not rescue it:
-  even 1e-6 exceeds the resonance-off baseline, so the bank's own growth is the root cause
+- `TestDWGSustainedBankDecaysWithoutResonance` (`resonance_growth_test.go`) — six notes struck
+  once under a held pedal, resonance off, coupling off: the DWG output must fall to 0.138x of
+  its 25-30 s peak by 120 s. Measured 0.1275. Until the unison coupling was made dissipative
+  on 2026-08-23 this same render **grew** 1.21x over 120 s and 5.41x over 300 s, and the test
+  recorded that as a fence on a known-bad number
+- `TestDWGResonanceSustainedDecayIsFenced` (`resonance_growth_test.go`) — the same render with
+  the loop on at the shipped `resonance_gain` 0.00025: 0.1338 against the 0.1275 above, i.e.
+  the sympathetic path costs about 5% of the ratio and the render still ends 17 dB below its
+  own reference window. It used to read 5.06x, which was read at the time as the resonance
+  loop being unstable; it was not, it was compounding a plant that was already above unity
+
+### Unison bridge coupling (`unison_coupling_test.go`)
+
+The strings of a unison are coupled through the bridge by a force proportional to
+`mix - y_i`. The subtraction makes the term dissipative; without it the coupling was a bare
+positive feedback loop around an already resonant string, and it is what made the bank above
+grow. These four tests pin the property rather than the number.
+
+- `TestUnisonCouplingRemovesEnergy` — the load-bearing one. On every multi-string note the
+  coupled render must decay **faster** than the same note with `unison_crossfeed = 0`, which
+  is what a dissipative term must do. Before the fix every one of them failed by orders of
+  magnitude (note 60: 1.7159x coupled against 0.0003x uncoupled)
+- `TestUnisonCouplingIsInertOnSingleStringNotes` — the control. Notes below MIDI 40 have one
+  string and skip the coupling branch, so their render is bit-identical at any crossfeed. That
+  is what attributes a failure above to the coupling and to nothing else in the render loop
+- `TestUnisonCouplingDecaysAcrossTheKnobRange` — sweeps 0 … 0.005, the whole range
+  `cmd/piano-fit` can select, plus the clamp. The difference form alone was not enough here:
+  at the old strike position 0.92 the force came back nearly a full round trip late, and at
+  0.005 — the value `assets/presets/fitted-c4.json` ships — the render still grew 88x.
+  Injecting at `unisonCouplingStrikePos` instead makes the ratio flat across the range
+- `TestUnisonCrossfeedIsClamped` — presets are hand-editable JSON and the coupling diverges at
+  `c = 0.1` (1.8e14x), so `NewStringBank` clamps to `maxUnisonCrossfeed` rather than trusting
 
 Both open-loop probes drive until the reading stops moving, up to a 24 s budget, and report
 whether it did. A **settled** reading is the steady-state loop gain; an **unsettled** one is a
@@ -177,11 +200,11 @@ whether it did. A **settled** reading is the steady-state loop gain; an **unsett
 settle; the DWG rows do not. The 0.5 bound is read through that shortfall (see
 `maxResonanceLoopGain`).
 
-**Treat a passing open-loop bound as necessary, never sufficient.** The probes inject a sine
-at one note's fundamental into a plant they assume is stable, and since the interleave neither
-assumption holds for the DWG core: they read 0.174 against the 0.5 bound for a configuration
-whose render grows 5x in two minutes. `TestDWGResonanceLongRenderDecays` and the two growth
-tests are what pin the loop end to end.
+**Treat a passing open-loop bound as necessary, never sufficient.** The probes inject a sine at
+one note's fundamental into a plant they assume is stable. Between the interleave and the
+unison-coupling fix the second assumption was false for the DWG core, and they read 0.174
+against the 0.5 bound for a configuration whose render grew 5x in two minutes.
+`TestDWGResonanceLongRenderDecays` and the two decay tests are what pin the loop end to end.
 
 ## `convolver.go`
 
