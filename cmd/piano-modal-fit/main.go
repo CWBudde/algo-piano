@@ -38,19 +38,29 @@ type noteCalibration struct {
 }
 
 type calibrationReport struct {
-	ProfileVersion string            `json:"profile_version"`
-	TimestampUTC   string            `json:"timestamp_utc"`
-	BasePreset     string            `json:"base_preset"`
-	OutputPreset   string            `json:"output_preset"`
-	SampleRate     int               `json:"sample_rate"`
-	Velocity       int               `json:"velocity"`
-	ReleaseAfter   float64           `json:"release_after_seconds"`
-	Notes          []int             `json:"notes"`
-	Evaluations    int               `json:"evaluations"`
-	BestScore      float64           `json:"best_score"`
-	BestKnobs      knobSet           `json:"best_knobs"`
-	PerNote        []noteCalibration `json:"per_note"`
-	ElapsedSec     float64           `json:"elapsed_seconds"`
+	ProfileVersion string  `json:"profile_version"`
+	TimestampUTC   string  `json:"timestamp_utc"`
+	BasePreset     string  `json:"base_preset"`
+	OutputPreset   string  `json:"output_preset"`
+	SampleRate     int     `json:"sample_rate"`
+	Velocity       int     `json:"velocity"`
+	ReleaseAfter   float64 `json:"release_after_seconds"`
+	Notes          []int   `json:"notes"`
+	// FittingResonanceEnabled is the ResonanceEnabled the scores below were
+	// produced under, and OutputResonanceEnabled is the one the written preset
+	// carries. Under --no-resonance they differ, and then BestScore and PerNote
+	// do NOT describe the named output preset: re-rendering that preset turns
+	// the sympathetic path back on and yields different metrics. Both are
+	// recorded without omitempty so a false is stated rather than dropped, which
+	// is what makes a resonance-on run distinguishable from a resonance-off one
+	// after the fact.
+	FittingResonanceEnabled bool              `json:"fitting_resonance_enabled"`
+	OutputResonanceEnabled  bool              `json:"output_resonance_enabled"`
+	Evaluations             int               `json:"evaluations"`
+	BestScore               float64           `json:"best_score"`
+	BestKnobs               knobSet           `json:"best_knobs"`
+	PerNote                 []noteCalibration `json:"per_note"`
+	ElapsedSec              float64           `json:"elapsed_seconds"`
 }
 
 type renderSettings struct {
@@ -262,11 +272,15 @@ func main() {
 		Velocity:       *velocity,
 		ReleaseAfter:   *releaseAfter,
 		Notes:          notes,
-		Evaluations:    evals,
-		BestScore:      bestScore,
-		BestKnobs:      best,
-		PerNote:        perNote,
-		ElapsedSec:     time.Since(start).Seconds(),
+		// base carries the fitting setting (--no-resonance already applied);
+		// outParams carries the restored one.
+		FittingResonanceEnabled: base.ResonanceEnabled,
+		OutputResonanceEnabled:  outParams.ResonanceEnabled,
+		Evaluations:             evals,
+		BestScore:               bestScore,
+		BestKnobs:               best,
+		PerNote:                 perNote,
+		ElapsedSec:              time.Since(start).Seconds(),
 	}
 	if err := writeJSON(*reportPath, report); err != nil {
 		die("write report: %v", err)

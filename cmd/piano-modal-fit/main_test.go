@@ -166,3 +166,51 @@ func TestWritePresetResonanceRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestCalibrationReportStatesBothResonanceModes pins the two fields that make a
+// --no-resonance run tellable from a normal one after the fact.
+//
+// Under --no-resonance the scores in the report are produced with the
+// sympathetic path silenced while the written preset restores it, so the report
+// does NOT describe the preset it names. Recording both settings is what stops
+// a reader from assuming it does. Neither field may carry omitempty: false is
+// the interesting value on the fitting side, and omitempty would drop it and
+// make "fitted with resonance off" indistinguishable from an older report that
+// predates the flag.
+func TestCalibrationReportStatesBothResonanceModes(t *testing.T) {
+	for _, tc := range []struct{ fitting, output bool }{
+		{fitting: false, output: true},  // --no-resonance on a resonance-enabled preset
+		{fitting: true, output: true},   // normal run
+		{fitting: false, output: false}, // preset had resonance off to begin with
+	} {
+		report := calibrationReport{
+			ProfileVersion:          "modal-calibration-v1",
+			FittingResonanceEnabled: tc.fitting,
+			OutputResonanceEnabled:  tc.output,
+		}
+		raw, err := json.Marshal(report)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		for key, want := range map[string]bool{
+			"fitting_resonance_enabled": tc.fitting,
+			"output_resonance_enabled":  tc.output,
+		} {
+			rawField, ok := fields[key]
+			if !ok {
+				t.Fatalf("%s missing from report with fitting=%v output=%v:\n%s", key, tc.fitting, tc.output, raw)
+			}
+			var got bool
+			if err := json.Unmarshal(rawField, &got); err != nil {
+				t.Fatalf("Unmarshal %s: %v", key, err)
+			}
+			if got != want {
+				t.Fatalf("%s: got %v want %v", key, got, want)
+			}
+		}
+	}
+}
