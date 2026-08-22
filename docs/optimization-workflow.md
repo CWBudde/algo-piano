@@ -392,6 +392,14 @@ Two caveats that will bite otherwise:
 
 ### Measured results (2026-08-22, 180 s per pass, from `fitted-c4-mayfly.json`)
 
+> **Stale baseline, kept for the relative comparison.** The `0.5330` in the
+> table below is `fitted-c4-mayfly.json` on the pre-#26 renderer. That preset
+> then moved to `0.5249` with the `noteResonator` normalisation (#26) and was
+> re-fitted on 2026-08-22 to **`0.5040`** — see
+> "[Deterministic sweep chain](#deterministic-sweep-chain-how-the-2026-08-22-c4-re-fit-was-done)"
+> below. The pass numbers here stay useful as a _relative_ comparison between
+> passes; do not quote them against the current gate.
+
 Re-measured on the post-#14 renderer under `analysis.CalibratedNorms()`. Judged
 the only honest way — by re-running the full `legacy-v1` compare on each pass's
 output preset, so the column is comparable across passes and against the C4
@@ -540,6 +548,90 @@ window, so both profile scores are full-signal and comparable to
 `just distance-c4`. If that ever changes, the scores become windowed and stop
 being comparable to anything in this document. The report records `pass_window`
 and the tool prints a warning when it is set.
+
+## Deterministic sweep chain: how the 2026-08-22 C4 re-fit was done
+
+The C4 re-fit that closed the widened `spectral_rmse_db` fence was produced by a
+chain of `--sweep` runs, **not** by `fit-c4`, `fit-c4-stages` or
+`fit-c4-passes`. Six 300 s Mayfly runs were tried first and all lost: the best
+(`legacy-v1`, seed 1) reached `score` 0.4937 with `spectral_rmse_db` 47.5 but
+`time_rmse` 0.1158 against a 0.112 fence. The sweep chain won because it is
+deterministic, reproducible from the flags alone, and — crucially — lets the
+selection criterion be chosen _after_ the samples exist.
+
+The recipe, repeated until no direction improves `balanced-v2`:
+
+```bash
+# One box at a time, always from the current best preset, always at the
+# settings `just distance-c4` uses, always scored under both profiles.
+go run -tags asm ./cmd/piano-fit --sweep --pass none --optimize mix \
+    --preset out/refit/<current>.json --reference reference/c4.wav \
+    --sweep-out out/sweep/<name>.json --sweep-samples 9 --sweep-joint-evals 2048 \
+    --sweep-profiles legacy-v1,balanced-v2 \
+    --workers auto --note 60 --velocity 118 --release-after 3.5 --sample-rate 48000 \
+    --decay-dbfs -90 --decay-hold-blocks 6 --min-duration 2.0 --max-duration 30
+# then --pass sustain / --pass inharmonicity with --optimize piano,mix,
+# and --pass attack with --sweep-joint-evals 0 (see the 8-dimension cap below).
+```
+
+Pick the winner with `jq`, filtering on the gate's raw metrics and sorting on
+`balanced-v2`, then apply the winning knobs with `jq` and **verify by direct
+measurement** — knob effects compose only approximately:
+
+```bash
+jq -r '[.oat[],(.joint//[])[]]
+  | map(select(.metrics.time_rmse <= 0.1018938
+               and .metrics.envelope_rmse_db <= 10.1561
+               and .metrics.spectral_rmse_db <= 62.287
+               and .metrics.decay_diff_db_per_s <= 4.8003))
+  | sort_by(.scores["balanced-v2"]) | .[0:3]' out/sweep/<name>.json
+```
+
+Four rules that this round paid for:
+
+- **Select on `balanced-v2`, never on `legacy-v1` alone.** `legacy-v1` saturates
+  its spectral component and puts _no_ weight on partial level, partial
+  frequency, tristimulus, attack or the segmented decay, so a chain steered by
+  it pays those six to buy the four it sees. Continuing this exact chain under
+  `legacy-v1` reached 0.4654 with `spectral_rmse_db` 48.1 and
+  `decay_diff_db_per_s` 1.54 — better on every gated metric than what shipped —
+  while pushing `partial_level_rmse_db` 10.88 → 24.20 and
+  `attack_centroid_rmse_oct` 0.544 → 2.445. That is gate-gaming, and it is what
+  the `balanced-v2` criterion exists to catch.
+- **Exclude samples that move `render.velocity` or `render.release_after`.**
+  Neither is stored in the preset, so the gate renders at 118 / 3.5 s regardless
+  and a sample that moved them is not reproducible from the written preset.
+  Filter with `.knobs["render.velocity"]==118`.
+- **`output_gain` is not score-neutral**, despite what `--match-output-gain`'s
+  help says. The auto-stop is an **absolute** −90 dBFS threshold, so a louder
+  render crosses it later, yields a longer candidate and scores differently:
+  measured on one fitted preset, same knobs otherwise, `output_gain` 7.096
+  scores 0.5208 and 1.357 scores 0.5061. Compare fitted presets only after
+  normalising `output_gain` to the tracked preset's value.
+- **The joint stage caps at 8 dimensions.** The `attack` pass exposes 9 knobs,
+  so `--sweep --pass attack` with a joint stage fails with
+  `halton: 9 dimensions exceed the 8-prime base table`, and
+  `--sweep-joint-max-dims 9` does not help. Run that box with
+  `--sweep-joint-evals 0` (one-at-a-time only).
+
+**What it found.** The dominant term was the wet body-IR level, not the string
+model. The old preset carried `ir_wet_mix` 1.1888 with `ir_gain` 1.7203, an
+effective wet factor of 2.045. The first 2076-sample mix sweep
+(`out/sweep/mix-mayfly.json`) contained **887 samples that improve all four
+gated raw metrics at once** — a region, not a lucky sample. The shipped preset
+sits at `ir_wet_mix` 0.2328 / `ir_gain` 1.0912 / `ir_dry_mix` 0.2107, plus
+`high_freq_damping` 0 → 0.05 and `unison_crossfeed` 0.00236 → 0.0025 from the
+sustain box and `per_note.60.strike_position` 0.2945 → 0.45 from the
+inharmonicity box. `resonance_gain` was not touched.
+
+| metric                | before  | after   | gate cap        |
+| --------------------- | ------- | ------- | --------------- |
+| `score` (`legacy-v1`) | 0.5249  | 0.5040  | 0.57 → 0.543    |
+| `time_rmse`           | 0.10189 | 0.10185 | 0.112 → 0.110   |
+| `envelope_rmse_db`    | 10.156  | 7.817   | 11.75 → 8.42    |
+| `spectral_rmse_db`    | 62.287  | 51.554  | 67.0 → **55.6** |
+| `decay_diff_db_per_s` | 4.800   | 4.442   | 5.9 → 4.79      |
+| `balanced-v2`         | 0.47391 | 0.42687 | not gated       |
 
 ## Multi-Note Fitting
 
