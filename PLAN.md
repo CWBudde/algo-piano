@@ -139,7 +139,7 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         centroid error `0.545` → `0.130` octaves. Still the one pass that is a
         net win, and it now beats the tracked C4 gate baseline outright — see
         the re-fit follow-up below.)
-  - [ ] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
+  - [x] Sustain/decay pass: fit loss/damper behavior to match decay slope and envelope shape
         (**re-run 2026-08-22 on the post-#14 renderer under the calibrated norms.
         It still regresses the comparable score — it stays out of the shipping
         chain.** Chained from the attack preset, legacy score `0.5214` →
@@ -175,10 +175,37 @@ Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
         axis, and the region is ~1% of the sampled points with a `legacy-v1`
         gain of only 0.005. The sweep shows the region is non-empty, not that it
         is large or that a re-fit will beat #17.
-        **Box stays open.** The follow-up is no longer a sweep and is not
-        string-model work: re-fit `--pass sustain` constrained to that region —
-        a `legacy-v1` floor, or simply seeded from the #17 neighbourhood — and
-        judge it with `just gate-c4` as always.)
+        **Closed 2026-08-22 by `just fit-sustain-constrained-c4`**
+        (`piano-fit --pass sustain --score-constraint legacy-v1:<floor>`: a
+        secondary-profile ceiling checked on the same rendered buffer, so the
+        search optimises `decay-v1` while `legacy-v1` may not regress).
+        First, the renderer moved: #23/#26/#29 landed after the sweep, so every
+        number above shifts. Re-measured today, baseline `decay-v1 0.4432` /
+        `legacy-v1 0.5121` and sample #17 `0.3518` / `0.5086` — `decay-v1`
+        reproduces to within 0.001, and `piano-fit`'s `legacy-v1` agrees with
+        `just distance-c4` to four decimals on both, so the sweep and the fitter
+        do measure the same thing.
+        The run: 180 s, seed 1, seeded from #17, floor at #17's own `legacy-v1`
+        (`0.5086`); 1364 evals of which **1343 were rejected** by the constraint
+        — the ~1% feasible fraction the sweep measured, now seen from inside the
+        search. Winner as written: `decay-v1 0.4432` → **`0.3625`**,
+        `legacy-v1 0.5121` → **`0.5024`**, and `just gate-c4` **PASS** (5/5,
+        worst headroom `spectral_rmse_db` 59.49/61.00). That is the first
+        sustain preset that beats the baseline on both axes at once and clears
+        the gate.
+        Honestly scoped: it does **not** beat sample #17 on the primary
+        objective (`decay-v1` 0.3518 → 0.3625); it buys `legacy-v1` (0.5086 →
+        0.5024) instead. The sweep never promised otherwise.
+        Two findings worth carrying forward. (1) The floor choice is not
+        cosmetic: a first run with the floor at the pass baseline (`0.5121`)
+        reached `decay-v1 0.3164` / `legacy-v1 0.5124` and **failed** the gate on
+        `spectral_rmse_db` (64.46 > 61.00). Constrain against the seed you
+        started from. (2) `--match-output-gain` is **not** score-invariant on
+        this renderer: in run the winner was `0.3533` / `0.5002`, the written
+        preset is `0.3625` / `0.5024`. `analysis.Compare` RMS-normalises, but the
+        render auto-stop is an absolute `-90 dBFS` threshold, so a louder render
+        runs longer and a different number of samples reaches the comparison.
+        Making the auto-stop relative to the render's own peak removes this.)
   - [ ] Inharmonicity pass: fit dispersion/inharmonicity via partial-frequency error
         (re-run 2026-08-22: still no leverage, and now marginally negative rather
         than neutral. From the attack preset, legacy score `0.5214` → `0.5234`,

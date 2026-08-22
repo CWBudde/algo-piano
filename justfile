@@ -250,6 +250,92 @@ sweep-sustain-c4 preset="out/passes/attack.json" reference="reference/c4.wav" ou
         --min-duration 2.0 \
         --max-duration 30
 
+# Constrained sustain re-fit: `--pass sustain` with a legacy-v1 floor.
+#
+# `just sweep-sustain-c4` showed that a non-regressing region exists in the 5-D
+# sustain box but covers only ~1% of the sampled points, which is why every
+# unconstrained sustain run wandered out of it and regressed the comparable
+# score. This recipe re-fits inside that region: the search still optimises
+# decay-v1, but any candidate whose FULL-SIGNAL legacy-v1 score exceeds `floor`
+# is rejected outright.
+#
+# `floor` must be the legacy-v1 score of `preset` on the CURRENT renderer -
+# measure it with `just distance-c4 reference/c4.wav <preset> ""` first. A stale
+# floor from an older renderer constrains nothing.
+#
+# The gate stays a separate post-hoc check: run `just gate-c4` on the output.
+#
+# Deliberately NOT part of `just ci`: it costs minutes.
+fit-sustain-constrained-c4 preset="out/passes/attack-sample17.json" reference="reference/c4.wav" output_preset="out/passes/sustain-constrained.json" floor="0.5086" time_budget="180" workers="auto" seed="1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # just passes recipe arguments positionally, so `name=value` arrives as a raw
+    # string in whatever slot it landed in. Strip the `name=` prefix and route the
+    # value to the parameter it names, so arguments may be given in any order.
+    names=(preset reference output_preset floor time_budget workers seed)
+    raw=("{{preset}}" "{{reference}}" "{{output_preset}}" "{{floor}}" "{{time_budget}}" "{{workers}}" "{{seed}}")
+    defaults=("out/passes/attack-sample17.json" "reference/c4.wav" "out/passes/sustain-constrained.json" "0.5086" "180" "auto" "1")
+    declare -A arg=()
+    for i in "${!names[@]}"; do
+        arg["${names[$i]}"]="${defaults[$i]}"
+    done
+    for i in "${!raw[@]}"; do
+        key="${raw[$i]%%=*}"
+        if [[ "${raw[$i]}" != *=* ]] || [[ " ${names[*]} " != *" ${key} "* ]]; then
+            arg["${names[$i]}"]="${raw[$i]}"
+        fi
+    done
+    for i in "${!raw[@]}"; do
+        key="${raw[$i]%%=*}"
+        if [[ "${raw[$i]}" == *=* ]] && [[ " ${names[*]} " == *" ${key} "* ]]; then
+            arg["$key"]="${raw[$i]#*=}"
+        fi
+    done
+    preset="${arg[preset]}"
+    reference="${arg[reference]}"
+    output_preset="${arg[output_preset]}"
+    floor="${arg[floor]}"
+    time_budget="${arg[time_budget]}"
+    workers="${arg[workers]}"
+    seed="${arg[seed]}"
+    # reference/*.wav is gitignored by design, so a fresh clone has no reference
+    # and this recipe must still exit clean when someone runs it.
+    if [ ! -f "$reference" ]; then
+        echo "fit: SKIP - reference \"$reference\" not found (reference WAVs are gitignored; supply one to enable the fit)"
+        exit 0
+    fi
+    # The preset is not optional: without it the run would seed from something
+    # other than the sweep's constrained best, and the floor would be measured
+    # against the wrong point.
+    if [ ! -f "$preset" ]; then
+        echo "fit: preset \"$preset\" not found - it is sample #17 of \`just sweep-sustain-c4\`," >&2
+        echo "  i.e. out/passes/attack.json with unison_detune_scale set to 1.75" >&2
+        echo "  (or point the recipe elsewhere: just fit-sustain-constrained-c4 preset=<path>)" >&2
+        exit 1
+    fi
+    mkdir -p "$(dirname "$output_preset")"
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run -tags asm ./cmd/piano-fit \
+        --pass sustain \
+        --preset "$preset" \
+        --reference "$reference" \
+        --output-preset "$output_preset" \
+        --score-constraint "legacy-v1:$floor" \
+        --work-dir out/fit-sustain-constrained \
+        --optimize piano,mix \
+        --note 60 \
+        --velocity 118 \
+        --release-after 3.5 \
+        --sample-rate 48000 \
+        --time-budget "$time_budget" \
+        --max-evals 5000 \
+        --workers "$workers" \
+        --seed "$seed" \
+        --resume=false
+    echo "=== Legacy-v1 distance of the constrained sustain pass ==="
+    just distance-c4 "$reference" "$output_preset" ""
+    echo "=== Gate ==="
+    just gate-c4 "reference=$reference" "preset=$output_preset"
+
 # Synthesize a stereo IR WAV for soundboard/body convolution
 ir-synth output="assets/ir/synth_96k.wav" sample_rate="96000" duration="2.0" modes="128" seed="1":
     #!/usr/bin/env bash

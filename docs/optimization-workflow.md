@@ -26,6 +26,25 @@ The idea: alternate between piano-only and IR stages so each builds on the previ
   accepts the same flag with the same semantics — there it silences resonance on
   both sides of the match, the DWG references and the modal candidates alike.
 - `--cpuprofile <file>`: Write CPU profile for performance analysis.
+- `--score-constraint <profile>:<max>`: A secondary-profile ceiling every
+  candidate must respect. Repeatable, and completely inert unless given — with
+  no constraint the search path is unchanged, which is what keeps every tracked
+  report comparable. The candidate is rendered once and then compared a second
+  time under the constrained profile (the same trick `--sweep` uses: the render
+  dominates the per-evaluation cost, so an extra `analysis.CompareWithOptions`
+  against the same buffer is nearly free). A breach replaces the aggregate with
+  a large **finite** penalty ordered by the size of the breach — finite because
+  mayfly v0.1.0 only sanitises `+Inf` on its initial population and would
+  otherwise feed it into the MPMA weighted-median normalisation; ordered so the
+  infeasible region still slopes back towards the feasible one. `--polish`
+  honours it too, because the polish stage accepts a step only when the
+  aggregate improves and a breaching step's aggregate is the penalty.
+  The constrained compare is always **full-signal**, even when `--pass-window`
+  narrows the primary score, so the ceiling stays comparable to
+  `just distance-c4`. The run report records `score_constraints`,
+  `constraint_rejections` and `best_constraint_scores` (the winner's score under
+  every constrained profile) — all three are needed to audit the run. The gate
+  (`assets/thresholds/*.json`) stays a separate post-hoc check.
 - `--sweep`: Replaces the optimizer with a deterministic sensitivity + Pareto
   sweep over whatever knobs the current `--pass`/`--optimize` selection leaves
   active. It renders, measures, writes one JSON report and exits — no preset, no
@@ -557,6 +576,78 @@ grid levels per axis, so the region's true shape is undersampled.
 The follow-up is therefore a **constrained re-fit**, not string-model work: re-run
 `--pass sustain` with a `legacy-v1` floor, or simply start it from the #17
 neighbourhood, and judge it with `just gate-c4` as always.
+
+### Constrained sustain re-fit (2026-08-22)
+
+```bash
+# out/passes/attack-sample17.json is out/passes/attack.json with
+# unison_detune_scale = 1.75, i.e. sweep sample #17.
+just fit-sustain-constrained-c4
+# equivalently:
+#   go run -tags asm ./cmd/piano-fit --pass sustain \
+#       --preset out/passes/attack-sample17.json --reference reference/c4.wav \
+#       --output-preset out/passes/sustain-constrained.json \
+#       --score-constraint legacy-v1:0.5086 \
+#       --note 60 --velocity 118 --release-after 3.5 --sample-rate 48000 \
+#       --time-budget 180 --workers auto --seed 1 --resume=false
+```
+
+**First, the renderer moved.** Commits #23/#26/#29 landed after the sweep above,
+so every number in that section shifts. Re-measured on the current renderer,
+sample #17 still behaves exactly as the sweep described, only from a slightly
+different origin:
+
+| preset                        | `decay-v1` | `legacy-v1` |
+| ----------------------------- | ---------- | ----------- |
+| `attack.json` (sweep numbers) | 0.4380     | 0.5189      |
+| `attack.json` (today)         | **0.4432** | **0.5121**  |
+| sample #17 (sweep numbers)    | 0.3508     | 0.5141      |
+| sample #17 (today)            | **0.3518** | **0.5086**  |
+
+`decay-v1` reproduces to within 0.001, `legacy-v1` moves by ~0.006, and
+`piano-fit`'s own `legacy-v1` agrees with `just distance-c4` to four decimals on
+both presets. So the sweep and the fitter do measure the same thing; the offset
+is the renderer, not the tooling.
+
+**The run.** 180 s, seed 1, `--workers auto`, seeded from sample #17, floor set
+to sample #17's own `legacy-v1` (`0.5086`) so the constraint forbids regressing
+the seed rather than merely the pass baseline. 1364 evaluations, **1343
+rejected** by the constraint — ~98%, which is the same ~1% feasible fraction the
+sweep measured, now seen from inside the search. The seed itself is a hair above
+the rounded floor and is reported as an opening breach; the ordered penalty
+carries the search back into the feasible region within the first round.
+
+Winner, as written to `out/passes/sustain-constrained.json` and measured with
+`just distance-c4` / a one-evaluation `piano-fit` probe:
+
+```
+                     baseline   sample #17   constrained re-fit
+decay-v1              0.4432      0.3518          0.3625
+legacy-v1             0.5121      0.5086          0.5024
+just gate-c4                                      PASS (5/5)
+```
+
+Against the pass baseline this improves **both** objectives and clears the gate,
+which is what the sustain box asked for. Against sample #17 the trade is the
+other way round: `legacy-v1` improves by 0.006 while `decay-v1` gives back
+0.011. The constrained search did not beat #17 on the primary objective — the
+sweep explicitly did not promise it would — but it did find the first sustain
+preset that is better than the baseline on both axes at once.
+
+**Caveat: `--match-output-gain` is not score-invariant on this renderer.** In
+run the winner scored `decay-v1 0.3533` / `legacy-v1 0.5002`; the written preset
+scores `0.3625` / `0.5024`. The difference is the closed-form output-gain match
+applied after the search (×1.19 here). `analysis.Compare` RMS-normalises, so the
+gain cannot move the metrics — but the render's auto-stop is an absolute
+`-90 dBFS` threshold, so a louder render simply runs longer and a different
+number of samples reaches the comparison. Making the auto-stop relative to the
+render's own peak removes this; until then, treat every post-match number as the
+authoritative one, because that is what the preset on disk produces.
+
+A looser first run with the floor at the pass baseline (`legacy-v1:0.5121`
+rather than `0.5086`) landed at `decay-v1 0.3164` / `legacy-v1 0.5124` and
+**failed** the gate on `spectral_rmse_db` (64.46 > 61.00). The floor choice is
+therefore not cosmetic: constrain against the seed you actually started from.
 
 The report at `out/sweep/sustain-note60.json` carries the full
 `analysis.Metrics` and the per-profile `analysis.Components` breakdown of every

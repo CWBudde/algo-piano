@@ -93,6 +93,14 @@ type optimizationConfig struct {
 	// pass is the per-aspect pass name recorded in the report ("" or "none"
 	// for an unrestricted run).
 	pass string
+
+	// scoreConstraints are secondary-profile ceilings every candidate must
+	// respect (see constraint.go). An empty list leaves the search path
+	// exactly as it was before the flag existed.
+	scoreConstraints []scoreConstraint
+	// constraintRejects counts candidates rejected by scoreConstraints. It is
+	// shared across workers, so it is a pointer and it is atomic.
+	constraintRejects *atomic.Int64
 }
 
 // score compares reference and candidate audio using cfg.scorer, defaulting to
@@ -135,6 +143,11 @@ type optimizationEval struct {
 	roomIRR      []float32 // stereo room IR right
 	velocity     int
 	releaseAfter float64
+	// constraintScores maps every constrained profile name to this
+	// candidate's score under it. Nil when no constraint is configured.
+	constraintScores map[string]float64
+	// constraintViolated records that aggregate is a penalty, not a score.
+	constraintViolated bool
 }
 
 type optimizationResult struct {
@@ -154,6 +167,11 @@ type optimizationResult struct {
 	checkpoints      int
 	polish           *polishSummary
 	outputGainRatio  float64
+	// bestConstraintScores is the winner's score under every constrained
+	// profile, and constraintRejections the number of candidates the
+	// constraints rejected. Without both the run is unauditable.
+	bestConstraintScores map[string]float64
+	constraintRejections int
 }
 
 type optimizationState struct {
@@ -211,6 +229,17 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		return nil, fmt.Errorf("initial evaluation failed: %w", err)
 	}
 	fmt.Printf("Start score=%.4f similarity=%.2f%% [%s]\n", initialEval.aggregate, initialEval.metrics.Similarity*100.0, formatDominant(initialEval.metrics))
+	if len(cfg.scoreConstraints) > 0 {
+		fmt.Printf("Start constrained scores: %s\n", formatConstraintScores(cfg.scoreConstraints, initialEval.constraintScores))
+		if initialEval.constraintViolated {
+			// Not fatal: the search can still work its way back into the
+			// feasible region, because the penalty is ordered by violation.
+			// But a seed outside the region means every reported "improvement"
+			// below the penalty is a move towards feasibility, not a score
+			// gain, so say so loudly.
+			fmt.Println("WARNING: the seed candidate already breaches a score constraint")
+		}
+	}
 
 	state := &optimizationState{
 		best:     best,
@@ -247,6 +276,10 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 			aggregate:      cfg.aggregate,
 			pass:           cfg.pass,
 			rendersPerEval: len(cfg.targets),
+
+			scoreConstraints:     cfg.scoreConstraints,
+			constraintRejections: constraintRejectCount(cfg),
+			bestConstraintScores: initialEval.constraintScores,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "initial write failed: %v\n", err)
 		}
@@ -371,6 +404,10 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 									aggregate:      cfg.aggregate,
 									pass:           cfg.pass,
 									rendersPerEval: len(cfg.targets),
+
+									scoreConstraints:     cfg.scoreConstraints,
+									constraintRejections: constraintRejectCount(cfg),
+									bestConstraintScores: bestEvalSnapshot.constraintScores,
 								}); err != nil {
 									fmt.Fprintf(os.Stderr, "checkpoint write failed: %v\n", err)
 								} else {
@@ -524,6 +561,10 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 				aggregate:      cfg.aggregate,
 				pass:           cfg.pass,
 				rendersPerEval: len(cfg.targets),
+
+				scoreConstraints:     cfg.scoreConstraints,
+				constraintRejections: constraintRejectCount(cfg),
+				bestConstraintScores: ev.constraintScores,
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "polish checkpoint write failed: %v\n", err)
 			}
@@ -592,7 +633,18 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		checkpoints:      finalCheckpoints,
 		polish:           polishResult,
 		outputGainRatio:  outputGainRatio,
+
+		bestConstraintScores: finalEval.constraintScores,
+		constraintRejections: constraintRejectCount(cfg),
 	}, nil
+}
+
+// constraintRejectCount reads the shared rejection counter.
+func constraintRejectCount(cfg *optimizationConfig) int {
+	if cfg.constraintRejects == nil {
+		return 0
+	}
+	return int(cfg.constraintRejects.Load())
 }
 
 // synthesizeIRs generates the body/room impulse responses for a candidate when
@@ -699,6 +751,12 @@ func scoreParams(
 	settings evalSettings,
 ) (optimizationEval, error) {
 	reports := make([]noteReport, 0, len(cfg.targets))
+	// Per constrained profile, one noteReport per target, so the constrained
+	// score is aggregated across notes exactly like the primary one.
+	var constraintNotes map[string][]noteReport
+	if len(cfg.scoreConstraints) > 0 {
+		constraintNotes = make(map[string][]noteReport, len(cfg.scoreConstraints))
+	}
 	for _, t := range cfg.targets {
 		mono, err := renderTarget(cfg, params, bodyIR, roomL, roomR, t.note, velocity, releaseAfter, settings)
 		if err != nil {
@@ -712,13 +770,26 @@ func scoreParams(
 			Similarity:    m.Similarity,
 			Metrics:       m,
 		})
+		// Same rendered buffer, extra Compare per constrained profile.
+		for profile, cm := range scoreConstraintMetrics(
+			cfg.scoreConstraints, referenceFor(t, settings), mono, settings.sampleRate, t.note,
+		) {
+			constraintNotes[profile] = append(constraintNotes[profile], noteReport{
+				Note:          t.note,
+				ReferencePath: t.referencePath,
+				Score:         cm.Score,
+				Similarity:    cm.Similarity,
+				Metrics:       cm,
+			})
+		}
 	}
 	if len(reports) == 0 {
 		return optimizationEval{}, errors.New("no note targets configured")
 	}
 
-	return optimizationEval{
-		aggregate:    aggregateScores(reports, targetWeights(cfg.targets), cfg.aggregate),
+	weights := targetWeights(cfg.targets)
+	ev := optimizationEval{
+		aggregate:    aggregateScores(reports, weights, cfg.aggregate),
 		notes:        reports,
 		metrics:      reports[0].Metrics,
 		params:       params,
@@ -727,7 +798,15 @@ func scoreParams(
 		roomIRR:      roomR,
 		velocity:     velocity,
 		releaseAfter: releaseAfter,
-	}, nil
+	}
+	if len(cfg.scoreConstraints) == 0 {
+		return ev, nil
+	}
+	scores := make(map[string]float64, len(constraintNotes))
+	for profile, notes := range constraintNotes {
+		scores[profile] = aggregateScores(notes, weights, cfg.aggregate)
+	}
+	return applyScoreConstraints(cfg.scoreConstraints, ev, scores, cfg.constraintRejects), nil
 }
 
 // matchOutputGain renders the winning candidate once per note at final
@@ -891,6 +970,14 @@ func cloneOptimizationEval(in optimizationEval) optimizationEval {
 		params:       cloneParams(in.params),
 		velocity:     in.velocity,
 		releaseAfter: in.releaseAfter,
+
+		constraintViolated: in.constraintViolated,
+	}
+	if in.constraintScores != nil {
+		out.constraintScores = make(map[string]float64, len(in.constraintScores))
+		for k, v := range in.constraintScores {
+			out.constraintScores[k] = v
+		}
 	}
 	if len(in.bodyIR) > 0 {
 		out.bodyIR = append([]float32(nil), in.bodyIR...)

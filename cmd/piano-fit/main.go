@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime/pprof"
 	"strings"
+	"sync/atomic"
 
 	"github.com/cwbudde/algo-piano/analysis"
 	fitcommon "github.com/cwbudde/algo-piano/internal/fitcommon"
@@ -124,6 +125,17 @@ func main() {
 	sweepProfiles := flag.String("sweep-profiles", "", "Comma-separated scoring profiles to record per sample "+
 		"(empty = the pass profile first, then legacy-v1). The first profile is the primary Pareto objective")
 
+	// --score-constraint block. Repeatable, and completely INERT unless given:
+	// with no constraint the search path is bit-identical to what it was
+	// before this flag existed, which is what protects every tracked report.
+	var scoreConstraintFlags stringListFlag
+	flag.Var(&scoreConstraintFlags, "score-constraint", "Secondary-profile ceiling \"<profile>:<max>\", repeatable, e.g. "+
+		"--score-constraint legacy-v1:0.5121. A candidate whose score under <profile> exceeds <max> is rejected: the "+
+		"same rendered buffer is simply compared a second time under that profile, so the extra cost is negligible. "+
+		"The constrained compare is always FULL-SIGNAL, even when --pass-window narrows the primary score, so the "+
+		"ceiling stays comparable to `just distance-c4`. The gate (assets/thresholds/*.json) remains a separate "+
+		"post-hoc check")
+
 	matchOutputGainFlag := flag.Bool("match-output-gain", true, "Solve output_gain analytically after the search instead of searching it. "+
 		"analysis.Compare RMS-normalises both signals, and with the default --decay-relative the render length no longer depends on the "+
 		"absolute level either, so output_gain cannot move the score. Under --decay-relative=false it can: a louder render crosses the "+
@@ -192,6 +204,10 @@ func main() {
 	passScore, err := passScorer(passSpecification)
 	if err != nil {
 		die("invalid scoring profile: %v", err)
+	}
+	scoreConstraints, err := parseScoreConstraints(scoreConstraintFlags)
+	if err != nil {
+		die("invalid --score-constraint: %v", err)
 	}
 	referencePaths, err := resolveReferences(notes, refMap, *referencePath)
 	if err != nil {
@@ -325,6 +341,19 @@ func main() {
 		fmt.Printf("Scoring with profile %s (scores are not comparable to legacy-v1 runs)\n", passSpecification.profileName())
 	}
 
+	if len(scoreConstraints) > 0 {
+		if *sweep {
+			// The sweep records every requested profile per sample and picks
+			// its own constrained set afterwards, so a search-time ceiling has
+			// nothing to act on. Say so rather than pretending it applied.
+			fmt.Println("sweep: --score-constraint ignored (use --sweep-profiles; the sweep reports the constrained set itself)")
+			scoreConstraints = nil
+		} else {
+			fmt.Printf("Score constraints: %s (full-signal, checked on the same rendered buffer)\n",
+				formatScoreConstraints(scoreConstraints))
+		}
+	}
+
 	polishIndices := []int(nil)
 	if *polish {
 		knobsRaw := *polishKnobs
@@ -381,6 +410,9 @@ func main() {
 
 		scorer: passScore,
 		pass:   passSpecification.Name,
+
+		scoreConstraints:  scoreConstraints,
+		constraintRejects: &atomic.Int64{},
 
 		polish:            *polish,
 		polishOnly:        *polishOnly,
@@ -459,12 +491,22 @@ func main() {
 		rendersPerEval:    len(targets),
 		polish:            result.polish,
 		outputGainMatched: result.outputGainRatio,
+
+		scoreConstraints:     scoreConstraints,
+		constraintRejections: result.constraintRejections,
+		bestConstraintScores: result.bestConstraintScores,
 	}); err != nil {
 		die("failed to write outputs: %v", err)
 	}
 
 	fmt.Printf("Done evals=%d elapsed=%.1fs best_score=%.4f best_similarity=%.2f%% notes=%v variant=%s\n",
 		result.evals, result.elapsed, result.bestScore, result.bestMetrics.Similarity*100.0, sortedNotes(notes), strings.ToLower(*mayflyVariant))
+	if len(scoreConstraints) > 0 {
+		fmt.Printf("Constraints %s: rejected=%d, winner %s\n",
+			formatScoreConstraints(scoreConstraints),
+			result.constraintRejections,
+			formatConstraintScores(scoreConstraints, result.bestConstraintScores))
+	}
 	if len(result.bestNotes) > 1 {
 		for _, nr := range result.bestNotes {
 			fmt.Printf("  note %d score=%.4f similarity=%.2f%% (%s)\n", nr.Note, nr.Score, nr.Similarity*100.0, nr.ReferencePath)
