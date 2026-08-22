@@ -551,6 +551,27 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 			outputGainRatio = ratio
 			finalEval.params.OutputGain *= float32(ratio)
 			fmt.Printf("Matched output_gain x%.4f -> %.4f\n", ratio, finalEval.params.OutputGain)
+			// Re-score the matched parameters. Under the default relative
+			// decay this is a no-op up to float32 rounding -- output_gain is
+			// score-invariant, which is exactly what this branch relies on --
+			// but under --decay-relative=false a louder render crosses the
+			// fixed stop threshold later and is scored over a longer window,
+			// so the pre-match score would not describe the preset that is
+			// about to be written. Re-rendering once per target at final
+			// settings is negligible next to a fitting run and keeps the
+			// reported score and metrics honest in both decay modes.
+			rescored, rerr := scoreParams(
+				cfg, finalEval.params, finalEval.bodyIR, finalEval.roomIRL, finalEval.roomIRR,
+				finalEval.velocity, finalEval.releaseAfter, finalEvalSettings,
+			)
+			if rerr != nil {
+				fmt.Fprintf(os.Stderr, "output-gain re-score skipped: %v\n", rerr)
+			} else {
+				if rescored.aggregate != finalEval.aggregate {
+					fmt.Printf("Re-scored after gain match: %.6f -> %.6f\n", finalEval.aggregate, rescored.aggregate)
+				}
+				finalEval = rescored
+			}
 		}
 	}
 
@@ -661,9 +682,25 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchPath stri
 		params.RoomIRWavPath = ""
 	}
 
+	return scoreParams(cfg, params, bodyIR, roomL, roomR, evalVelocity, evalReleaseAfter, settings)
+}
+
+// scoreParams renders every note target with an already-built parameter set
+// and scores it. evaluateCandidate uses it to score a candidate; the analytic
+// output-gain match uses it to re-score the winner AFTER the gain has been
+// folded into the parameters, so the reported score and metrics always belong
+// to the preset that is actually written.
+func scoreParams(
+	cfg *optimizationConfig,
+	params *piano.Params,
+	bodyIR, roomL, roomR []float32,
+	velocity int,
+	releaseAfter float64,
+	settings evalSettings,
+) (optimizationEval, error) {
 	reports := make([]noteReport, 0, len(cfg.targets))
 	for _, t := range cfg.targets {
-		mono, err := renderTarget(cfg, params, bodyIR, roomL, roomR, t.note, evalVelocity, evalReleaseAfter, settings)
+		mono, err := renderTarget(cfg, params, bodyIR, roomL, roomR, t.note, velocity, releaseAfter, settings)
 		if err != nil {
 			return optimizationEval{}, err
 		}
@@ -688,8 +725,8 @@ func evaluateCandidate(cfg *optimizationConfig, cand candidate, scratchPath stri
 		bodyIR:       bodyIR,
 		roomIRL:      roomL,
 		roomIRR:      roomR,
-		velocity:     evalVelocity,
-		releaseAfter: evalReleaseAfter,
+		velocity:     velocity,
+		releaseAfter: releaseAfter,
 	}, nil
 }
 

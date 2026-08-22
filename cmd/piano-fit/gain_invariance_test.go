@@ -183,3 +183,49 @@ func legacyRenderPreRelativeStop(
 	// The caller compares mono sample counts.
 	return stereo[:len(stereo)/2]
 }
+
+// scoreParams is what the analytic output-gain match re-scores the winner
+// with, once the matched gain has been folded into the parameters. This test
+// pins down why that re-score exists: with the default relative decay the
+// score is untouched by the gain, but under --decay-relative=false the same
+// gain change moves it, so a score reported before the match would not
+// describe the preset that gets written.
+func TestScoreParamsAfterGainMatchTracksTheDecayMode(t *testing.T) {
+	sr, minD, maxD, rel, dbfs, hold, blk := gainInvarianceSettings()
+	ref := syntheticReference(t, 60, sr, 1.0)
+
+	cfg := &optimizationConfig{
+		baseParams:   piano.NewDefaultParams(),
+		targets:      []noteTarget{{note: 60, finalRef: ref, optRef: ref, weight: 1}},
+		aggregate:    "mean",
+		baseVelocity: 100,
+	}
+
+	scoreAt := func(gain float32, relative bool) float64 {
+		t.Helper()
+		params := piano.NewDefaultParams()
+		params.OutputGain = gain
+		ev, err := scoreParams(cfg, params, nil, nil, nil, 100, rel, evalSettings{
+			final:           true,
+			sampleRate:      sr,
+			minDuration:     minD,
+			maxDuration:     maxD,
+			decayDBFS:       dbfs,
+			decayHoldBlocks: hold,
+			decayRelative:   relative,
+			renderBlockSize: blk,
+		})
+		if err != nil {
+			t.Fatalf("scoreParams(gain=%v, relative=%v): %v", gain, relative, err)
+		}
+		return ev.aggregate
+	}
+
+	if quiet, loud := scoreAt(0.5, true), scoreAt(5.0, true); math.Abs(quiet-loud) > 1e-7 {
+		t.Fatalf("relative decay: output_gain moved the score by %g (%.17g vs %.17g)", math.Abs(quiet-loud), quiet, loud)
+	}
+	if quiet, loud := scoreAt(0.5, false), scoreAt(5.0, false); quiet == loud {
+		t.Fatalf("absolute decay: output_gain left the score at %.17g; "+
+			"the re-score after the gain match would then be pointless", quiet)
+	}
+}

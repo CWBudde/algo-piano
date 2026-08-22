@@ -127,7 +127,8 @@ func main() {
 	matchOutputGainFlag := flag.Bool("match-output-gain", true, "Solve output_gain analytically after the search instead of searching it. "+
 		"analysis.Compare RMS-normalises both signals, and with the default --decay-relative the render length no longer depends on the "+
 		"absolute level either, so output_gain cannot move the score. Under --decay-relative=false it can: a louder render crosses the "+
-		"absolute stop threshold later and is scored over a longer window")
+		"absolute stop threshold later and is scored over a longer window. The winner is therefore re-rendered and re-scored once after "+
+		"the match, so the reported score and metrics always describe the preset that is written")
 
 	passFlag := flag.String("pass", "none", "Per-aspect fitting pass: none|attack|sustain|inharmonicity. Restricts which knobs may move and "+
 		"which part of the signal is compared; orthogonal to --optimize")

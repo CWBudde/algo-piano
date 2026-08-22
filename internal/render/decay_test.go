@@ -177,14 +177,66 @@ func TestDecayDetectorAbsoluteThresholdIsFixed(t *testing.T) {
 	}
 }
 
-// A NaN sample must never become the running peak, or every subsequent
-// threshold comparison would be NaN and the render could not stop at all.
+// A non-finite sample must never become the running peak. NaN would poison
+// every subsequent threshold comparison; +/-Inf would pin the relative
+// threshold at infinity, so the very next finite block would compare as
+// decayed and the render would be silently truncated.
 func TestDecayDetectorIgnoresNonFiniteSamples(t *testing.T) {
-	d := NewDecayDetector(-60, 1, true)
-	block := blockAt(0.5, 8)
-	block[3] = float32(math.NaN())
-	d.Update(block)
-	if d.Peak() != 0.5 {
-		t.Fatalf("peak = %v, want 0.5 with the NaN ignored", d.Peak())
+	for _, tc := range []struct {
+		name   string
+		sample float64
+	}{
+		{"NaN", math.NaN()},
+		{"PosInf", math.Inf(1)},
+		{"NegInf", math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := NewDecayDetector(-60, 1, true)
+			block := blockAt(0.5, 8)
+			block[3] = float32(tc.sample)
+			d.Update(block)
+			if d.Peak() != 0.5 {
+				t.Fatalf("peak = %v, want 0.5 with the %s ignored", d.Peak(), tc.name)
+			}
+			if math.IsInf(d.Threshold(), 0) || math.IsNaN(d.Threshold()) {
+				t.Fatalf("threshold went non-finite: %v", d.Threshold())
+			}
+			// The threshold stayed finite, so the render carries on exactly as
+			// it would have without the poisoned sample.
+			if d.Update(blockAt(0.5, 8)) {
+				t.Fatal("a full-level block must not stop the render")
+			}
+			if !d.Update(blockAt(1e-9, 8)) {
+				t.Fatal("a decayed block must still stop the render")
+			}
+		})
+	}
+}
+
+// A render that has diverged must not be reported as decayed: an infinite or
+// NaN block RMS never satisfies the stop condition, so the render runs out to
+// its max duration instead of producing a short, plausible-looking file.
+func TestDecayDetectorNeverStopsOnDivergedBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		sample float64
+	}{
+		{"NaN", math.NaN()},
+		{"PosInf", math.Inf(1)},
+		{"NegInf", math.Inf(-1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, relative := range []bool{true, false} {
+				// A relative detector whose peak is still zero would otherwise
+				// take the silent-render shortcut on an all-non-finite block.
+				d := NewDecayDetector(-60, 1, relative)
+				block := blockAt(tc.sample, 8)
+				for i := 0; i < 4; i++ {
+					if d.Update(block) {
+						t.Fatalf("relative=%v: diverged block reported as decayed", relative)
+					}
+				}
+			}
+		})
 	}
 }

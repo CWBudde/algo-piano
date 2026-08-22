@@ -109,19 +109,41 @@ func (d *DecayDetector) Threshold() float64 {
 }
 
 func (d *DecayDetector) isBelow(block []float32) bool {
+	rms := BlockRMS(block)
+	// A diverged block (an infinite or NaN RMS) is the opposite of decayed, so
+	// it must never satisfy the stop condition -- not even through the silent
+	// render shortcut below, which an all-NaN block would otherwise take while
+	// the running peak is still zero. See trackPeak.
+	if math.IsInf(rms, 0) || math.IsNaN(rms) {
+		return false
+	}
 	// A silent render never rises above a zero relative threshold; treat it as
 	// fully decayed rather than letting it run to the max duration.
 	if d.relative && d.peak <= 0 {
 		return true
 	}
-	return BlockRMS(block) < d.Threshold()
+	return rms < d.Threshold()
 }
 
 func (d *DecayDetector) trackPeak(block []float32) {
 	for _, s := range block {
-		// NaN compares false against everything, so a non-finite sample can
-		// never become the running peak.
 		v := math.Abs(float64(s))
+		// Non-finite samples are excluded from the running peak. NaN would be
+		// rejected by the comparison anyway, but +/-Inf would not: it would
+		// pin the peak at infinity, make the relative threshold infinite, and
+		// every later finite block would compare as decayed, so the render
+		// would stop one hold window later and be silently truncated.
+		//
+		// A render that has produced an infinity has diverged, and the right
+		// answer for a diverged render is NOT a short, plausible-looking file.
+		// Leaving the peak finite means the infinite (or NaN) block RMS never
+		// compares below the threshold, so the detector refuses to stop and
+		// the render runs to its max duration, where the damage is visible to
+		// whoever inspects the output. See PLAN.md Phase 9.6 for why silently
+		// swallowing divergence is the failure mode to avoid here.
+		if math.IsInf(v, 0) || math.IsNaN(v) {
+			continue
+		}
 		if v > d.peak {
 			d.peak = v
 		}
