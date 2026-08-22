@@ -17,7 +17,10 @@ package main
 //     js.Global().Set("name", ...) calls count; a name in a comment or a string
 //     literal elsewhere does not.
 //   - The JS side is scanned for call expressions `wasmXxx(`, which is how the
-//     web client invokes an export. `typeof wasmXxx !== 'undefined'` guards are
+//     web client invokes an export. Comments and string/template literals are
+//     stripped first, so a commented-out call or a name mentioned in a string no
+//     longer counts as a call site - otherwise the guard would go quiet exactly
+//     when the web wiring disappears. `typeof wasmXxx !== 'undefined'` guards are
 //     not matched on their own, but every guarded name in the web client is also
 //     called in the same file, so nothing is lost.
 //
@@ -37,6 +40,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -81,7 +85,72 @@ var webClientSources = []string{
 // jsWasmCall matches a call of a WASM global, e.g. `wasmNoteOn(note, v)`. The
 // leading word boundary keeps `window.wasmNoteOn(` out (there is no such usage
 // today, and if one appears it should be reviewed rather than silently matched).
-var jsWasmCall = regexp.MustCompile(`\bwasm[A-Z][A-Za-z0-9_]*\s*\(`)
+// The name is a capture group, so whitespace between the name and the "(" -
+// including a line break a formatter may insert - never ends up in the name.
+var jsWasmCall = regexp.MustCompile(`\b(wasm[A-Z][A-Za-z0-9_]*)\s*\(`)
+
+// jsStripCommentsAndLiterals removes line comments, block comments and string
+// or template literals (', " and backtick) from JS source, replacing each with
+// a single space so that neighbouring tokens cannot be glued together (`wasm/*x*/Foo(`
+// must not become a call site). Everything else is passed through unchanged.
+//
+// This is a deliberately small hand-rolled scanner rather than a JS parser
+// dependency: the only thing it has to get right is "is this byte code or not".
+// Two known simplifications, both of which fail loud rather than quiet:
+//
+//   - A regex literal is not recognised as such, so a quote inside one (e.g.
+//     `/["']/`) would start a bogus string and swallow code. The web sources use
+//     none today; if one appears, real call sites vanish and the contract test
+//     fails - it cannot make a missing call site look present.
+//   - A `${...}` interpolation inside a template literal is stripped along with
+//     the rest of the literal, so a call made from inside one is not seen. Same
+//     direction: the export then reads as uncalled and the test complains.
+func jsStripCommentsAndLiterals(src string) string {
+	var b strings.Builder
+	b.Grow(len(src))
+
+	for i := 0; i < len(src); {
+		c := src[i]
+		switch {
+		case c == '/' && i+1 < len(src) && src[i+1] == '/':
+			// Line comment: drop up to, but not including, the newline.
+			i += 2
+			if end := strings.IndexByte(src[i:], '\n'); end >= 0 {
+				i += end
+			} else {
+				i = len(src)
+			}
+			b.WriteByte(' ')
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			// Block comment: drop up to and including the terminator.
+			i += 2
+			if end := strings.Index(src[i:], "*/"); end >= 0 {
+				i += end + 2
+			} else {
+				i = len(src)
+			}
+			b.WriteByte(' ')
+		case c == '\'' || c == '"' || c == '`':
+			// String or template literal: drop up to the matching unescaped
+			// quote. A "//" in here is text, not a comment start.
+			quote := c
+			i++
+			for i < len(src) && src[i] != quote {
+				if src[i] == '\\' {
+					i++ // Skip the escaped byte, whatever it is.
+				}
+				i++
+			}
+			i = min(i+1, len(src))
+			b.WriteByte(' ')
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+
+	return b.String()
+}
 
 // goExportedWASMNames returns the names registered via js.Global().Set(...) in
 // the given Go source file.
@@ -145,12 +214,9 @@ func jsCalledWASMNames(t *testing.T) map[string]string {
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
-		for _, m := range jsWasmCall.FindAllString(string(data), -1) {
-			// Trim the trailing whitespace and "(" that the pattern includes.
-			name := m[:len(m)-1]
-			for len(name) > 0 && (name[len(name)-1] == ' ' || name[len(name)-1] == '\t') {
-				name = name[:len(name)-1]
-			}
+		code := jsStripCommentsAndLiterals(string(data))
+		for _, m := range jsWasmCall.FindAllStringSubmatch(code, -1) {
+			name := m[1]
 			if _, seen := called[name]; !seen {
 				called[name] = path
 			}
@@ -216,5 +282,84 @@ func TestWASMExportContractMatchesWebClient(t *testing.T) {
 		if !exportedSet[n] {
 			t.Errorf("%q is allowlisted as an uncalled export, but main.go does not export it at all", n)
 		}
+	}
+}
+
+// TestJSStripCommentsAndLiterals pins the scanner that keeps commented-out and
+// quoted mentions of an export from counting as call sites. The assertion is on
+// the names the contract check would extract, which is what actually matters.
+func TestJSStripCommentsAndLiterals(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{
+			name: "real call",
+			src:  "wasmNoteOn(60, 0.8);",
+			want: []string{"wasmNoteOn"},
+		},
+		{
+			name: "line comment hides a call",
+			src:  "// wasmNoteOn(60, 0.8);",
+			want: nil,
+		},
+		{
+			name: "block comment hides a call",
+			src:  "/* wasmNoteOn(60, 0.8); */",
+			want: nil,
+		},
+		{
+			name: "block comment does not glue tokens together",
+			src:  "wasm/*x*/NoteOn(60);",
+			want: nil,
+		},
+		{
+			name: "name inside a string is not a call",
+			src:  "const s = 'wasmNoteOn(';",
+			want: nil,
+		},
+		{
+			name: "escaped quote does not end the string early",
+			src:  "const s = 'it\\'s wasmNoteOn(' ; wasmNoteOff(60);",
+			want: []string{"wasmNoteOff"},
+		},
+		{
+			name: "double slash inside a string is not a comment",
+			src:  "const url = 'https://x/wasmNoteOn('; wasmNoteOff(60);",
+			want: []string{"wasmNoteOff"},
+		},
+		{
+			name: "template literal is not a call",
+			src:  "const s = `wasmNoteOn(${n})`; wasmNoteOff(60);",
+			want: []string{"wasmNoteOff"},
+		},
+		{
+			name: "newline between name and paren still yields a clean name",
+			src:  "wasmFoo\n(1);",
+			want: []string{"wasmFoo"},
+		},
+		{
+			name: "commented-out call next to a real one",
+			src:  "// wasmNoteOn(60);\nwasmNoteOff(60);",
+			want: []string{"wasmNoteOff"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, m := range jsWasmCall.FindAllStringSubmatch(jsStripCommentsAndLiterals(tc.src), -1) {
+				got = append(got, m[1])
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("extracted %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("extracted %v, want %v", got, tc.want)
+				}
+			}
+		})
 	}
 }
