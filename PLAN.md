@@ -614,18 +614,44 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
 
         | metric                | before  | after   | cap 67.0-era → new |
         | --------------------- | ------- | ------- | ------------------ |
-        | `score`               | 0.5249  | 0.5040  | 0.57 → 0.543       |
-        | `time_rmse`           | 0.10189 | 0.10185 | 0.112 → 0.110      |
-        | `envelope_rmse_db`    | 10.156  | 7.817   | 11.75 → 8.42       |
-        | `spectral_rmse_db`    | 62.287  | 51.554  | 67.0 → **55.6**    |
-        | `decay_diff_db_per_s` | 4.800   | 4.442   | 5.9 → 4.79         |
+        | `score`               | 0.5249  | 0.5182  | 0.57 → 0.559       |
+        | `time_rmse`           | 0.10189 | 0.10113 | 0.112 → 0.109      |
+        | `envelope_rmse_db`    | 10.156  | 9.593   | 11.75 → 10.34      |
+        | `spectral_rmse_db`    | 62.287  | 56.572  | 67.0 → **61.0**    |
+        | `decay_diff_db_per_s` | 4.800   | 4.503   | 5.9 → 4.85         |
 
         Every cap is the measured value plus 7.7–8.0% headroom, the convention
-        that file states. 51.554 dB also beats the 52.89 dB the old preset
-        measured on the pre-normalisation renderer, so the spectrum is no longer
-        tuned around the defect.
+        that file states. The measured 56.572 dB is below the 57.5 fence that
+        stood before the resonator normalisation, which is the promise this
+        re-fit owed. It does **not** beat the 52.89 dB the same preset measured
+        on the pre-normalisation renderer — that comparison was against a
+        renderer with the 1/f0 sympathetic defect in it and is not a target. Note
+        also that the CAP (61.0) sits above 57.5 purely because the headroom
+        convention applies on top of the measurement; the fence is wider than it
+        was in 2026-08-21 even though the measurement is better.
 
-        **The dominant term was the wet body-IR level, not the string model.**
+        The tracked sidecar `assets/presets/fitted-c4-mayfly.json.report.json`
+        was **deleted**, not regenerated. `piano-fit` resumes from
+        `<output-preset>.report.json` by default, so leaving the old one in place
+        meant an in-place re-run of this preset would silently restore the
+        pre-re-fit knobs instead of resuming from what shipped. There is no
+        honest replacement to write: this preset is the product of a chain of
+        deterministic `--sweep` runs, not of one resumable `piano-fit` search.
+        With the file gone, resume degrades to a "resume skipped" notice.
+
+        **All five numbers are measured at `output_gain` 7.096.** The re-fit cut
+        the room-IR mix hard, which cut the absolute output level with it; at the
+        `output_gain` 1.357 the search compared candidates under, the preset
+        rendered 7.2x quieter in RMS (−25.6 → −42.7 dBFS) than the one it
+        replaces, and the RMS-normalising gate cannot see that. Re-matching
+        `output_gain` puts the render at 0.048274 RMS against the reference's
+        0.048364 and costs part of the apparent gain: at 1.357 the same knobs
+        measure `score` 0.5040 and `spectral_rmse_db` 51.554, which is an
+        artifact of the quiet render and must not be quoted.
+
+        **The dominant term was the wet level of the legacy single-IR (room) stage, not
+        the string model.** The preset sets `ir_wav_path`, so the engine loads it as
+        the room stage and `ir_wet_mix`/`ir_gain` are room controls, not body-IR ones.
         The preset carried `ir_wet_mix` 1.1888 with `ir_gain` 1.7203, an
         effective wet factor of 2.045. A deterministic 2076-sample sweep of the
         three IR-mix knobs (`--sweep --optimize mix`, 9-point OAT scan plus 2048

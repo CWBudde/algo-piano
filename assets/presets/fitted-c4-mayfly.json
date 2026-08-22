@@ -1,5 +1,5 @@
 {
-  "output_gain": 1.3567514,
+  "output_gain": 7.096,
   "ir_wav_path": "../ir/default_96k.wav",
   "ir_wet_mix": 0.2328125,
   "ir_dry_mix": 0.21069959,

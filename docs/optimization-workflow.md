@@ -400,7 +400,7 @@ Two caveats that will bite otherwise:
 > **Stale baseline, kept for the relative comparison.** The `0.5330` in the
 > table below is `fitted-c4-mayfly.json` on the pre-#26 renderer. That preset
 > then moved to `0.5249` with the `noteResonator` normalisation (#26) and was
-> re-fitted on 2026-08-22 to **`0.5040`** — see
+> re-fitted on 2026-08-22 to **`0.5182`** — see
 > "[Deterministic sweep chain](#deterministic-sweep-chain-how-the-2026-08-22-c4-re-fit-was-done)"
 > below. The pass numbers here stay useful as a _relative_ comparison between
 > passes; do not quote them against the current gate.
@@ -606,7 +606,9 @@ Four rules that this round paid for:
 - **Exclude samples that move `render.velocity` or `render.release_after`.**
   Neither is stored in the preset, so the gate renders at 118 / 3.5 s regardless
   and a sample that moved them is not reproducible from the written preset.
-  Filter with `.knobs["render.velocity"]==118`.
+  Filter with `.knobs["render.velocity"]==118 and .knobs["render.release_after"]==3.5`
+  — both, not just the velocity: `release_after` is not serialised into the preset
+  either, so a sample that moved it reports metrics the gate cannot reproduce.
 - **`output_gain` is not score-neutral**, despite what `--match-output-gain`'s
   help says. The auto-stop is an **absolute** −90 dBFS threshold, so a louder
   render crosses it later, yields a longer candidate and scores differently:
@@ -619,8 +621,10 @@ Four rules that this round paid for:
   `--sweep-joint-max-dims 9` does not help. Run that box with
   `--sweep-joint-evals 0` (one-at-a-time only).
 
-**What it found.** The dominant term was the wet body-IR level, not the string
-model. The old preset carried `ir_wet_mix` 1.1888 with `ir_gain` 1.7203, an
+**What it found.** The dominant term was the wet level of the legacy single-IR
+stage, not the string model. This preset sets `ir_wav_path`, so `ApplyDefaultRoomIR`
+leaves it alone and the engine loads it as the **room** stage: `ir_wet_mix` and
+`ir_gain` are room controls here, not body-IR controls. The old preset carried `ir_wet_mix` 1.1888 with `ir_gain` 1.7203, an
 effective wet factor of 2.045. The first 2076-sample mix sweep
 (`out/sweep/mix-mayfly.json`) contained **887 samples that improve all four
 gated raw metrics at once** — a region, not a lucky sample. The shipped preset
@@ -631,12 +635,17 @@ inharmonicity box. `resonance_gain` was not touched.
 
 | metric                | before  | after   | gate cap        |
 | --------------------- | ------- | ------- | --------------- |
-| `score` (`legacy-v1`) | 0.5249  | 0.5040  | 0.57 → 0.543    |
-| `time_rmse`           | 0.10189 | 0.10185 | 0.112 → 0.110   |
-| `envelope_rmse_db`    | 10.156  | 7.817   | 11.75 → 8.42    |
-| `spectral_rmse_db`    | 62.287  | 51.554  | 67.0 → **55.6** |
-| `decay_diff_db_per_s` | 4.800   | 4.442   | 5.9 → 4.79      |
+| `score` (`legacy-v1`) | 0.5249  | 0.5182  | 0.57 → 0.559    |
+| `time_rmse`           | 0.10189 | 0.10113 | 0.112 → 0.109   |
+| `envelope_rmse_db`    | 10.156  | 9.593   | 11.75 → 10.34   |
+| `spectral_rmse_db`    | 62.287  | 56.572  | 67.0 → **61.0** |
+| `decay_diff_db_per_s` | 4.800   | 4.503   | 5.9 → 4.85      |
 | `balanced-v2`         | 0.47391 | 0.42687 | not gated       |
+
+All five gated rows are measured at the shipped `output_gain` 7.096. The
+`balanced-v2` row is the selection-time figure at the comparison gain 1.357 and
+was not re-measured, because `piano-distance` has no `--profile` flag; treat it
+as the criterion the search was steered by, not as a current measurement.
 
 ## Multi-Note Fitting
 
