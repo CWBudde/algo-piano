@@ -201,3 +201,33 @@ func TestMinMax(t *testing.T) {
 		t.Errorf("minMax(nil) = (%v, %v), want (NaN, NaN)", lo, hi)
 	}
 }
+
+// TestSelectCases pins that a typo is an error rather than an empty matrix: a
+// silently-empty selection would produce a document that covers nothing while
+// looking like a completed run.
+func TestSelectCases(t *testing.T) {
+	all := defaultCases()
+
+	t.Run("empty selection keeps every case", func(t *testing.T) {
+		got, err := selectCases(all, "")
+		if err != nil || len(got) != len(all) {
+			t.Fatalf("got %d cases, err %v; want all %d", len(got), err, len(all))
+		}
+	})
+
+	t.Run("selection follows the declared order, not the flag order", func(t *testing.T) {
+		got, err := selectCases(all, "attack, sustain")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 2 || got[0].Name != "sustain" || got[1].Name != "attack" {
+			t.Fatalf("got %v, want [sustain attack]", got)
+		}
+	})
+
+	t.Run("unknown name is an error", func(t *testing.T) {
+		if _, err := selectCases(all, "sustain,attak"); err == nil {
+			t.Fatal("a misspelled case name must not silently produce a partial matrix")
+		}
+	})
+}

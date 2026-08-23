@@ -33,6 +33,7 @@ type options struct {
 	buildDir  string
 	docPath   string
 	configs   string
+	cases     string
 	reference string
 	preset    string
 	maxEvals  int
@@ -59,6 +60,8 @@ func parseFlags() options {
 	flag.StringVar(&opts.buildDir, "build-dir", "out/optbench/bin", "Directory the piano-fit binary is built into")
 	flag.StringVar(&opts.docPath, "doc", "docs/optimizer-benchmark.md", "Markdown document --report writes")
 	flag.StringVar(&opts.configs, "configs", "", "Optional JSON file with extra search configurations to append to the matrix")
+	flag.StringVar(&opts.cases, "cases", "",
+		"Optional comma-separated case names to restrict the matrix to, e.g. \"sustain,attack\" (default: all)")
 	flag.StringVar(&opts.reference, "reference", "reference/c4.wav", "Reference WAV passed to every run")
 	flag.StringVar(&opts.preset, "preset", "assets/presets/default.json", "Base preset passed to every run")
 	flag.IntVar(&opts.maxEvals, "max-evals", 1500, "Evaluation budget per run (never a time budget: runs must be comparable by eval count)")
@@ -84,10 +87,12 @@ func run(opts options) error {
 
 // resolveMatrix builds the case/config/seed matrix from the flags.
 func resolveMatrix(opts options) ([]benchCase, []benchConfig, []int64, error) {
-	cases := defaultCases()
+	cases, err := selectCases(defaultCases(), opts.cases)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	configs := defaultConfigs()
 	if opts.configs != "" {
-		var err error
 		if configs, err = loadConfigs(opts.configs); err != nil {
 			return nil, nil, nil, err
 		}
@@ -240,6 +245,9 @@ func regenerateCommand(opts options) string {
 	}
 	if opts.configs != "" {
 		parts = append(parts, "--configs", opts.configs)
+	}
+	if opts.cases != "" {
+		parts = append(parts, "--cases", opts.cases)
 	}
 	quoted := make([]string, 0, len(parts))
 	for _, p := range parts {

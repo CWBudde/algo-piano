@@ -74,6 +74,43 @@ func defaultConfigs() []benchConfig {
 	}
 }
 
+// selectCases restricts the matrix to the named cases, in the order the
+// defaults declare them so the document's case order stays stable however the
+// flag was spelled. An empty selection keeps every case.
+//
+// An unknown name is an error rather than an empty matrix: a typo would
+// otherwise produce a document that silently covers nothing.
+func selectCases(all []benchCase, names string) ([]benchCase, error) {
+	names = strings.TrimSpace(names)
+	if names == "" {
+		return all, nil
+	}
+	want := map[string]bool{}
+	for _, n := range strings.Split(names, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			want[n] = true
+		}
+	}
+	out := make([]benchCase, 0, len(want))
+	for _, c := range all {
+		if want[c.Name] {
+			out = append(out, c)
+			delete(want, c.Name)
+		}
+	}
+	if len(want) > 0 {
+		unknown := make([]string, 0, len(want))
+		for n := range want {
+			unknown = append(unknown, n)
+		}
+		sort.Strings(unknown)
+
+		return nil, fmt.Errorf("--cases: unknown case name(s) %s", strings.Join(unknown, ", "))
+	}
+
+	return out, nil
+}
+
 // loadConfigs reads an extra condition set from JSON so Stage B can extend the
 // matrix without recompiling. The file is a JSON array of benchConfig, e.g.
 //
