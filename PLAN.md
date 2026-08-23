@@ -14,7 +14,7 @@ Conventions used in this plan:
 
 ---
 
-## Phases 0–8A — Foundation through first calibration baseline ✓
+## Phases 0–10 — Foundation through browser demo ✓
 
 All items in these phases are complete; details live in the code, tests and
 linked docs. Kept here as a one-line record of what each phase established.
@@ -56,230 +56,38 @@ linked docs. Kept here as a one-line record of what each phase established.
   the first reproducible C4 baseline (2026-02-13: score `0.6147`, similarity
   `8.55%`, envelope `15.708 dB`, spectral `23.756 dB`, decay slope
   `7.858 dB/s`).
+- **Phase 8B — Distance-guided timbre matching.** Reproducible C4 fitting via
+  `cmd/piano-fit`, with Mayfly search, deterministic coordinate polish,
+  analytically matched output gain, aspect-specific profiles/passes,
+  calibrated norms, multi-note objectives, raw-metric/score constraints and
+  `just gate-c4` regression guardrails. Attack fitting produced the net win;
+  sustain and inharmonicity passes moved to **Phase 16**. The workflow and
+  measurement history live in `docs/optimization-workflow.md` and
+  `docs/plans/2026-08-21-phase8b-metrics.md`.
+- **Phase 8C — IR-shape optimization.** `cmd/piano-fit-ir` runs a checkpointed,
+  resumable Mayfly outer loop over the full `irsynth.Config`, optionally joined
+  with fast piano/mix knobs, and stores fitted IRs plus report sidecars under
+  `assets/ir/fitted/`; default-IR selection moved to **Phase 16.3**.
+- **Phase 9 — Full-instrument ringing architecture.** Refactored transient key
+  and hammer control away from a persistent allocation-free 1–3-string-per-note
+  bank; added stable sparse static/physical coupling, instrument-wide physical
+  damper and partial-pedal semantics, and the linear
+  `string bank -> body IR -> room IR` radiation path with WASM migration.
+  Behaviour, API/export compatibility, multi-rate long-render stability and
+  coupling cost/density are covered by tests and benchmarks. Body-IR/web checks
+  and physical-coupling calibration moved to **Phase 17**.
+- **Phase 10 — Web demo.** Go-only WASM engine with stable note/process exports,
+  an AudioWorklet bridge, playable two-octave keyboard with sustain and computer
+  bindings, scripted WASM build, GitHub Pages deployment, and graceful IR
+  fallback.
 
-Remaining non-blocking follow-ups from Phases 4, 5 and 8 were moved to
-**Phase 15** so these phases close cleanly.
+Remaining non-blocking follow-ups from Phases 4, 5, 8B, 8C and 9 were moved to
+**Phases 15–17** so these phases close cleanly.
 
----
-
-## Phase 8B — Distance-guided timbre matching ✓ (open passes → Phase 16)
-
-Distance-guided fitting for C4 is built and in use. The measurement record —
-knob groups, staged order, per-pass results, the sustain-knob sweep and the
-constrained/gated re-fit — lives in **`docs/optimization-workflow.md`**; the
-metric definitions, weighting profiles and norm calibration live in
-**`docs/plans/2026-08-21-phase8b-metrics.md`**. Two fitting passes are still
-open and moved to **Phase 16**.
-
-> **Recorded scores are comparable only within a renderer/metric generation.**
-> `analysis/distance.go` changed six times between 2026-02-14 and 2026-08-16,
-> and the renderer has moved repeatedly since (#14, #23, #26, #29, #30, #35,
-> #36), so a score means something only against others measured on the same
-> pair. `docs/plans/2026-08-21-phase8b-metrics.md` §5 has the detail. The
-> current C4 numbers are whatever `just gate-c4` prints against
-> `assets/thresholds/c4.json`; do not quote a score from an older entry.
-
-- [x] **Optimization surface + fast inner loop.** Preset-controlled hammer
-      influence, unison detune/crossfeed and IR wet/dry/gain scales;
-      `cmd/piano-fit --optimize=piano,mix` with a time budget, a checkpointed
-      best preset/report, `just fit-c4`, and persisted control settings
-      (`velocity=118`, `release-after=3.5`) that `just distance-c4` and
-      `just gate-c4` both use.
-- [x] **Deterministic coordinate polish** (`--polish` / `--polish-only`) over the
-      render controls under a hard eval budget. A step is accepted only when it
-      improves, so the stage **cannot regress** and is fully deterministic;
-      `--polish-only --resume` is the standard finishing move on an existing best.
-- [x] **Output gain is solved, not searched.** `analysis.Compare` RMS-normalises
-      both signals **and** the render auto-stop is taken relative to the render's
-      own running peak (`internal/render`), so the render length does not depend
-      on the absolute level either. Both halves are needed and both are tested
-      (`TestOutputGainIsScoreInvariant`,
-      `TestOutputGainDoesNotMoveTheScoreThroughRenderLength`); with only the
-      first, a louder render crossed the absolute −90 dBFS stop later and was
-      scored over a longer window. `--match-output-gain` (default on) solves the
-      knob analytically after the search, and it is deliberately excluded from
-      the polish knobs. `--decay-relative=false` restores the old absolute
-      threshold for reproducing pre-2026-08-22 numbers bit for bit.
-- [x] **Per-aspect passes.** `--pass none|attack|sustain|inharmonicity` restricts
-      the movable knobs, optionally windows the compare (`--pass-window`) and
-      scores with the profile that describes the aspect (`attack-v1`, `decay-v1`,
-      `inharmonicity-v1`). `--profile` overrides that and works with
-      `--pass none` too; the profile is recorded as `score_profile` in the
-      report. `just fit-c4-passes` runs all three and ends with a `legacy-v1`
-      distance report for **each** pass output — the only numbers comparable
-      across passes, since each fit is scored with its own profile. **Attack is
-      the one net win** (attack centroid error 0.545 → 0.130 octaves, and it
-      beats the tracked gate baseline outright); sustain and inharmonicity stay
-      open in **Phase 16** and the recipe's final artifact leaves the regressing
-      sustain pass out.
-- [x] **Strengthened distance metrics** — partial level/frequency, tristimulus,
-      attack rise + centroid trajectory, segment-wise decay. `Compare` stays
-      **bit-identical**: the new metrics carry weight 0 in the default
-      `legacy-v1` profile. Named profiles `balanced-v2`, `attack-v1`, `decay-v1`
-      and `inharmonicity-v1` are selectable via
-      `CompareWithWeights`/`CompareWithOptions`, and `Metrics.Sanitized()` fixed
-      a real NaN-in-JSON crash.
-- [x] **Norm calibration.** `analysis.CalibratedNorms()` de-saturates the four
-      steering profiles, every value picked from the measured population spread
-      rather than guessed. `legacy-v1` deliberately keeps `LegacyNorms()` and
-      keeps saturating: that is what makes every tracked report and
-      `assets/thresholds/c4.json` mean what it says. The gate checks the raw dB
-      value, which is a real regression signal either way.
-- [x] **Regression guardrails.** `assets/thresholds/c4.json` enforces five
-      metrics; names resolve by reflection over the `analysis.Metrics` JSON tags,
-      so a new metric is gateable with no code change and an unknown key is an
-      error rather than a silently ignored typo. `cmd/piano-distance
-    --thresholds` exits 2 on breach, wrapped as `just gate-c4` and appended to
-      the `ci` recipe. It reports worst-headroom on a pass so creeping
-      regressions surface early, and it self-skips with exit 0 when
-      `reference/c4.wav` is missing — reference WAVs are gitignored by design, so
-      this keeps `just ci` green on a fresh clone.
-- [x] **Metaheuristic optimizer** (`github.com/CWBudde/mayfly`): single-note
-      integration with a fixed seed, checkpointed best candidate, budget
-      controls, and constrained multi-note runs (`--notes`, `--reference-map`,
-      `--aggregate mean|max|mean-max`, `--note-weights`). Budget scales with the
-      note count; every eval renders every note and the report records
-      `renders_per_eval`. Start with `--notes 48,60` — `defaultUnisonForNote`
-      puts C3 and C4 in the same 2-string bucket but C5 in the 3-string bucket,
-      so a shared `unison_detune_scale` across all three settles on a compromise
-      optimal for neither.
-- [x] **Constraint machinery.** `--score-constraint` is a secondary-profile
-      ceiling checked on the same rendered buffer; `--gate-thresholds` /
-      `--metric-constraint` are RAW-metric ceilings enforced during the search,
-      resolved by the same `internal/gate` code `just gate-c4` uses. The raw
-      fence is the load-bearing one, for a mechanical reason: `legacy-v1`
-      saturates its spectral component (`clamp01` pins it above
-      `NormSpectral = 30.0`, and every preset in the repo measures well past
-      that), so `spectral_rmse_db` contributes a constant with no gradient and is
-      invisible to a score ceiling.
-
----
-
-## Phase 8C — Slow loop: IR-shape optimization with `ir-synth` + Mayfly ✓ (open item → Phase 16)
-
-- [x] Tool scope and IO contract locked in, including the optimization vector
-      over `irsynth.Config` (`modes`, `brightness`, `stereo-width`, `direct`,
-      `early`, `late`, `low-decay`, `high-decay`) and the checkpoint/report/resume
-      behaviour for long runs. `cmd/piano-fit-ir` and
-      `docs/optimization-workflow.md` are the current reference.
-- [x] Outer-loop IR fitting implemented as `cmd/piano-fit-ir`: candidate IRs via
-      `irsynth.GenerateStereo`, scored against `reference/c4.wav` through
-      `analysis.Compare`, optimized over the full parameter vector above.
-- [x] Mayfly integration for the outer loop: weighted distance objective, fixed
-      seed, periodic best-candidate checkpoints, strict budget controls
-      (`time-budget`, `max-evals`, round budget, population) and an optional
-      joint mode (`--optimize-joint`) mixing in fast-loop knobs.
-- [x] Best IRs saved under `assets/ir/fitted/` with score and synth parameters in
-      a `.report.json` sidecar.
-
-Selecting a default IR from the fitted candidates is still open — moved to
-**Phase 16.3**.
-
----
-
-## Phase 9 — Full-instrument ringing architecture (persistent strings + coupling)
-
-This phase is split into execution subphases to make progress and ownership explicit.
-
-### Phase 9.1–9.4 — Foundation, persistent bank, and coupling ✓
-
-- **9.1 Foundation refactor.** Key/control state, hammer excitation events and
-  persistent ringing state are separate components; string lifetime no longer
-  belongs to a transient voice; `NoteOn`/`NoteOff`/`SetSustainPedal` unchanged.
-- **9.2 Persistent string bank.** Full 1–3-strings-per-note set allocated at
-  init independent of active notes, per-string damper state and calibration
-  hooks (detune, loss, inharmonicity, gain, strike mapping), no per-sample or
-  per-block heap allocations in the bank path.
-- **9.3 Baseline sparse coupling (MVP).** Sparse coupling graph with
-  unison/near-unison, octave and fifth neighbourhoods, applied at bridge-side
-  injection points under stable force limits, with a feature switch and gain
-  controls in params/presets.
-- **9.4 Physically-informed coupling.** `coupling_mode=physical` weight model
-  built from overtone strength, harmonic frequency alignment, inter-string
-  distance penalty, detune penalty and unison-count scaling; persisted
-  string-distance map; sparse top-K edge precomputation with threshold and
-  neighbour cap; per-source and polyphony normalization; user controls
-  (`coupling_mode` `off|static|physical`, `coupling_amount`, plus harmonic
-  falloff, detune sigma, distance exponent and max-neighbour knobs); hard
-  `max_force` clamps retained in the injection path.
-
-### Phase 9.5 — Instrument semantics + radiation + web migration ✓ (open items → Phase 17)
-
-- [x] **Instrument-wide sustain/damper semantics.** Sustain pedal down undamps
-      the relevant strings in the persistent bank, not just recently struck
-      notes; note release with sustain down stops excitation only, so ringing
-      continues until damping changes; pedal up reapplies damping
-      deterministically to non-held strings; partial pedal maps to physical
-      damping coefficients rather than timer-based release logic.
-- [x] **Linear radiation path locked** around bank output:
-      `string-bank bridge mix -> body IR -> room IR`, fenced by
-      `piano/radiation_test.go` (pure-delay body/room IRs driven through
-      `Piano.Process`; the room contribution must land at the sum of both
-      delays). Body/room separation is first-class in params/presets — the legacy
-      single-IR mix is normalised once in `resolveRadiationMix`, at construction
-      and in `SetIRMix`, so the per-block path reads dual-IR fields only — and
-      the legacy single-IR path is a fallback only
-      (`piano.ApplyDefaultRoomIR` points the `piano-render` / `piano-fit` /
-      `piano-distance` defaults at `RoomIRWavPath`; `IRWavPath` is honoured only
-      when set explicitly). WASM runtime IR apply (`wasmLoadIR`) is complete.
-- [x] Sustain timer release behaviour retired in the web layer, now that physical
-      pedal semantics are active.
-
-Shipping a body IR asset and verifying the web demo are open — moved to
-**Phase 17**.
-
-### Phase 9.6 — Validation, calibration and performance ✓ (open item → Phase 17)
-
-- [x] **Physics-behaviour tests.** Pedal-down strike excites silent undamped
-      related strings (`piano/ringing_test.go` octave,
-      `piano/sympathetic_test.go` fifth); pedal-up suppresses sympathetic buildup
-      on both cores; hammer contact ends while ringing continues, both asserted
-      in one render (`piano/hammer_ringing_test.go`); `coupling_mode` transitions
-      `off/static/physical` behave as expected including a mid-render
-      `SetCouplingMode` switch (`piano/coupling_behaviour_test.go`); detune and
-      distance penalties measurably reduce coupling under monotone sweeps of
-      `CouplingDetuneSigmaCents`, `CouplingDistanceExponent` and
-      `CouplingMaxNeighbors`.
-- [x] **API-compatibility and long-render stability tests.**
-      `TestLongRenderHasNoNaNOrInf` (`piano/integration_test.go`) tables
-      DWG/modal x `off/static/physical` x pedal script (held, mid-render release,
-      partial sustain, soft pedal) x resonance at 44.1/48/96 kHz, several seconds
-      each, every sample finite plus a peak runaway bound.
-      `piano/api_compat_test.go` pins the `*Piano` method set via a compile-time
-      interface assertion, the `CouplingMode`/`StringModel` string literals, the
-      `Process(n) -> 2n` contract and the `NewDefaultParams` defaults;
-      `cmd/piano-wasm/export_contract_test.go` cross-checks the
-      `js.Global().Set` export names against the `wasm*` call sites in `web/`.
-      This found a real defect — the modal core with `ResonanceEnabled` diverged
-      to NaN after ~0.29 s — fixed by `resonanceForceScale` in
-      `piano/modal_group.go`, with `piano/modal_resonance_test.go` pinning the
-      resonance loop gain on both cores.
-- [x] **Benchmarks.** Idle full-string-bank cost (`BenchmarkStringBankIdle`),
-      active polyphony with coupling `off/static/physical`
-      (`BenchmarkStringBankCouplingModes`: poly-1 and poly-8, low/mid/high/mixed
-      registers x pedal up/down x all three modes), and coupling graph
-      density/top-K scaling vs CPU (`BenchmarkStringBankCouplingGraphDensity`,
-      sweeping `maxNeighbors` 1..87 including the production default of 10, plus
-      an edge-weight floor). Edge count is not the CPU lever — the active-voice
-      count the graph recruits is; see BENCHMARKS.md.
-
-Defining a calibration workflow for the physical coupling knobs is open — moved
-to **Phase 17**.
-
-**Done when:** one struck note with sustain down audibly excites non-struck related strings through the physical coupling model, coupling strength is controllable (`off` to strong) via general parameters, hammer/ringing remain decoupled, and body/room + web compatibility remain intact.
-
----
-
-## Phase 10 — Web demo (WASM + AudioWorklet) ✓
-
-- [x] Go-only WASM build (`syscall/js`) with a stable exported API for process
-      block and note events, keeping web/API behaviour independent of the core.
-- [x] Web demo under `web/`: AudioWorklet processor, 2-octave keyboard UI with
-      sustain toggle, computer-keyboard bindings, WASM bridge to the Go engine.
-- [x] Build and deployment: `scripts/build-wasm.sh`, GitHub Actions deploy to
-      GitHub Pages, IR asset loading with graceful fallback.
-
-**Done when:** playable in browser without glitches on a typical machine. ✓
+> **Recorded fitting scores are comparable only within one renderer/metric
+> generation.** Use the current `just gate-c4` result against
+> `assets/thresholds/c4.json`; historical details and generation boundaries are
+> recorded in `docs/plans/2026-08-21-phase8b-metrics.md` §5.
 
 ---
 
