@@ -17,6 +17,15 @@ The `piano-fit` tool optimizes different parameter groups selected via `--optimi
 
 The idea: alternate between piano-only and IR stages so each builds on the previous best result.
 
+`--body-transfer path/to/body-modal-transfer.json` selects the offline
+structural body tier for any run. The artifact is loaded and validated once.
+When `body-ir` is optimized, its geometry, eigenfrequencies and signed residues
+stay fixed; the body group contains only `body_transfer_gain`,
+`body_loss_scale`, `body_duration` and `body_fadeout`. Omitting the flag keeps
+the existing analytical rectangular body knobs and results unchanged. A run
+using a transfer still requires `--output-ir`, because the fitted mono IR and
+its preset path are part of the reproducible output.
+
 ### Key flags
 
 - `--no-resonance`: Disables the resonance engine during optimization. Use for stages 1-3 to avoid the CPU cost of sympathetic resonance (27x speedup). Only enable resonance for final polish stages.
@@ -210,6 +219,32 @@ go run --tags asm ./cmd/piano-fit \
 ```
 
 **What this does:** Synthesizes body coloration IR (short, mono) while keeping piano knobs fixed from Stage 1.
+
+Generate a structural transfer from a soundboard model with the pinned
+`algo-pde` v0.3.0 producer, then pass the cached artifact to the fitter:
+
+```bash
+just generate-body-transfer \
+    model=path/to/soundboard.json \
+    output=out/body-modal-transfer.json
+
+go run --tags asm ./cmd/piano-fit \
+    --reference reference/c4.wav \
+    --preset out/stages/stage1.json \
+    --output-preset out/stages/stage2.json \
+    --output-ir out/stages/stage2-ir.wav \
+    --optimize body-ir,mix \
+    --body-transfer out/body-modal-transfer.json
+```
+
+The recipe runs `github.com/cwbudde/algo-pde/cmd/plate-modes` from the
+`algo-pde v0.3.0` module required by `go.mod`. Structural data still crosses
+the runtime boundary through the strict `body-modal-transfer-v1` JSON schema;
+the eigensolver is never called during fitting.
+
+The run report records the transfer path, model SHA-256, bridge source ID and
+the applied gain/loss/duration/fade controls. The artifact is never reloaded or
+re-solved during candidate evaluation.
 
 ### Stage 3: Refine Piano with Body IR
 

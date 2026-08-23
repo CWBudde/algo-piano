@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -11,27 +12,39 @@ import (
 	"strings"
 
 	"github.com/cwbudde/algo-piano/analysis"
+	"github.com/cwbudde/algo-piano/irsynth"
 	"github.com/cwbudde/algo-piano/piano"
 )
 
+type bodyTransferReport struct {
+	Path         string  `json:"path"`
+	ModelSHA256  string  `json:"model_sha256"`
+	SourceID     string  `json:"source_id"`
+	TransferGain float64 `json:"transfer_gain"`
+	LossScale    float64 `json:"loss_scale"`
+	DurationS    float64 `json:"duration_seconds"`
+	FadeOutS     float64 `json:"fade_out_seconds"`
+}
+
 type runReport struct {
-	ReferencePath   string             `json:"reference_path"`
-	PresetPath      string             `json:"preset_path"`
-	OutputPreset    string             `json:"output_preset"`
-	OutputIR        string             `json:"output_ir,omitempty"`
-	SampleRate      int                `json:"sample_rate"`
-	Note            int                `json:"note"`
-	Velocity        int                `json:"velocity"`
-	ReleaseAfterSec float64            `json:"release_after_seconds"`
-	DurationSec     float64            `json:"elapsed_seconds"`
-	Evaluations     int                `json:"evaluations"`
-	MayflyVariant   string             `json:"mayfly_variant"`
-	BestScore       float64            `json:"best_score"`
-	BestSimilarity  float64            `json:"best_similarity"`
-	BestMetrics     analysis.Metrics   `json:"best_metrics"`
-	BestKnobs       map[string]float64 `json:"best_knobs"`
-	CheckpointCount int                `json:"checkpoint_count"`
-	TopCandidates   []topCandidate     `json:"top_candidates,omitempty"`
+	ReferencePath   string              `json:"reference_path"`
+	PresetPath      string              `json:"preset_path"`
+	OutputPreset    string              `json:"output_preset"`
+	OutputIR        string              `json:"output_ir,omitempty"`
+	SampleRate      int                 `json:"sample_rate"`
+	Note            int                 `json:"note"`
+	Velocity        int                 `json:"velocity"`
+	ReleaseAfterSec float64             `json:"release_after_seconds"`
+	DurationSec     float64             `json:"elapsed_seconds"`
+	Evaluations     int                 `json:"evaluations"`
+	MayflyVariant   string              `json:"mayfly_variant"`
+	BestScore       float64             `json:"best_score"`
+	BestSimilarity  float64             `json:"best_similarity"`
+	BestMetrics     analysis.Metrics    `json:"best_metrics"`
+	BestKnobs       map[string]float64  `json:"best_knobs"`
+	CheckpointCount int                 `json:"checkpoint_count"`
+	TopCandidates   []topCandidate      `json:"top_candidates,omitempty"`
+	BodyTransfer    *bodyTransferReport `json:"body_transfer,omitempty"`
 
 	// Optional fields used by multi-note, per-aspect and polish runs. They are
 	// omitted when unset so existing readers and existing report files stay
@@ -116,30 +129,32 @@ type noteReport struct {
 // positional parameter list so new optional fields can be added without
 // touching every call site.
 type outputRequest struct {
-	outputIR      string
-	outputPreset  string
-	reportPath    string
-	referencePath string
-	presetPath    string
-	sampleRate    int
-	note          int
-	velocity      int
-	releaseAfter  float64
-	elapsed       float64
-	evals         int
-	variant       string
-	searchMode    searchMode
-	evalsPerIter  float64
-	defs          []knobDef
-	best          candidate
-	bestScore     float64
-	bestMetrics   analysis.Metrics
-	bestParams    *piano.Params
-	bestBodyIR    []float32
-	bestRoomIRL   []float32
-	bestRoomIRR   []float32
-	checkpoints   int
-	top           []topCandidate
+	outputIR         string
+	outputPreset     string
+	reportPath       string
+	referencePath    string
+	presetPath       string
+	sampleRate       int
+	note             int
+	velocity         int
+	releaseAfter     float64
+	elapsed          float64
+	evals            int
+	variant          string
+	searchMode       searchMode
+	evalsPerIter     float64
+	defs             []knobDef
+	best             candidate
+	bestScore        float64
+	bestMetrics      analysis.Metrics
+	bestParams       *piano.Params
+	bestBodyIR       []float32
+	bestRoomIRL      []float32
+	bestRoomIRR      []float32
+	bodyTransfer     *irsynth.BodyModalTransfer
+	bodyTransferPath string
+	checkpoints      int
+	top              []topCandidate
 
 	// Optional; zero values are omitted from the report.
 	notes             []int
@@ -170,7 +185,11 @@ func writeOutputs(req outputRequest) error {
 		bodyIRPath := base + "-body" + ext
 		roomIRPath := base + "-room" + ext
 
-		if err := writeMonoWAV(bodyIRPath, req.bestBodyIR, req.sampleRate); err != nil {
+		bodyIR, bodyGain, err := bodyIRForWAV(req.bestBodyIR, p.BodyIRGain)
+		if err != nil {
+			return err
+		}
+		if err := writeMonoFloat32WAV(bodyIRPath, bodyIR, req.sampleRate); err != nil {
 			return err
 		}
 		if err := writeStereoWAV(roomIRPath, req.bestRoomIRL, req.bestRoomIRR, req.sampleRate); err != nil {
@@ -178,6 +197,7 @@ func writeOutputs(req outputRequest) error {
 		}
 
 		p.BodyIRWavPath = bodyIRPath
+		p.BodyIRGain = bodyGain
 		p.RoomIRWavPath = roomIRPath
 		// Clear legacy IR path since we use dual-IR now.
 		p.IRWavPath = ""
@@ -247,6 +267,7 @@ func writeOutputs(req outputRequest) error {
 		BestKnobs:         knobs,
 		CheckpointCount:   req.checkpoints,
 		TopCandidates:     req.top,
+		BodyTransfer:      makeBodyTransferReport(req.bodyTransferPath, req.bodyTransfer, knobs),
 		Notes:             notes,
 		PerNote:           perNote,
 		Aggregate:         aggregate,
@@ -279,6 +300,69 @@ func writeOutputs(req outputRequest) error {
 		reportPath = req.outputPreset + ".report.json"
 	}
 	return writeJSON(reportPath, rep)
+}
+
+// bodyIRForWAV keeps the persisted IR in the WAV package's representable
+// [-1, 1] range and moves an exact power-of-two scale into the runtime gain.
+// The effective convolution response therefore matches the candidate that was
+// scored, even when structural residues produce samples above unity.
+func bodyIRForWAV(ir []float32, gain float32) ([]float32, float32, error) {
+	if math.IsNaN(float64(gain)) || math.IsInf(float64(gain), 0) {
+		return nil, 0, fmt.Errorf("persist body IR: non-finite body gain")
+	}
+	peak := 0.0
+	for i, sample := range ir {
+		value := float64(sample)
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, 0, fmt.Errorf("persist body IR: non-finite sample %d", i)
+		}
+		peak = math.Max(peak, math.Abs(value))
+	}
+	if peak <= 1 {
+		return ir, gain, nil
+	}
+
+	scale := 1.0
+	for scale < peak {
+		scale *= 2
+	}
+	scaledGain := float64(gain) * scale
+	if math.IsNaN(scaledGain) || math.IsInf(scaledGain, 0) || math.Abs(scaledGain) > math.MaxFloat32 {
+		return nil, 0, fmt.Errorf("persist body IR: scaled body gain is not representable as float32")
+	}
+	normalized := make([]float32, len(ir))
+	for i, sample := range ir {
+		normalized[i] = float32(float64(sample) / scale)
+	}
+	return normalized, float32(scaledGain), nil
+}
+
+func makeBodyTransferReport(path string, transfer *irsynth.BodyModalTransfer, knobs map[string]float64) *bodyTransferReport {
+	if transfer == nil {
+		return nil
+	}
+	cfg := irsynth.DefaultModalBodyConfig()
+	if v, ok := knobs["body_transfer_gain"]; ok {
+		cfg.TransferGain = v
+	}
+	if v, ok := knobs["body_loss_scale"]; ok {
+		cfg.LossScale = v
+	}
+	if v, ok := knobs["body_duration"]; ok {
+		cfg.DurationS = v
+	}
+	if v, ok := knobs["body_fadeout"]; ok {
+		cfg.FadeOutS = v
+	}
+	return &bodyTransferReport{
+		Path:         path,
+		ModelSHA256:  transfer.ModelSHA256,
+		SourceID:     transfer.SourceID,
+		TransferGain: cfg.TransferGain,
+		LossScale:    cfg.LossScale,
+		DurationS:    cfg.DurationS,
+		FadeOutS:     cfg.FadeOutS,
+	}
 }
 
 // sanitizeNonFinite replaces every NaN and +/-Inf float reachable from v with

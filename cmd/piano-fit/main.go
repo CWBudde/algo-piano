@@ -13,6 +13,7 @@ import (
 
 	"github.com/cwbudde/algo-piano/analysis"
 	fitcommon "github.com/cwbudde/algo-piano/internal/fitcommon"
+	"github.com/cwbudde/algo-piano/irsynth"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/algo-piano/preset"
 )
@@ -60,6 +61,7 @@ func main() {
 	referencePath := flag.String("reference", "reference/c4.wav", "Reference WAV path")
 	presetPath := flag.String("preset", "assets/presets/default.json", "Base preset JSON path")
 	outputIR := flag.String("output-ir", "", "Path to write best synthesized IR WAV (required when body-ir or room-ir groups active)")
+	bodyTransferPath := flag.String("body-transfer", "", "Offline body-modal-transfer-v1 JSON; selects deterministic structural body rendering")
 	outputPreset := flag.String("output-preset", "assets/presets/fitted-c4.json", "Path to write best fitted preset JSON")
 	reportPath := flag.String("report", "", "Optional report JSON path (default: <output-preset>.report.json)")
 	workDir := flag.String("work-dir", "out/fit", "Directory for temporary candidates")
@@ -223,6 +225,14 @@ func main() {
 	groups, err := parseOptimizeGroups(*optimize)
 	if err != nil {
 		die("invalid --optimize: %v", err)
+	}
+	var bodyTransfer *irsynth.BodyModalTransfer
+	if *bodyTransferPath != "" {
+		bodyTransfer, err = irsynth.LoadBodyModalTransfer(*bodyTransferPath)
+		if err != nil {
+			die("invalid --body-transfer: %v", err)
+		}
+		groups[modalBodyGroup] = true
 	}
 
 	if *polishOnly {
@@ -503,6 +513,8 @@ func main() {
 		workers:          parsedWorkers,
 		topK:             *topK,
 		groups:           groups,
+		bodyTransfer:     bodyTransfer,
+		bodyTransferPath: *bodyTransferPath,
 		workDir:          *workDir,
 		outputIR:         *outputIR,
 		outputPreset:     *outputPreset,
@@ -578,30 +590,32 @@ func main() {
 	}
 
 	if err := writeOutputs(outputRequest{
-		outputIR:      *outputIR,
-		outputPreset:  *outputPreset,
-		reportPath:    *reportPath,
-		referencePath: referencePaths[0],
-		presetPath:    *presetPath,
-		sampleRate:    *sampleRate,
-		note:          notes[0],
-		velocity:      result.bestVelocity,
-		releaseAfter:  result.bestReleaseAfter,
-		elapsed:       result.elapsed,
-		evals:         result.evals,
-		variant:       strings.ToLower(*mayflyVariant),
-		searchMode:    searchModeValue,
-		evalsPerIter:  result.evalsPerIteration,
-		defs:          defs,
-		best:          result.best,
-		bestScore:     result.bestScore,
-		bestMetrics:   result.bestMetrics,
-		bestParams:    result.bestParams,
-		bestBodyIR:    result.bestBodyIR,
-		bestRoomIRL:   result.bestRoomIRL,
-		bestRoomIRR:   result.bestRoomIRR,
-		checkpoints:   result.checkpoints,
-		top:           result.top,
+		outputIR:         *outputIR,
+		outputPreset:     *outputPreset,
+		reportPath:       *reportPath,
+		referencePath:    referencePaths[0],
+		presetPath:       *presetPath,
+		sampleRate:       *sampleRate,
+		note:             notes[0],
+		velocity:         result.bestVelocity,
+		releaseAfter:     result.bestReleaseAfter,
+		elapsed:          result.elapsed,
+		evals:            result.evals,
+		variant:          strings.ToLower(*mayflyVariant),
+		searchMode:       searchModeValue,
+		evalsPerIter:     result.evalsPerIteration,
+		defs:             defs,
+		best:             result.best,
+		bestScore:        result.bestScore,
+		bestMetrics:      result.bestMetrics,
+		bestParams:       result.bestParams,
+		bestBodyIR:       result.bestBodyIR,
+		bestRoomIRL:      result.bestRoomIRL,
+		bestRoomIRR:      result.bestRoomIRR,
+		bodyTransfer:     bodyTransfer,
+		bodyTransferPath: *bodyTransferPath,
+		checkpoints:      result.checkpoints,
+		top:              result.top,
 
 		notes:             notes,
 		perNote:           result.bestNotes,

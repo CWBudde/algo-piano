@@ -113,6 +113,32 @@ func WriteMonoWAV(path string, data []float32, sampleRate int) error {
 	return enc.Write(buf)
 }
 
+// WriteMonoFloat32WAV writes a mono IEEE-float WAV. Callers must keep samples
+// within [-1, 1] because the WAV package defensively clamps its float encoder;
+// unlike 16-bit PCM, values in that range retain float32 precision.
+func WriteMonoFloat32WAV(path string, data []float32, sampleRate int) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = file.Close() }()
+	enc := wav.NewEncoder(file, sampleRate, 32, 1, 3)
+	defer func() { _ = enc.Close() }()
+
+	buf := &audio.Float32Buffer{
+		Format: &audio.Format{
+			SampleRate:  sampleRate,
+			NumChannels: 1,
+		},
+		Data:           data,
+		SourceBitDepth: 32,
+	}
+	return enc.Write(buf)
+}
+
 func StereoToMono64(st []float32) []float64 {
 	if len(st) < 2 {
 		return nil

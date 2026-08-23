@@ -27,6 +27,12 @@ just render-octave root=60 out_dir=out/octave
 # Measure objective distance to a recorded C4 reference
 just distance-c4 reference=reference/c4.wav
 
+# Attribute body coloration separately from absolute-level compensation
+just audit-body-ir reference=reference/c4.wav
+
+# Generate a structural body transfer with pinned algo-pde v0.3.0
+just generate-body-transfer model=path/to/soundboard.json output=out/body-modal-transfer.json
+
 # Synthesize a new stereo IR (modal+diffuse synthetic body IR)
 just ir-synth output=assets/ir/synth_96k.wav sample_rate=96000 duration=2.0 modes=128 seed=1
 

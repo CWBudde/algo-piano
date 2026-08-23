@@ -57,9 +57,15 @@ type candidate struct {
 }
 
 type irConfigs struct {
-	body irsynth.BodyConfig
-	room irsynth.RoomConfig
+	body      irsynth.BodyConfig
+	modalBody irsynth.ModalBodyConfig
+	room      irsynth.RoomConfig
 }
+
+// modalBodyGroup is an internal source-selection marker installed by
+// --body-transfer. It is deliberately not accepted by --optimize: body-ir is
+// still the public knob group, and this marker only selects its implementation.
+const modalBodyGroup = "body-transfer"
 
 // parseOptimizeGroups parses a comma-separated string of group names.
 // Valid groups: piano, body-ir, room-ir, mix.
@@ -84,7 +90,7 @@ func parseOptimizeGroups(raw string) (map[string]bool, error) {
 
 // needsIRSynthesis returns true if body-ir or room-ir is in the active groups.
 func needsIRSynthesis(groups map[string]bool) bool {
-	return groups["body-ir"] || groups["room-ir"]
+	return groups["body-ir"] || groups["room-ir"] || groups[modalBodyGroup]
 }
 
 func initCandidate(
@@ -98,6 +104,8 @@ func initCandidate(
 ) ([]knobDef, candidate) {
 	bodyCfg := irsynth.DefaultBodyConfig()
 	bodyCfg.SampleRate = sampleRate
+	modalBodyCfg := irsynth.DefaultModalBodyConfig()
+	modalBodyCfg.SampleRate = sampleRate
 	roomCfg := irsynth.DefaultRoomConfig()
 	roomCfg.SampleRate = sampleRate
 
@@ -159,17 +167,24 @@ func initCandidate(
 
 	// Body IR group knobs.
 	if groups["body-ir"] {
-		addKnob(knobDef{Name: "body_modes", Min: 8, Max: 96, IsInt: true}, float64(bodyCfg.Modes))
-		addKnob(knobDef{Name: "body_brightness", Min: 0.5, Max: 2.5}, bodyCfg.Brightness)
-		addKnob(knobDef{Name: "body_plate_ratio", Min: 0.8, Max: 3.0}, bodyCfg.PlateRatio)
-		addKnob(knobDef{Name: "body_stiffness_ratio", Min: 3.0, Max: 25.0, LogScale: true}, bodyCfg.StiffnessRatio)
-		addKnob(knobDef{Name: "body_mode_warp", Min: 0.5, Max: 2.0}, bodyCfg.ModeWarp)
-		addKnob(knobDef{Name: "body_direct", Min: 0.1, Max: 1.2}, bodyCfg.DirectLevel)
-		addKnob(knobDef{Name: "body_low_decay", Min: 0.01, Max: 0.5, LogScale: true}, bodyCfg.LowDecayS)
-		addKnob(knobDef{Name: "body_high_decay", Min: 0.001, Max: 0.15, LogScale: true}, bodyCfg.HighDecayS)
-		addKnob(knobDef{Name: "body_crossover", Min: 200, Max: 3000, LogScale: true}, bodyCfg.CrossoverHz)
-		addKnob(knobDef{Name: "body_duration", Min: 0.005, Max: 0.3, LogScale: true}, bodyCfg.DurationS)
-		addKnob(knobDef{Name: "body_fadeout", Min: 0.001, Max: 0.05, LogScale: true}, bodyCfg.FadeOutS)
+		if groups[modalBodyGroup] {
+			addKnob(knobDef{Name: "body_transfer_gain", Min: 0.01, Max: 100, LogScale: true}, modalBodyCfg.TransferGain)
+			addKnob(knobDef{Name: "body_loss_scale", Min: 0.25, Max: 4, LogScale: true}, modalBodyCfg.LossScale)
+			addKnob(knobDef{Name: "body_duration", Min: 0.02, Max: 1, LogScale: true}, modalBodyCfg.DurationS)
+			addKnob(knobDef{Name: "body_fadeout", Min: 0.001, Max: 0.1, LogScale: true}, modalBodyCfg.FadeOutS)
+		} else {
+			addKnob(knobDef{Name: "body_modes", Min: 8, Max: 96, IsInt: true}, float64(bodyCfg.Modes))
+			addKnob(knobDef{Name: "body_brightness", Min: 0.5, Max: 2.5}, bodyCfg.Brightness)
+			addKnob(knobDef{Name: "body_plate_ratio", Min: 0.8, Max: 3.0}, bodyCfg.PlateRatio)
+			addKnob(knobDef{Name: "body_stiffness_ratio", Min: 3.0, Max: 25.0, LogScale: true}, bodyCfg.StiffnessRatio)
+			addKnob(knobDef{Name: "body_mode_warp", Min: 0.5, Max: 2.0}, bodyCfg.ModeWarp)
+			addKnob(knobDef{Name: "body_direct", Min: 0.1, Max: 1.2}, bodyCfg.DirectLevel)
+			addKnob(knobDef{Name: "body_low_decay", Min: 0.01, Max: 0.5, LogScale: true}, bodyCfg.LowDecayS)
+			addKnob(knobDef{Name: "body_high_decay", Min: 0.001, Max: 0.15, LogScale: true}, bodyCfg.HighDecayS)
+			addKnob(knobDef{Name: "body_crossover", Min: 200, Max: 3000, LogScale: true}, bodyCfg.CrossoverHz)
+			addKnob(knobDef{Name: "body_duration", Min: 0.005, Max: 0.3, LogScale: true}, bodyCfg.DurationS)
+			addKnob(knobDef{Name: "body_fadeout", Min: 0.001, Max: 0.05, LogScale: true}, bodyCfg.FadeOutS)
+		}
 	}
 
 	// Room IR group knobs.
@@ -218,6 +233,8 @@ func applyCandidate(
 ) (irConfigs, *piano.Params, int, float64) {
 	bodyCfg := irsynth.DefaultBodyConfig()
 	bodyCfg.SampleRate = sampleRate
+	modalBodyCfg := irsynth.DefaultModalBodyConfig()
+	modalBodyCfg.SampleRate = sampleRate
 	roomCfg := irsynth.DefaultRoomConfig()
 	roomCfg.SampleRate = sampleRate
 	params := cloneParams(base)
@@ -290,8 +307,14 @@ func applyCandidate(
 			bodyCfg.CrossoverHz = v
 		case "body_duration":
 			bodyCfg.DurationS = v
+			modalBodyCfg.DurationS = v
 		case "body_fadeout":
 			bodyCfg.FadeOutS = v
+			modalBodyCfg.FadeOutS = v
+		case "body_transfer_gain":
+			modalBodyCfg.TransferGain = v
+		case "body_loss_scale":
+			modalBodyCfg.LossScale = v
 		// Room IR knobs.
 		case "room_early":
 			roomCfg.EarlyCount = int(math.Round(v))
@@ -343,7 +366,7 @@ func applyCandidate(
 	if releaseAfter < 0.05 {
 		releaseAfter = 0.05
 	}
-	return irConfigs{body: bodyCfg, room: roomCfg}, params, velocity, releaseAfter
+	return irConfigs{body: bodyCfg, modalBody: modalBodyCfg, room: roomCfg}, params, velocity, releaseAfter
 }
 
 func fromNormalized(pos []float64, defs []knobDef) candidate {

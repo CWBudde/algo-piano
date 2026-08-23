@@ -14,8 +14,8 @@ func writeStereoWAV(path string, left []float32, right []float32, sampleRate int
 	return fitcommon.WriteStereoWAVLR(path, left, right, sampleRate)
 }
 
-func writeMonoWAV(path string, data []float32, sampleRate int) error {
-	return fitcommon.WriteMonoWAV(path, data, sampleRate)
+func writeMonoFloat32WAV(path string, data []float32, sampleRate int) error {
+	return fitcommon.WriteMonoFloat32WAV(path, data, sampleRate)
 }
 
 func stereoToMono64(st []float32) []float64 {
