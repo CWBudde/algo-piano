@@ -575,10 +575,20 @@ blocked by nothing.
       `b ~ 0.026`, where `b*|g|^2*f0` stops dominating the detune. Recorded
       rather than fenced out.
 
-      Every preset in `assets/presets` pins `bridge_coupling` to 0.0, so
-      `gate-c4` renders exactly as before and **no threshold was loosened**.
-      Re-voicing it onto the fitted presets is **17.1**, which already owns the
-      re-fit.
+      Every **fitted** preset in `assets/presets` pins `bridge_coupling` to 0.0,
+      and the DWG term is written as two separately-weighted operands so float32
+      ordering is preserved and a zero render is bit-identical. So `gate-c4`
+      renders exactly as before and **no threshold was loosened**. Re-voicing
+      them is **17.1**, which already owns the re-fit.
+
+      `assets/presets/default.json` is deliberately **not** pinned and carries
+      the new 0.035. It is the shipped voice, so pinning it would make the
+      feature inert everywhere it can actually be heard. It is also the default
+      `--preset` for `piano-render`, `piano-fit`, `piano-modal-fit`,
+      `piano-distance` and `opt-bench`, so those now measure and fit against the
+      corrected renderer - which is what the working-order gate at the top of
+      this section asks for ("change the renderer first"), not an oversight. The
+      recorded opt-bench figures in `docs/optimizer-benchmark*.md` predate it.
 
       The modal core carries the term. Its injection is distributed over
       `g.gain` - the same shape the string is read through - which makes input

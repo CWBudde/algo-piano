@@ -348,40 +348,47 @@ func writePresetJSON(path string, p *piano.Params) error {
 		// No omitempty: a preset that deliberately disables resonance must say
 		// so, otherwise the key vanishes and reloading falls back to the
 		// piano.Params default rather than the value that was written.
-		ResonanceEnabled           bool                 `json:"resonance_enabled"`
-		ResonanceGain              float32              `json:"resonance_gain,omitempty"`
-		ResonancePerNoteFilter     bool                 `json:"resonance_per_note_filter,omitempty"`
-		HammerStiffnessScale       float32              `json:"hammer_stiffness_scale,omitempty"`
-		HammerExponentScale        float32              `json:"hammer_exponent_scale,omitempty"`
-		HammerDampingScale         float32              `json:"hammer_damping_scale,omitempty"`
-		HammerInitialVelocityScale float32              `json:"hammer_initial_velocity_scale,omitempty"`
-		HammerContactTimeScale     float32              `json:"hammer_contact_time_scale,omitempty"`
-		HighFreqDamping            float32              `json:"high_freq_damping,omitempty"`
-		UnisonDetuneScale          float32              `json:"unison_detune_scale,omitempty"`
-		UnisonCrossfeed            float32              `json:"unison_crossfeed,omitempty"`
-		BridgeCoupling             float32              `json:"bridge_coupling,omitempty"`
-		SoftPedalStrikeOffset      float32              `json:"soft_pedal_strike_offset,omitempty"`
-		SoftPedalHardness          float32              `json:"soft_pedal_hardness,omitempty"`
-		AttackNoiseLevel           float32              `json:"attack_noise_level,omitempty"`
-		AttackNoiseDurationMs      float32              `json:"attack_noise_duration_ms,omitempty"`
-		AttackNoiseColor           float32              `json:"attack_noise_color,omitempty"`
-		StringModel                string               `json:"string_model,omitempty"`
-		ModalPartials              int                  `json:"modal_partials,omitempty"`
-		ModalGainExponent          float32              `json:"modal_gain_exponent,omitempty"`
-		ModalExcitation            float32              `json:"modal_excitation,omitempty"`
-		ModalUndampedLoss          float32              `json:"modal_undamped_loss,omitempty"`
-		ModalDampedLoss            float32              `json:"modal_damped_loss,omitempty"`
-		CouplingEnabled            bool                 `json:"coupling_enabled"`
-		CouplingOctaveGain         float32              `json:"coupling_octave_gain,omitempty"`
-		CouplingFifthGain          float32              `json:"coupling_fifth_gain,omitempty"`
-		CouplingMaxForce           float32              `json:"coupling_max_force,omitempty"`
-		CouplingMode               string               `json:"coupling_mode,omitempty"`
-		CouplingAmount             float32              `json:"coupling_amount,omitempty"`
-		CouplingHarmonicFalloff    float32              `json:"coupling_harmonic_falloff,omitempty"`
-		CouplingDetuneSigmaCents   float32              `json:"coupling_detune_sigma_cents,omitempty"`
-		CouplingDistanceExponent   float32              `json:"coupling_distance_exponent,omitempty"`
-		CouplingMaxNeighbors       int                  `json:"coupling_max_neighbors,omitempty"`
-		PerNote                    map[string]noteEntry `json:"per_note,omitempty"`
+		ResonanceEnabled           bool    `json:"resonance_enabled"`
+		ResonanceGain              float32 `json:"resonance_gain,omitempty"`
+		ResonancePerNoteFilter     bool    `json:"resonance_per_note_filter,omitempty"`
+		HammerStiffnessScale       float32 `json:"hammer_stiffness_scale,omitempty"`
+		HammerExponentScale        float32 `json:"hammer_exponent_scale,omitempty"`
+		HammerDampingScale         float32 `json:"hammer_damping_scale,omitempty"`
+		HammerInitialVelocityScale float32 `json:"hammer_initial_velocity_scale,omitempty"`
+		HammerContactTimeScale     float32 `json:"hammer_contact_time_scale,omitempty"`
+		HighFreqDamping            float32 `json:"high_freq_damping,omitempty"`
+		UnisonDetuneScale          float32 `json:"unison_detune_scale,omitempty"`
+		UnisonCrossfeed            float32 `json:"unison_crossfeed,omitempty"`
+		// No omitempty, for the same reason as ResonanceEnabled above and
+		// unlike its neighbours: DefaultBridgeCoupling is NON-ZERO, so zero is
+		// a meaningful value a preset can hold - every fitted preset in
+		// assets/presets deliberately does, until PLAN.md 17.1 re-voices them.
+		// With omitempty that zero vanishes on write and reloading resurrects
+		// it as 0.035, so the preset would stop reproducing the candidate the
+		// fitter actually evaluated.
+		BridgeCoupling           float32              `json:"bridge_coupling"`
+		SoftPedalStrikeOffset    float32              `json:"soft_pedal_strike_offset,omitempty"`
+		SoftPedalHardness        float32              `json:"soft_pedal_hardness,omitempty"`
+		AttackNoiseLevel         float32              `json:"attack_noise_level,omitempty"`
+		AttackNoiseDurationMs    float32              `json:"attack_noise_duration_ms,omitempty"`
+		AttackNoiseColor         float32              `json:"attack_noise_color,omitempty"`
+		StringModel              string               `json:"string_model,omitempty"`
+		ModalPartials            int                  `json:"modal_partials,omitempty"`
+		ModalGainExponent        float32              `json:"modal_gain_exponent,omitempty"`
+		ModalExcitation          float32              `json:"modal_excitation,omitempty"`
+		ModalUndampedLoss        float32              `json:"modal_undamped_loss,omitempty"`
+		ModalDampedLoss          float32              `json:"modal_damped_loss,omitempty"`
+		CouplingEnabled          bool                 `json:"coupling_enabled"`
+		CouplingOctaveGain       float32              `json:"coupling_octave_gain,omitempty"`
+		CouplingFifthGain        float32              `json:"coupling_fifth_gain,omitempty"`
+		CouplingMaxForce         float32              `json:"coupling_max_force,omitempty"`
+		CouplingMode             string               `json:"coupling_mode,omitempty"`
+		CouplingAmount           float32              `json:"coupling_amount,omitempty"`
+		CouplingHarmonicFalloff  float32              `json:"coupling_harmonic_falloff,omitempty"`
+		CouplingDetuneSigmaCents float32              `json:"coupling_detune_sigma_cents,omitempty"`
+		CouplingDistanceExponent float32              `json:"coupling_distance_exponent,omitempty"`
+		CouplingMaxNeighbors     int                  `json:"coupling_max_neighbors,omitempty"`
+		PerNote                  map[string]noteEntry `json:"per_note,omitempty"`
 	}
 
 	o := out{

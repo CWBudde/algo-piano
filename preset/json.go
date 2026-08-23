@@ -41,7 +41,7 @@ type File struct {
 	HighFreqDamping            *float32               `json:"high_freq_damping,omitempty"`
 	UnisonDetuneScale          *float32               `json:"unison_detune_scale"`
 	UnisonCrossfeed            *float32               `json:"unison_crossfeed"`
-	BridgeCoupling             *float32               `json:"bridge_coupling,omitempty"`
+	BridgeCoupling             *float32               `json:"bridge_coupling"`
 	StringModel                *string                `json:"string_model"`
 	ModalPartials              *int                   `json:"modal_partials"`
 	ModalGainExponent          *float32               `json:"modal_gain_exponent"`

@@ -103,3 +103,44 @@ func TestReportLabelsTheProfileOfTheScoredMetrics(t *testing.T) {
 		}
 	}
 }
+
+// A written preset must state its bridge coupling explicitly, for exactly the
+// reason the resonance test above exists - and this field is the sharper case,
+// because zero is the value every fitted preset in assets/presets deliberately
+// carries until PLAN.md 17.1 re-voices them.
+//
+// DefaultBridgeCoupling is NON-ZERO, so with omitempty that deliberate zero
+// vanished on write and reloading resurrected it as 0.035. The written preset
+// then rendered with double decay the fitter had never evaluated, which is the
+// one thing a fit output must never do.
+func TestWritePresetJSONStatesBridgeCouplingExplicitly(t *testing.T) {
+	for _, bridge := range []float32{0, piano.DefaultBridgeCoupling} {
+		params := piano.NewDefaultParams()
+		params.BridgeCoupling = bridge
+
+		path := filepath.Join(t.TempDir(), "preset.json")
+		if err := writePresetJSON(path, params); err != nil {
+			t.Fatalf("writePresetJSON: %v", err)
+		}
+
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if _, ok := fields["bridge_coupling"]; !ok {
+			t.Fatalf("bridge_coupling missing from preset written with BridgeCoupling=%v:\n%s", bridge, raw)
+		}
+
+		loaded, err := preset.LoadJSON(path)
+		if err != nil {
+			t.Fatalf("LoadJSON: %v", err)
+		}
+		if loaded.BridgeCoupling != bridge {
+			t.Fatalf("bridge_coupling round-trip: got %v want %v", loaded.BridgeCoupling, bridge)
+		}
+	}
+}

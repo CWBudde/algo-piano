@@ -176,6 +176,19 @@ const DefaultUnisonCrossfeed = float32(0.0008)
 // maxBridgeCoupling, and deep inside the stable region of that constant's sweep.
 // Note 60 has no b = 0 entry because an uncoupled note 60 never falls 40 dB
 // inside 30 s.
+//
+// BECAUSE THIS DEFAULT IS NON-ZERO, zero is a meaningful value a preset can
+// hold, and every FITTED preset in assets/presets holds it until PLAN.md 17.1
+// re-voices them - which is what keeps gate-c4 rendering exactly as before.
+// Anything that serialises this field must therefore write it even when it is
+// zero; see the omitempty note in cmd/piano-fit/output.go.
+//
+// assets/presets/default.json is deliberately NOT pinned and picks this value
+// up. It is the shipped voice rather than a fitted artefact, so pinning it
+// would leave the feature inert everywhere it can be heard. It is also the
+// default --preset for piano-render, piano-fit, piano-modal-fit, piano-distance
+// and opt-bench, so those measure and fit against the corrected renderer, which
+// is the order PLAN.md's working-order gate asks for.
 const DefaultBridgeCoupling = float32(0.035)
 
 // NewDefaultParams creates default parameters.
