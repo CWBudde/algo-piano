@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -184,7 +185,11 @@ func writeOutputs(req outputRequest) error {
 		bodyIRPath := base + "-body" + ext
 		roomIRPath := base + "-room" + ext
 
-		if err := writeMonoWAV(bodyIRPath, req.bestBodyIR, req.sampleRate); err != nil {
+		bodyIR, bodyGain, err := bodyIRForWAV(req.bestBodyIR, p.BodyIRGain)
+		if err != nil {
+			return err
+		}
+		if err := writeMonoFloat32WAV(bodyIRPath, bodyIR, req.sampleRate); err != nil {
 			return err
 		}
 		if err := writeStereoWAV(roomIRPath, req.bestRoomIRL, req.bestRoomIRR, req.sampleRate); err != nil {
@@ -192,6 +197,7 @@ func writeOutputs(req outputRequest) error {
 		}
 
 		p.BodyIRWavPath = bodyIRPath
+		p.BodyIRGain = bodyGain
 		p.RoomIRWavPath = roomIRPath
 		// Clear legacy IR path since we use dual-IR now.
 		p.IRWavPath = ""
@@ -294,6 +300,41 @@ func writeOutputs(req outputRequest) error {
 		reportPath = req.outputPreset + ".report.json"
 	}
 	return writeJSON(reportPath, rep)
+}
+
+// bodyIRForWAV keeps the persisted IR in the WAV package's representable
+// [-1, 1] range and moves an exact power-of-two scale into the runtime gain.
+// The effective convolution response therefore matches the candidate that was
+// scored, even when structural residues produce samples above unity.
+func bodyIRForWAV(ir []float32, gain float32) ([]float32, float32, error) {
+	if math.IsNaN(float64(gain)) || math.IsInf(float64(gain), 0) {
+		return nil, 0, fmt.Errorf("persist body IR: non-finite body gain")
+	}
+	peak := 0.0
+	for i, sample := range ir {
+		value := float64(sample)
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, 0, fmt.Errorf("persist body IR: non-finite sample %d", i)
+		}
+		peak = math.Max(peak, math.Abs(value))
+	}
+	if peak <= 1 {
+		return ir, gain, nil
+	}
+
+	scale := 1.0
+	for scale < peak {
+		scale *= 2
+	}
+	scaledGain := float64(gain) * scale
+	if math.IsNaN(scaledGain) || math.IsInf(scaledGain, 0) || math.Abs(scaledGain) > math.MaxFloat32 {
+		return nil, 0, fmt.Errorf("persist body IR: scaled body gain is not representable as float32")
+	}
+	normalized := make([]float32, len(ir))
+	for i, sample := range ir {
+		normalized[i] = float32(float64(sample) / scale)
+	}
+	return normalized, float32(scaledGain), nil
 }
 
 func makeBodyTransferReport(path string, transfer *irsynth.BodyModalTransfer, knobs map[string]float64) *bodyTransferReport {
