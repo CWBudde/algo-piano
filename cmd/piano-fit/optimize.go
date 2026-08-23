@@ -358,6 +358,18 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	// one sequence instead of each replaying it from the start.
 	var sampleIndex atomic.Int64
 	var stats roundStats
+	// searchErr carries the first fatal search failure out of the workers. A
+	// search that cannot run at all must fail the whole invocation rather than
+	// leave a report describing the seed candidate.
+	var searchErrMu sync.Mutex
+	var searchErr error
+	recordSearchErr := func(err error) {
+		searchErrMu.Lock()
+		defer searchErrMu.Unlock()
+		if searchErr == nil {
+			searchErr = err
+		}
+	}
 
 	workers := cfg.workers
 	if workers == 0 {
@@ -505,7 +517,13 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 					objective: objective,
 				}
 				if err := run.run(); err != nil {
-					fmt.Fprintf(os.Stderr, "%s search failed: %v\n", mode, err)
+					// Fatal, not a warning. A sampler that cannot produce
+					// points ends the run after the single seed evaluation,
+					// and piano-fit would otherwise exit 0 with a report that
+					// looks like a completed search — which is exactly how a
+					// 39-dimensional Halton run entered a benchmark table as
+					// a valid observation.
+					recordSearchErr(fmt.Errorf("%s search failed: %w", mode, err))
 				}
 
 				return
@@ -549,6 +567,13 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		}(i + 1)
 	}
 	wg.Wait()
+
+	searchErrMu.Lock()
+	failure := searchErr
+	searchErrMu.Unlock()
+	if failure != nil {
+		return nil, failure
+	}
 
 	if perIter := stats.evalsPerIteration(); perIter > 0 {
 		fmt.Printf("Mayfly rounds=%d iterations=%d evals/iteration=%.1f (the round-length derivation assumes %d)\n",

@@ -217,11 +217,15 @@ func TestRadicalInverseAndHaltonPoint(t *testing.T) {
 		}
 	}
 
-	if n := len(haltonPrimes); n != 32 {
-		t.Fatalf("len(haltonPrimes) = %d, want 32", n)
+	// The table has to cover the widest knob selection the tool offers, which
+	// is the joint piano,body-ir,room-ir,mix set at 39 knobs. A table that
+	// merely covers the passes leaves --search halton unable to run on the
+	// joint case at all.
+	if n := len(haltonPrimes); n < 39 {
+		t.Fatalf("len(haltonPrimes) = %d, too few for the 39-knob joint selection", n)
 	}
-	if _, err := haltonPoint(1, 33); err == nil {
-		t.Fatal("expected an error above the 32-prime base table")
+	if _, err := haltonPoint(1, 39); err != nil {
+		t.Fatalf("haltonPoint at the joint selection's 39 dimensions: %v", err)
 	}
 	if _, err := haltonPoint(1, len(haltonPrimes)+1); err == nil {
 		t.Fatal("expected an error beyond the prime table")

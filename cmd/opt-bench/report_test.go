@@ -319,3 +319,35 @@ func TestTraceSpreadKeepsLandscapesAboveTheFloor(t *testing.T) {
 		t.Fatalf("spread %+v discarded a landscape that genuinely lives above %v", got, penaltyFloor)
 	}
 }
+
+// TestLoadDatasetSkipsShortRuns pins the guard against a search that exited
+// cleanly without running. piano-fit writes a complete-looking report after its
+// single seed evaluation when the sampler cannot produce points at all, so a
+// zero exit code and a parseable report are together still not evidence that a
+// cell spent its budget.
+func TestLoadDatasetSkipsShortRuns(t *testing.T) {
+	outDir := t.TempDir()
+	write := func(cfg string, evals int) {
+		dir := filepath.Join(outDir, "joint-ir", cfg, "seed1")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		body := fmt.Sprintf(`{"best_score":0.5,"evaluations":%d,"elapsed_seconds":30}`, evals)
+		if err := os.WriteFile(filepath.Join(dir, "result.json"), []byte(body), 0o600); err != nil {
+			t.Fatalf("write result: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, completionMarker), []byte("ok\n"), 0o600); err != nil {
+			t.Fatalf("write marker: %v", err)
+		}
+	}
+	write("baseline", 600)
+	write("halton", 1)
+
+	ds, err := loadDataset(outDir, dataset{OutDir: outDir, MaxEvals: 600})
+	if err != nil {
+		t.Fatalf("loadDataset: %v", err)
+	}
+	if len(ds.Records) != 1 || ds.Records[0].Config != "baseline" {
+		t.Fatalf("got %+v, want only the run that spent its budget", ds.Records)
+	}
+}

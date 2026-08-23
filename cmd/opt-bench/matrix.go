@@ -161,6 +161,7 @@ type matrixOptions struct {
 // runSpec is one fully resolved (case, config, seed) invocation.
 type runSpec struct {
 	Case       string
+	MaxEvals   int
 	Config     string
 	Seed       int64
 	Dir        string
@@ -292,6 +293,7 @@ func buildSpec(c benchCase, cfg benchConfig, seed int64, opts matrixOptions) run
 	args = append(args, cfg.Flags...)
 
 	return runSpec{
+		MaxEvals:   opts.MaxEvals,
 		Case:       c.Name,
 		Config:     cfg.Name,
 		Seed:       seed,

@@ -332,6 +332,12 @@ func loadDataset(outDir string, fallback dataset) (dataset, error) {
 		if !runIsComplete(filepath.Dir(path), rec, exists) {
 			return nil
 		}
+		// The same guard the driver applies, repeated here because --report
+		// also runs against trees written by an older driver, or copied from
+		// another machine, where the short run was recorded as OK.
+		if ds.MaxEvals > 0 && rep.Evaluations > 0 && rep.Evaluations < minCompleteEvals(ds.MaxEvals) {
+			return nil
+		}
 		if !exists {
 			rec = &runRecord{Case: c, Config: cfg, Seed: seed, Dir: filepath.Dir(path)}
 			byKey[key(c, cfg, seed)] = rec

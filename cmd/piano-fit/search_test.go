@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -360,5 +361,28 @@ func TestEvaluatorInjectionIsUsed(t *testing.T) {
 	}
 	if calls < cfg.maxEvals {
 		t.Fatalf("injected evaluator called %d times, want at least the budget %d", calls, cfg.maxEvals)
+	}
+}
+
+// TestSamplerFailureFailsTheRun pins that a search which cannot run at all
+// fails the invocation instead of reporting the seed candidate as a result.
+//
+// This was not hypothetical. --search halton on the joint
+// piano,body-ir,room-ir,mix selection exceeded the Halton base table, printed a
+// warning, and exited 0 with a report holding one evaluation — which then
+// entered a benchmark table as if it were a finished 600-evaluation run.
+func TestSamplerFailureFailsTheRun(t *testing.T) {
+	dims := len(haltonPrimes) + 1
+	defs := make([]knobDef, dims)
+	for i := range defs {
+		defs[i] = knobDef{Name: fmt.Sprintf("x%02d", i), Min: 0, Max: 1}
+	}
+	target := make([]float64, dims)
+
+	cfg := searchTestConfig(t, defs, target)
+	cfg.search.mode = searchHalton
+
+	if _, err := runOptimization(cfg); err == nil {
+		t.Fatal("a sampler that cannot produce points must fail the run, not report the seed candidate")
 	}
 }

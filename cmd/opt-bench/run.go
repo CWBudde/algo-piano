@@ -136,6 +136,19 @@ func executeOne(bin string, spec runSpec) runOutcome {
 
 		return out
 	}
+	// A zero exit is not proof the search ran. piano-fit writes a full report
+	// even when the search never started — a --search halton run whose
+	// dimensionality exceeded the base table used to exit 0 after its single
+	// seed evaluation, with a report that read like a finished run. A cell
+	// that did not spend its budget is not a fixed-budget observation.
+	if spec.MaxEvals > 0 && rep.Evaluations < minCompleteEvals(spec.MaxEvals) {
+		out.Error = fmt.Sprintf("run spent only %d of %d evaluations; the search did not run",
+			rep.Evaluations, spec.MaxEvals)
+		out.ExitCode = -1
+
+		return out
+	}
+
 	out.OK = true
 	out.BestScore = rep.BestScore
 	out.Evaluations = rep.Evaluations
@@ -300,6 +313,14 @@ func rankOf[T any](items []T, name func(T) string) func(string) int {
 
 		return len(items)
 	}
+}
+
+// minCompleteEvals is the evaluation count below which a run is treated as
+// having failed rather than finished. The search reserves evaluations
+// atomically and stops exactly at the budget, so a healthy run lands on it; the
+// margin only tolerates a search that ends a hair early.
+func minCompleteEvals(budget int) int {
+	return budget - budget/10
 }
 
 // completionMarker is the file name a finished run leaves in its directory.
