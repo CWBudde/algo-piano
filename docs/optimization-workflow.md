@@ -237,10 +237,10 @@ go run --tags asm ./cmd/piano-fit \
     --body-transfer out/body-modal-transfer.json
 ```
 
-The recipe runs
-`github.com/cwbudde/algo-pde/cmd/plate-modes@v0.3.0`. The repositories remain
-decoupled at compile time: their boundary is the strict
-`body-modal-transfer-v1` JSON schema.
+The recipe runs `github.com/cwbudde/algo-pde/cmd/plate-modes` from the
+`algo-pde v0.3.0` module required by `go.mod`. Structural data still crosses
+the runtime boundary through the strict `body-modal-transfer-v1` JSON schema;
+the eigensolver is never called during fitting.
 
 The run report records the transfer path, model SHA-256, bridge source ID and
 the applied gain/loss/duration/fade controls. The artifact is never reloaded or
