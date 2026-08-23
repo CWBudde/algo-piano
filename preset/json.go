@@ -41,6 +41,7 @@ type File struct {
 	HighFreqDamping            *float32               `json:"high_freq_damping,omitempty"`
 	UnisonDetuneScale          *float32               `json:"unison_detune_scale"`
 	UnisonCrossfeed            *float32               `json:"unison_crossfeed"`
+	BridgeCoupling             *float32               `json:"bridge_coupling"`
 	StringModel                *string                `json:"string_model"`
 	ModalPartials              *int                   `json:"modal_partials"`
 	ModalGainExponent          *float32               `json:"modal_gain_exponent"`
@@ -248,6 +249,12 @@ func ApplyFile(dst *piano.Params, f *File) error {
 			return fmt.Errorf("unison_crossfeed must be >= 0")
 		}
 		dst.UnisonCrossfeed = *f.UnisonCrossfeed
+	}
+	if f.BridgeCoupling != nil {
+		if *f.BridgeCoupling < 0 {
+			return fmt.Errorf("bridge_coupling must be >= 0")
+		}
+		dst.BridgeCoupling = *f.BridgeCoupling
 	}
 	if f.StringModel != nil {
 		model := piano.StringModel(strings.ToLower(strings.TrimSpace(*f.StringModel)))

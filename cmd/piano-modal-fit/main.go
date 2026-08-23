@@ -739,6 +739,7 @@ func writePreset(path string, p *piano.Params) error {
 		HighFreqDamping            float32              `json:"high_freq_damping,omitempty"`
 		UnisonDetuneScale          float32              `json:"unison_detune_scale"`
 		UnisonCrossfeed            float32              `json:"unison_crossfeed"`
+		BridgeCoupling             float32              `json:"bridge_coupling"`
 		StringModel                string               `json:"string_model"`
 		ModalPartials              int                  `json:"modal_partials"`
 		ModalGainExponent          float32              `json:"modal_gain_exponent"`
@@ -788,6 +789,7 @@ func writePreset(path string, p *piano.Params) error {
 		HighFreqDamping:            p.HighFreqDamping,
 		UnisonDetuneScale:          p.UnisonDetuneScale,
 		UnisonCrossfeed:            p.UnisonCrossfeed,
+		BridgeCoupling:             p.BridgeCoupling,
 		StringModel:                string(p.StringModel),
 		ModalPartials:              p.ModalPartials,
 		ModalGainExponent:          p.ModalGainExponent,

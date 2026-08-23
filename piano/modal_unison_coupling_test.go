@@ -16,6 +16,12 @@ func modalCouplingProbeParams(crossfeed float32) *Params {
 	params.CouplingEnabled = false
 	params.CouplingMode = CouplingModeOff
 	params.UnisonCrossfeed = crossfeed
+	// Pinned to zero so these stay tests of the CROSSFEED. The bridge term
+	// damps the common motion far harder than the crossfeed damps the
+	// relative one, so at its shipped default the note is already silent by
+	// the reference window these ratios are taken against - and every number
+	// below would quietly become a measurement of bridge_coupling instead.
+	params.BridgeCoupling = 0
 	return params
 }
 
@@ -94,14 +100,15 @@ var modalMultiStringNotes = []int{45, 52, 60, 72}
 // 9-14% of the note's energy at c = 0.0008 and diverged at maxUnisonCrossfeed,
 // a value a hand-edited preset may legally ask for.
 //
-// The bound is 1.02 rather than 1.0 because the corrected force lands on mode 0
-// alone instead of being distributed over the string's modes, so it moves a
-// little energy from the upper partials into the fundamental, which is the
-// loudest and slowest-decaying mode. That is redistribution, not growth - the
-// render decays either way, see TestModalUnisonCouplingDecaysAcrossTheKnobRange
-// - and it is why applyCrossfeed claims a correct sign rather than a proof of
-// passivity. The waveguide core can claim more because it injects into the delay
-// line itself.
+// The bound is 1.02 rather than 1.0. That was long attributed to the corrected
+// force landing on mode 0 alone instead of being distributed over the string's
+// modes, moving a little energy from the upper partials into the fundamental.
+// That explanation was tested in PLAN.md 14.2 and is WRONG: the force IS
+// distributed over the modes now, and these ratios did not move. The residual
+// is a property of the difference form on modal state - Jensen's inequality closes on delay-line
+// samples but not here - so applyCrossfeed still claims a correct sign rather
+// than a proof of passivity. It is redistribution, not growth: the render decays
+// either way, see TestModalUnisonCouplingDecaysAcrossTheKnobRange.
 func TestModalUnisonCouplingDoesNotPumpTheBank(t *testing.T) {
 	t.Parallel()
 

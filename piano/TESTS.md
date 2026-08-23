@@ -231,6 +231,68 @@ stringOut[si])`, with the per-string sub-sum spilled by all three reduce variant
 Bit-exactness across the three reduce variants and the arena path is fenced separately by
 `assertKernelParity` in `modal_parity_test.go`, which covers the coupling path directly.
 
+### Two-stage decay (`unison_double_decay_test.go`)
+
+A struck unison does not decay along one exponential. The hammer drives every string of the
+group in phase, and that **common** motion is the half the bridge is compliant to, so it
+drains fast — the **prompt** sound. Detune rotates the energy into out-of-phase motion, which
+cancels at the bridge and is barely damped, and what is left is the **aftersound**.
+
+`bridge_coupling` is the term that makes the first stage fast. `unison_crossfeed` cannot and
+does not: written as a matrix on `y` it is `c*(g g^T - diag(g))`, which annihilates the
+in-phase vector, so it damps relative motion only and shortens the aftersound. Three places
+in the tree claimed otherwise until 2026-08-23 (`ARCHITECTURE.md`, `RingingStringGroup.processSample`
+and `assets/thresholds/c4.json`); all three now say "beating" and nothing more.
+
+The metric is **prolongation**: how much longer a note takes to fall 40 dB than its own prompt
+slope predicts. A single exponential gives exactly 1.0, so there is no uncoupled arm to
+subtract — which matters, because a coupled render decays several times faster and any window
+borrowed from an uncoupled one lands past its end, on the floor, and measures the flush
+threshold instead of the string. One slope fit and one threshold crossing, rather than a
+difference of two noisy fits.
+
+- `TestBridgeCouplingProducesTwoStageDecay` — the load-bearing one. At the shipped default,
+  notes 60, 67 (two strings) and 72, 76 (three) must prolong by at least 2.0x. Measured
+  2.94–4.35x
+- `TestBridgeCouplingIsFlatWithoutCoupling` — the same notes at `bridge_coupling = 0` must
+  stay under 1.35x. Measured 0.91–1.00. Note 60 is absent because uncoupled it never falls
+  40 dB inside 30 s, which is itself the point
+- `TestBridgeCouplingHasNoProlongationWithoutDetune` — the confound control, and the reason
+  the metric can be trusted. Unison **beating** puts a ripple on the envelope at the beat
+  rate and a beat null is 10 dB deep — deeper than the effect — and an LSQ slope over a
+  window of length `T` with ripple `A` picks up up to `1.9*A/T` dB/s of bias, ~9.5 dB/s at
+  `A = 10 dB, T = 2 s`. Fitting over whole beat periods does **not** remove it; `maxHoldDB`
+  over exactly one beat period does, because the upper envelope of a beating pair has no
+  ripple and a running maximum is a pure translation in time for a decaying envelope. This
+  test closes the gap from the other side: at `unison_detune_scale = 0` the strings are
+  identical, the whole motion is common motion, and the term must damp uniformly. Measured
+  0.99–1.17x at every strength up to the clamp
+- `TestModalDecayOutrunsItsUnisonBeat` — why the three tests above are DWG only, recorded as
+  a measurement rather than left as an omission. Double decay needs time for the detune to
+  rotate energy out of phase, and the modal core does not have it: its notes fall 40 dB in
+  0.099–0.124 s against unison beat periods of 0.88–1.84 s, i.e. **9–15 decays per beat
+  cycle**. The term is still wired into that core, it simply has nothing to act on until the
+  modal decay rates themselves are addressed
+- `TestBridgeCouplingDoesNotAddEnergy` — the passivity fence, held to 1.0x in **both** cores.
+  It catches both ways the term can be got wrong: flip the sign and it is a rank-one positive
+  feedback loop (measured: note 60 grows 68x at `b = 0.01` and 2.3e9x at 0.03), drop the
+  `g_i` weight and the pairing `sum(y_i*F_i)` becomes sign-indefinite for the unequal gains
+  `defaultUnisonForNote` ships. Unlike the crossfeed, the modal core gets the strict bound
+  too, because the injection is distributed over each string's modes through `g.gain` — the
+  same shape the string is read through. Note that distributing did **not** tighten the
+  crossfeed's own 1.02 tolerance (measured 0.99951–1.00729, the same range as before): that
+  residual comes from the difference form, not from where the force lands, so 14.1's open
+  item stays open
+- `TestBridgeCouplingIsInertOnSingleStringNotes` — the control. Notes below MIDI 40 have one
+  string and skip the branch in both cores, so the render is bit-identical at any strength
+- `TestBridgeCouplingStaysFiniteBeyondTheClamp` — finite and still decaying at 2x and 5x the
+  clamp. The margin is 5x where the crossfeed's twin uses 25x, and that is a deliberate
+  trade: `maxUnisonCrossfeed` can sit an order of magnitude under its cliff because nothing
+  needs the crossfeed to be large, while `maxBridgeCoupling` has a floor under it — the
+  effect does not exist below `b ~ 0.026`. At 25x the clamp the DWG core does go non-finite,
+  and that is recorded rather than fenced out
+- `TestBridgeCouplingIsClamped` — presets are hand-editable JSON, so `NewStringBank` clamps
+
 Both open-loop probes drive until the reading stops moving, up to a 24 s budget, and report
 whether it did. A **settled** reading is the steady-state loop gain; an **unsettled** one is a
 **lower bound**, because an undamped string's transient runs for minutes. The modal rows

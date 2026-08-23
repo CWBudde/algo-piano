@@ -11,7 +11,7 @@ type ringingGroup interface {
 	setSustainAmount(amount float32)
 	injectHammerForce(force float32, strikePos float32)
 	injectCouplingForce(force float32)
-	processSample(unisonCrossfeed float32) float32
+	processSample(unisonCrossfeed float32, bridgeCoupling float32) float32
 	endBlock(blockEnergy float64, frames int) bool
 	isActive() bool
 	takeResonanceEnergy() bool
@@ -251,8 +251,13 @@ const maxUnisonCrossfeed = float32(0.02)
 // bridge gives energy away, a string quieter than the bridge takes it, and the
 // group as a whole can only lose. That is also the physical picture - the
 // strings of a unison exchange energy through a shared, slightly compliant
-// bridge termination - and it is what produces the beating and two-stage decay
-// a real unison has.
+// bridge termination - and it is what produces the BEATING a real unison has.
+//
+// It is NOT what produces two-stage decay, and this comment claimed otherwise
+// until 2026-08-23. With gains summing to one the term vanishes identically for
+// in-phase motion, so it damps the aftersound and leaves the prompt alone -
+// the opposite of the ordering double decay needs. That is the job of the
+// separate bridge_coupling term; see bridge_coupling.go.
 //
 // Until 2026-08-23 the force was c*mix, with no subtraction, injected into
 // every string including the one that produced the sample, at strike position
@@ -302,18 +307,36 @@ const maxUnisonCrossfeed = float32(0.02)
 // tuning_test.go, which names "unison crossfeed injects into every string of the
 // group on every sample" as the cause. This is its AC half, fixed at the source
 // rather than downstream.
-func (g *RingingStringGroup) processSample(unisonCrossfeed float32) float32 {
+func (g *RingingStringGroup) processSample(unisonCrossfeed float32, bridgeCoupling float32) float32 {
 	sample := float32(0)
 	for i, s := range g.strings {
 		y := s.Process()
 		g.stringOut[i] = y
 		sample += y * g.stringGain(i)
 	}
-	if len(g.strings) > 1 && unisonCrossfeed > 0 {
+	if len(g.strings) > 1 && (unisonCrossfeed > 0 || bridgeCoupling > 0) {
 		for i, s := range g.strings {
 			// The gain weight has to be the SAME one used to build the mix,
-			// otherwise the energy argument above no longer closes.
-			force := unisonCrossfeed * g.stringGain(i) * (sample - g.stringOut[i])
+			// otherwise NEITHER energy argument closes. See
+			// bridgeCouplingForce for the second one.
+			//
+			// The two terms damp orthogonal motions. unisonCrossfeed damps
+			// RELATIVE motion and is identically zero when the strings already
+			// move together; bridgeCoupling damps the COMMON motion and is
+			// identically zero when they cancel at the bridge. Only the second
+			// one loads the bridge, and only the second one makes the decay
+			// two-stage.
+			// Written as two separately-weighted terms rather than one
+			// factored expression on purpose: float32 multiplication does not
+			// reassociate, and keeping the crossfeed's original operand order
+			// makes a bridgeCoupling = 0 render bit-identical to the one from
+			// before this term existed. Every preset in assets/presets pins it
+			// to zero, so that is what keeps gate-c4 honest.
+			gain := g.stringGain(i)
+			force := unisonCrossfeed * gain * (sample - g.stringOut[i])
+			if bridgeCoupling > 0 {
+				force -= bridgeCoupling * gain * sample
+			}
 			s.InjectForceNext(force)
 		}
 	}
@@ -366,6 +389,7 @@ type StringBank struct {
 	maxNote                  int
 	stringModel              StringModel
 	unisonCrossfeed          float32
+	bridgeCoupling           float32
 	couplingEnabled          bool
 	couplingMode             CouplingMode
 	couplingAmount           float32
@@ -424,6 +448,7 @@ func sanitizeNoteRange(minNote int, maxNote int) (int, int) {
 
 func NewStringBank(sampleRate int, params *Params) *StringBank {
 	unisonCrossfeed := DefaultUnisonCrossfeed
+	bridgeCoupling := DefaultBridgeCoupling
 	stringModel := StringModelDWG
 	minNote := 21
 	maxNote := 108
@@ -447,6 +472,15 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 	// cmd/piano-fit is affected by it.
 	if unisonCrossfeed > maxUnisonCrossfeed {
 		unisonCrossfeed = maxUnisonCrossfeed
+	}
+	if params != nil && params.BridgeCoupling >= 0 {
+		bridgeCoupling = params.BridgeCoupling
+	}
+	// Same reasoning, its own bound: see maxBridgeCoupling in
+	// bridge_coupling.go. The two terms damp orthogonal motions and diverge at
+	// different strengths, so they do not share a clamp.
+	if bridgeCoupling > maxBridgeCoupling {
+		bridgeCoupling = maxBridgeCoupling
 	}
 	if params != nil {
 		if params.StringModel != "" {
@@ -500,6 +534,7 @@ func NewStringBank(sampleRate int, params *Params) *StringBank {
 		maxNote:                  maxNote,
 		stringModel:              stringModel,
 		unisonCrossfeed:          unisonCrossfeed,
+		bridgeCoupling:           bridgeCoupling,
 		couplingEnabled:          couplingMode != CouplingModeOff,
 		couplingMode:             couplingMode,
 		couplingAmount:           couplingAmount,
@@ -1008,9 +1043,9 @@ func (sb *StringBank) processWithBridge(numFrames int, hammer *HammerExciter, dr
 			var s float32
 			if arenaBound && arena.boundNote[note] {
 				// Already advanced by arena.advance; only reduce and crossfeed.
-				s = sb.modalGroups[note].reduceArenaSample(sb.unisonCrossfeed)
+				s = sb.modalGroups[note].reduceArenaSample(sb.unisonCrossfeed, sb.bridgeCoupling)
 			} else {
-				s = g.processSample(sb.unisonCrossfeed)
+				s = g.processSample(sb.unisonCrossfeed, sb.bridgeCoupling)
 			}
 			sb.sampleOut[note] = s
 			mix += s

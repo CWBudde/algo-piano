@@ -467,15 +467,15 @@ func (g *ModalStringGroup) injectCouplingForce(force float32) {
 	g.injectAtPosition(force, modalCouplingStrikePos, 0.45)
 }
 
-func (g *ModalStringGroup) processSample(unisonCrossfeed float32) float32 {
-	return g.applyCrossfeed(g.advanceModes(), unisonCrossfeed)
+func (g *ModalStringGroup) processSample(unisonCrossfeed float32, bridgeCoupling float32) float32 {
+	return g.applyCrossfeed(g.advanceModes(), unisonCrossfeed, bridgeCoupling)
 }
 
 // reduceArenaSample completes one sample for a group whose modes were already
 // advanced by the arena's batched kernel call: it only reduces the accumulator
 // and applies the crossfeed.
-func (g *ModalStringGroup) reduceArenaSample(unisonCrossfeed float32) float32 {
-	return g.applyCrossfeed(g.reduceAcc(), unisonCrossfeed)
+func (g *ModalStringGroup) reduceArenaSample(unisonCrossfeed float32, bridgeCoupling float32) float32 {
+	return g.applyCrossfeed(g.reduceAcc(), unisonCrossfeed, bridgeCoupling)
 }
 
 // modalCrossfeedScale keeps the unison crossfeed lightweight in modal mode: the
@@ -514,26 +514,50 @@ const modalCrossfeedScale = float32(0.08)
 //
 // What carries over from the waveguide case is the sign: a string louder than
 // the bridge is pushed back, never further, so the term can no longer add energy
-// unconditionally. What does not carry over is the proof - the correction lands
-// on mode 0 alone rather than being distributed over the string's modes, so
-// Jensen's inequality does not close here and the property is asserted by
-// measurement instead.
+// unconditionally. What does not carry over is the proof - Jensen's inequality
+// does not close on the modal state, and the property is asserted by measurement
+// instead.
+//
+// Until 2026-08-23 that was blamed on the force landing on mode 0 alone. It is
+// distributed over the string's modes now (see the injection below) and the
+// numbers did not move - 0.99951 to 1.00729, the same range - so the residual
+// belongs to the difference form, not to the injection site.
 //
 // The injection site needs no equivalent of StringWaveguide.InjectForceNext:
 // g.re[lo] is read by the very next rotate-decay step, which is already the
 // shortest path a modal bank has. The waveguide needed its own entry point only
 // because a strike position there maps onto the round trip.
-func (g *ModalStringGroup) applyCrossfeed(sample float32, unisonCrossfeed float32) float32 {
-	if g.stringCount() > 1 && unisonCrossfeed > 0 {
-		k := unisonCrossfeed * modalCrossfeedScale
+func (g *ModalStringGroup) applyCrossfeed(sample float32, unisonCrossfeed float32, bridgeCoupling float32) float32 {
+	if g.stringCount() > 1 && (unisonCrossfeed > 0 || bridgeCoupling > 0) {
+		kc := unisonCrossfeed * modalCrossfeedScale
+		kb := bridgeCoupling * modalCrossfeedScale
 		for si := 0; si+1 < len(g.modeStart); si++ {
-			lo, hi := g.modeStart[si], g.modeStart[si+1]
+			lo, hi := int(g.modeStart[si]), int(g.modeStart[si+1])
 			if lo == hi {
 				continue
 			}
 			// The gain weight has to be the SAME one used to build the mix,
 			// exactly as in the waveguide core.
-			g.re[lo] += k * g.stringGain(si) * (sample - g.stringOut[si])
+			alpha := g.stringGain(si) * (kc*(sample-g.stringOut[si]) - kb*sample)
+			re, gain := g.re[lo:hi], g.gain[lo:hi]
+			for i := range re {
+				// Collocated: the output map is y_si = sum(gain[i]*re[i]), so
+				// injecting alpha*gain[i] uses the SAME shape the string is read
+				// through. The change in sum(re^2+im^2) is then 2*alpha*y_si,
+				// and summing over strings gives -2*b*sample^2 <= 0 for the
+				// BRIDGE half - which is what lets the modal core claim the same
+				// strict energy bound the waveguide core does
+				// (TestBridgeCouplingDoesNotAddEnergy holds both to 1.0).
+				//
+				// It does NOT rescue the crossfeed half. Distributing it was
+				// measured against the mode-0 form it replaced and came back at
+				// 0.99951-1.00729, the same range - so the 1.02 tolerance
+				// TestModalUnisonCouplingDoesNotPumpTheBank carries is not an
+				// artefact of landing the force on mode 0, as the comment above
+				// assumed, but of the difference form itself. PLAN.md 14.1's
+				// residual stays open.
+				re[i] += alpha * gain[i]
+			}
 		}
 	}
 	return sample

@@ -547,11 +547,77 @@ blocked by nothing.
 
 ### 14.2 — Weak bridge coupling for double decay (from Phase 4)
 
-- [ ] Add weak inter-string coupling at the bridge inside a unison group in the
-      DWG core (beyond the existing output crossfeed)
-- [ ] Add the equivalent coupling in the modal core so both cores agree
-- [ ] Expose coupling strength as a preset parameter with a safe default
-- [ ] Add a test measuring the two-stage (prompt/aftersound) decay envelope
+- [x] Done 2026-08-23. New term `F_i = -bridge_coupling * g_i * mix` in both
+      cores, alongside the existing crossfeed and orthogonal to it.
+
+      **The premise this item rested on was half wrong, and correcting it is part
+      of the work.** `ARCHITECTURE.md`, `RingingStringGroup.processSample` and
+      `assets/thresholds/c4.json` all claimed the existing crossfeed already
+      produced "beating and two-stage decay". It produces beating. It cannot
+      produce two-stage decay: with gains summing to one, `c*(g g^T - diag(g))`
+      **annihilates the in-phase vector**, so the force is identically zero when
+      the strings move together. It damps relative motion only - shortening the
+      aftersound and leaving the prompt untouched, the opposite of the ordering
+      double decay needs. All three claims are corrected in place.
+
+      The new term damps the common motion, the half that loads the bridge. Both
+      the sign and the `g_i` weight are load-bearing: the energy pairing is
+      `sum_i y_i*F_i` (the delay line is what stores energy), giving
+      `-b*mix^2 <= 0` for any gains with **no Jensen step** - a stronger
+      guarantee than the crossfeed's. Drop the `g_i` and the pairing becomes
+      `-b*mix*sum(y_i)`, sign-indefinite at the unequal gains
+      `defaultUnisonForNote` ships; flip the sign and note 60 grows 68x at
+      `b = 0.01` and 2.3e9x at 0.03. Both measured, both fenced.
+
+      Measured decay **prolongation** - how much longer a note takes to fall
+      40 dB than its own prompt slope predicts, 1.0 for a single exponential -
+      DWG core, notes 60/67/72/76: **2.94-4.35x** at the shipped default against
+      **0.91-1.00x** uncoupled, and **0.99-1.17x** with the detune removed at
+      every strength. That last column is the control that makes the first mean
+      double decay rather than beating leaking into the envelope.
+
+      `DefaultBridgeCoupling = 0.035`, `maxBridgeCoupling = 0.1`, from a sweep
+      over 10 strengths x 4 notes x 2 cores x **2 sample rates**. 44.1 kHz
+      diverges before 48 kHz - the injection lag is one sample, so it is a larger
+      fraction of a period there, and the crossfeed's own table never checked a
+      second rate. The clamp carries 5x of headroom rather than the crossfeed's
+      25x, because this effect has a floor under it: it does not exist below
+      `b ~ 0.026`, where `b*|g|^2*f0` stops dominating the detune. Recorded
+      rather than fenced out.
+
+      Every **fitted** preset in `assets/presets` pins `bridge_coupling` to 0.0,
+      and the DWG term is written as two separately-weighted operands so float32
+      ordering is preserved and a zero render is bit-identical. So `gate-c4`
+      renders exactly as before and **no threshold was loosened**. Re-voicing
+      them is **17.1**, which already owns the re-fit.
+
+      `assets/presets/default.json` is deliberately **not** pinned and carries
+      the new 0.035. It is the shipped voice, so pinning it would make the
+      feature inert everywhere it can actually be heard. It is also the default
+      `--preset` for `piano-render`, `piano-fit`, `piano-modal-fit`,
+      `piano-distance` and `opt-bench`, so those now measure and fit against the
+      corrected renderer - which is what the working-order gate at the top of
+      this section asks for ("change the renderer first"), not an oversight. The
+      recorded opt-bench figures in `docs/optimizer-benchmark*.md` predate it.
+
+      The modal core carries the term. Its injection is distributed over
+      `g.gain` - the same shape the string is read through - which makes input
+      and output collocated and lets the bridge term claim the strict `1.0`
+      energy bound in the modal core too, not just in the waveguide one.
+
+      What that did **not** do is tighten 14.1's crossfeed: measured 0.99951 to
+      1.00729, the same range as before the change. So the 1.02 tolerance stays,
+      and 14.1's open residual is **not** closed by this item. It was worth
+      measuring - the residual is a property of the difference form itself, not
+      of where the force lands, which is the opposite of what the mode-0 comment
+      assumed. But **double decay is not observable
+      there, and the envelope tests are DWG-only**, which is measured rather than
+      assumed: the modal core falls 40 dB in 0.099-0.124 s against unison beat
+      periods of 0.88-1.84 s - **9-15 decays per beat cycle** - so the detune
+      never gets time to rotate energy into the out-of-phase mode. Fenced by
+      `TestModalDecayOutrunsItsUnisonBeat`, which fails if that stops being true.
+      Making it observable is a modal decay-rate question, not a coupling one,
+      and is not scheduled.
 
 ### 14.3 — Recover sympathetic resonance level
 

@@ -20,6 +20,7 @@
   "high_freq_damping": 0.22360589,
   "unison_detune_scale": 1.0536852,
   "unison_crossfeed": 0.0033683141,
+  "bridge_coupling": 0.0,
   "soft_pedal_strike_offset": 0.08,
   "soft_pedal_hardness": 0.78,
   "attack_noise_level": 0.24765398,
