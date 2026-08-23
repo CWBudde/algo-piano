@@ -919,3 +919,10 @@ git worktree add /tmp/baseline <commit-before-soa>
 go test ./piano/ -run='^$' -bench=... -benchtime=1000x -count=10 > old.txt
 benchstat old=old.txt new=new.txt
 ```
+
+## Optimizer benchmark
+
+Search-strategy results for `cmd/piano-fit` (Mayfly against the random and
+Halton controls at an equal evaluation budget) live in
+[docs/optimizer-benchmark.md](docs/optimizer-benchmark.md); regenerate them
+with `just opt-bench` followed by `just opt-bench-report`.

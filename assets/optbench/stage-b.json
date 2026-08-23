@@ -1,0 +1,17 @@
+[
+  {
+    "name": "warm-start",
+    "desc": "seed the swarm with the incumbent (`--mayfly-warm-start`)",
+    "flags": ["--mayfly-warm-start"]
+  },
+  {
+    "name": "long-round",
+    "desc": "one round for the whole budget (`--mayfly-iters 600`)",
+    "flags": ["--mayfly-iters", "600"]
+  },
+  {
+    "name": "warm-long-round",
+    "desc": "warm start plus a round long enough to compound on it",
+    "flags": ["--mayfly-warm-start", "--mayfly-iters", "600"]
+  }
+]

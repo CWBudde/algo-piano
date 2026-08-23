@@ -567,6 +567,62 @@ fit-c4-passes time_budget="180" preset="assets/presets/fitted-c4-mayfly.json":
     echo "=== Legacy-v1 distance of attack -> inharmonicity (the final artifact) ==="
     just distance-c4 "reference/c4.wav" "$out_dir/inharmonicity.json" "$out_dir/inharmonicity.wav"
 
+# Optimizer benchmark matrix: does the Mayfly search beat trivial controls?
+#
+# Runs cmd/piano-fit as a separate process for every (case, config, seed) cell
+# of the matrix defined in cmd/opt-bench, at a fixed EVALUATION budget so the
+# conditions are comparable independently of machine load. `baseline` is
+# piano-fit as it ships; `random` and `halton` are the control conditions.
+#
+# Deliberately NOT part of `just ci`: 60 runs at 1500 evaluations each costs
+# hours, like `just sweep-sustain-c4` and the fit recipes.
+opt-bench max_evals="1500" seeds="5" jobs="0" out_dir="out/optbench" configs="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # reference/*.wav is gitignored by design, so a fresh clone has no reference
+    # and this recipe must still exit clean when someone runs it.
+    if [ ! -f "reference/c4.wav" ]; then
+        echo "opt-bench: SKIP - reference \"reference/c4.wav\" not found (reference WAVs are gitignored; supply one to enable the benchmark)"
+        exit 0
+    fi
+    extra=()
+    if [ -n "{{configs}}" ]; then
+        extra+=(--configs "{{configs}}")
+    fi
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run -buildvcs=false ./cmd/opt-bench \
+        --max-evals "{{max_evals}}" \
+        --seeds "{{seeds}}" \
+        --jobs "{{jobs}}" \
+        --out-dir "{{out_dir}}" \
+        "${extra[@]}"
+
+# Regenerate docs/optimizer-benchmark.md from the artifacts `just opt-bench`
+# left behind. Runs nothing and builds nothing.
+opt-bench-report out_dir="out/optbench" doc="docs/optimizer-benchmark.md":
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run -buildvcs=false ./cmd/opt-bench --report --out-dir "{{out_dir}}" --doc "{{doc}}"
+
+# Render-free optimizer screening (Stage 0 of the optimizer audit).
+#
+# Drives the same search over closed-form objectives instead of rendered audio,
+# so a matrix of twenty-one configurations at four dimensionalities costs about
+# half a minute instead of the days the same matrix would cost on real renders.
+# It answers which configurations are worth `just opt-bench` time, not how the
+# piano sounds.
+#
+# Not part of `just ci`: the sweep is opt-in via OPT_SCREEN and takes far longer
+# than a unit test should.
+opt-screen evals="1500" seeds="20" doc="docs/optimizer-screening.md":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # `go test` runs with the package directory as its working directory, so the
+    # output path has to be absolute or the document lands in cmd/piano-fit.
+    out="$(cd "$(dirname "{{doc}}")" && pwd)/$(basename "{{doc}}")"
+    GOCACHE="${GOCACHE:-/tmp/gocache}" OPT_SCREEN=1 \
+        OPT_SCREEN_EVALS="{{evals}}" \
+        OPT_SCREEN_SEEDS="{{seeds}}" \
+        OPT_SCREEN_OUT="$out" \
+        go test -run TestOptimizerScreening ./cmd/piano-fit/ -timeout 3600s
+
 fix:
     just lint-fix
     just fmt
