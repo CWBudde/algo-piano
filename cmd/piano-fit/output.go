@@ -434,7 +434,7 @@ func writePresetJSON(path string, p *piano.Params) error {
 		// piano.Params default rather than the value that was written.
 		ResonanceEnabled bool `json:"resonance_enabled"`
 		// No omitempty either, and for the sharper version of the same reason:
-		// DefaultResonanceGain is NON-ZERO (0.00018), so zero is a meaningful
+		// DefaultResonanceGain is NON-ZERO, so zero is a meaningful
 		// value - "resonance enabled, contributing nothing". With omitempty
 		// that zero vanishes on write and reloading resurrects it as the
 		// default, so the written preset stops reproducing the candidate the

@@ -149,7 +149,7 @@ func TestWritePresetJSONStatesBridgeCouplingExplicitly(t *testing.T) {
 // bridge_coupling test above, for the field that carried the same defect for
 // far longer.
 //
-// DefaultResonanceGain is NON-ZERO (0.00018), so zero is a meaningful value a
+// DefaultResonanceGain is NON-ZERO, so zero is a meaningful value a
 // preset can hold: "resonance enabled, contributing nothing". Under omitempty
 // that zero vanished on write and reloading resurrected it as the default, so a
 // fit that legitimately drove the sympathetic path to silence wrote a preset

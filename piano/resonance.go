@@ -237,10 +237,12 @@ func newNoteResonator(sampleRate int, centerHz float32, bandwidthHz float32, gai
 	//
 	//	|D(w)|^2 = (1 - a1*cos(w) - a2*cos(2w))^2 + (a1*sin(w) + a2*sin(2w))^2
 	//
-	// Setting b0 to |D| at the frequency where it is smallest makes the peak
-	// exactly one. The naive b0 = 1-r instead peaks at roughly 1/(2*sin(w0)),
-	// a 1/f0 law that reached 183x at A0 and pushed the summed sympathetic
-	// loop past unity in the bass; see the Phase 9.6 notes in PLAN.md.
+	// Setting b0 to |D(w0)| therefore makes the gain AT the tuned partial
+	// exactly one - which is the choice made here, and deliberately not the
+	// |D| minimum that would instead cap the peak; see below. The naive
+	// b0 = 1-r peaks at roughly 1/(2*sin(w0)), a 1/f0 law that reached 183x
+	// at A0 and pushed the summed sympathetic loop past unity in the bass;
+	// see the Phase 9.6 notes in PLAN.md.
 	//
 	// Normalisation is at w0 — the partial the resonator is tuned to — and
 	// deliberately NOT at the response's true maximum.

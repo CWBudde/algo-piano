@@ -106,9 +106,10 @@ func TestSustainPedalAloneKeepsIdleBankEmpty(t *testing.T) {
 // instead, because the strict `> 0` treated a deliberate zero exactly like an
 // unset field. Nothing shipped depended on it - every preset under
 // assets/presets pins a non-zero resonance_gain - but it was one of two
-// independent mechanisms converting a deliberate zero into 0.00018. The other
-// was omitempty in cmd/piano-fit/output.go, which meant such a preset could not
-// even be written out; see TestWritePresetJSONStatesResonanceGainExplicitly.
+// independent mechanisms converting a deliberate zero into whatever
+// DefaultResonanceGain happens to be. The other was omitempty in
+// cmd/piano-fit/output.go, which meant such a preset could not even be written
+// out; see TestWritePresetJSONStatesResonanceGainExplicitly.
 //
 // The assertion is bit-exactness against ResonanceEnabled=false rather than
 // "quieter than the default", because the engine at zero gain must be inert
