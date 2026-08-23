@@ -48,14 +48,19 @@ also checked end to end: binaries built from `main` and from this branch, run at
 `--pass sustain --seed 1 --max-evals 300 --workers 1 --resume=false`, produce the
 same `best_score`, `best_knobs` and `best_metrics`.
 
-| flag                                                                              | purpose                                                                                             |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `--search mayfly\|random\|halton`                                                 | control conditions, sharing the objective, budget accounting and best-tracking with the real search |
-| `--trace <path>`                                                                  | JSONL, one record per evaluation, for convergence curves                                            |
-| `--mayfly-iters <n>`                                                              | round length set directly instead of derived from the wrong evaluation model                        |
-| `--mayfly-warm-start`                                                             | seeds one male and one female at the incumbent                                                      |
-| `--mayfly-stagnation <n>`                                                         | ends a round when it stops improving, via the library's own `ConvergenceConfig`                     |
-| `--mayfly-nc-ratio`, `--mayfly-dance-damp`, `--mayfly-fl-damp`, `--mayfly-g-damp` | the settings the audit needed to vary                                                               |
+One exception, added after the matrix ran: `--search halton`'s sampler changed.
+It is now a scrambled, burnt-in randomized QMC control rather than the raw
+sequence the tables below were measured against. Only `joint-ir` was re-measured
+under it; see [Does the search beat the controls?](#does-the-search-beat-the-controls).
+
+| flag                                                                              | purpose                                                                                                                                                                                                                           |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--search mayfly\|random\|halton`                                                 | control conditions, sharing the objective, budget accounting and best-tracking with the real search. `halton` is now randomized QMC — random-digit scrambling seeded from `--seed`, 64-point burn-in — so it varies with the seed |
+| `--trace <path>`                                                                  | JSONL, one record per evaluation, for convergence curves                                                                                                                                                                          |
+| `--mayfly-iters <n>`                                                              | round length set directly instead of derived from the wrong evaluation model                                                                                                                                                      |
+| `--mayfly-warm-start`                                                             | seeds one male and one female at the incumbent                                                                                                                                                                                    |
+| `--mayfly-stagnation <n>`                                                         | ends a round when it stops improving, via the library's own `ConvergenceConfig`                                                                                                                                                   |
+| `--mayfly-nc-ratio`, `--mayfly-dance-damp`, `--mayfly-fl-damp`, `--mayfly-g-damp` | the settings the audit needed to vary                                                                                                                                                                                             |
 
 ## Finding 1, confirmed: a round costs 47.7 evaluations per iteration, not 20
 
@@ -82,9 +87,21 @@ substance:
 **The search does beat the controls, decisively.** On every objective and every
 dimensionality, stock Mayfly lands one to three orders of magnitude below both
 random and Halton at the same evaluation budget — e.g. sphere at 5 dimensions,
-`0.0029` against Halton's `2.05`. Whatever went wrong in the recorded
+`0.0029` against Halton's `2.354`. Whatever went wrong in the recorded
 piano-fit-versus-sweep comparison, "a metaheuristic that cannot beat a
 low-discrepancy sequence" is not the explanation.
+
+These tables were regenerated after the Halton control was fixed, so their
+halton rows are the scrambled sampler and will not line up with the three audio
+cases below, which are still the unscrambled one. The re-run moved them more
+than it moved the audio matrix — sphere at 5 dimensions from 2.051 to 2.354,
+Rosenbrock at 30 from 6598 to 12330 — and that is not a defect being corrected.
+At 5 to 30 dimensions the unscrambled sequence was not broken; the correlation
+failure is a high-dimension, low-sample effect. What changed is the statistic.
+An unscrambled sequence is one deterministic draw, so all 20 seeds returned it
+and the "median" was that single draw. The scrambled control is a different draw
+per seed, so the median is now a median. It landed worse, which widens the
+search's margin here rather than narrowing it.
 
 **Round length is the dominant setting, by a wide margin.** Raising
 `--mayfly-iters` from the derived 12 improves every cell of every table:
@@ -155,27 +172,54 @@ Medians of five seeds at 600 evaluations, lower is better:
 | `sustain`   |     5 |      0.354 |    **0.346** |     0.412 |    0.441 |
 | `attack`    |     9 |      0.443 |        0.446 | **0.437** |    0.445 |
 | `piano-mix` |    20 |  **0.537** |        0.538 |     0.561 |    0.569 |
-| `joint-ir`  |    39 |      0.513 |    **0.494** |     0.548 |    0.557 |
+| `joint-ir`  |    39 |      0.513 |    **0.494** |     0.547 |    0.557 |
 
 **On three of four cases the search earns its cost comfortably**, and on
-`joint-ir` warm start beats Halton by 0.054. `attack` is the exception, and it
+`joint-ir` warm start beats Halton by 0.053. `attack` is the exception, and it
 is the case that matters most for interpreting the record in `PLAN.md:1016`:
 there, Halton beats every Mayfly configuration tried.
 
-The controls behaved as controls should. Halton returned bit-identical scores
-across all five seeds of every case, which is the determinism check passing.
+The `halton` column needs a caveat, because the control was defective when three
+of these four rows were measured. The generator did not scramble, so over 39
+knobs and 600 points the high-base dimensions had not left their first period and
+were still walking a linear ramp: adjacent coordinates correlated at **0.81**,
+and the control was not filling its box. What looked at the time like the
+determinism check passing — the unscrambled Halton control returned bit-identical
+scores across all five seeds of every case — was in fact the symptom. The
+generator has since been extracted to `github.com/cwbudde/qmc` and fixed;
+`--search halton` now applies random-digit scrambling seeded from `--seed` plus a
+64-point burn-in, which takes the worst adjacent-pair correlation to **0.14**
+over five seeds.
+
+Only `joint-ir` was re-measured against the fixed control. The `sustain`,
+`attack` and `piano-mix` halton numbers here and in every table below still come
+from the unscrambled sampler, which is why those three rows keep the degenerate
+`median = min = max` signature in the generated tables and `joint-ir` no longer
+does.
+
+The re-measurement did not move the verdict. Halton's median went 0.548282 →
+0.547191, so warm start's margin over it went 0.053869 → 0.052778 and baseline's
+0.035366 → 0.034275. The conclusion no longer rests on a control that was failing
+to fill its box.
+
+It did give the control a real seed spread, 0.512794 to 0.549689, where every
+seed previously returned the identical 0.548282. Halton's **best** seed, 0.512794,
+essentially ties baseline's **median**, 0.512916. The counterweight is that
+median against median is the right comparison and that gap is 0.034, and that
+baseline's worst seed, 0.534487, still beats halton's worst, 0.549689. The
+control is now a real control on the widest case, and the search still wins it.
 
 ### Why `attack` is different
 
 Not because it is high-dimensional — the search wins at both 5 and 20 knobs and
 loses at 9. The proposed-score distributions say what actually happens:
 
-| `attack`, 600 evals |    min | median |   p95 |        IQR |
-| ------------------- | -----: | -----: | ----: | ---------: |
-| `halton`            | 0.4366 | 0.4729 | 0.660 | **0.0626** |
-| `random`            | 0.4452 | 0.4747 | 0.663 | **0.0612** |
-| `baseline`          | 0.4433 | 0.4470 | 0.497 | **0.0041** |
-| `warm-start`        | 0.4425 | 0.4470 | 0.498 | **0.0034** |
+| `attack`, 600 evals    |    min | median |   p95 |        IQR |
+| ---------------------- | -----: | -----: | ----: | ---------: |
+| `halton` (unscrambled) | 0.4366 | 0.4729 | 0.660 | **0.0626** |
+| `random`               | 0.4452 | 0.4747 | 0.663 | **0.0612** |
+| `baseline`             | 0.4433 | 0.4470 | 0.497 | **0.0041** |
+| `warm-start`           | 0.4425 | 0.4470 | 0.498 | **0.0034** |
 
 The samplers, which probe the box evenly, see an interquartile range of ~0.062.
 Every Mayfly configuration sees ~0.004. Every trace record counts towards these
@@ -190,19 +234,25 @@ at a one-round budget no restart ever restores diversity.
 The contrast across cases is what makes this specific to `attack` rather than a
 property of the search. Taking each case's search IQR against its own control's:
 `sustain` is x1.07 — the swarm ranges slightly _wider_ than the sampler and
-still converges better — `joint-ir` x0.44, `piano-mix` x0.24, and `attack`
-x0.07.
+still converges better — `joint-ir` x0.42 against the scrambled control,
+`piano-mix` x0.24, and `attack` x0.07.
 
-The 2400-evaluation re-run adds the other half of the picture. **Halton on
-`attack` returns exactly 0.436636 at 2400 evaluations — the identical value it
-found at 600.** Four times the budget bought a space-filling sequence nothing at
-all. So `attack` is a nearly flat landscape with one good pocket that Halton
-happens to cover early and the swarm never reaches.
+The 2400-evaluation re-run adds the other half of the picture. **The unscrambled
+Halton control on `attack` returned exactly 0.436636 at 2400 evaluations — the
+identical value it found at 600.** Four times the budget bought a space-filling
+sequence nothing at all. So `attack` is a nearly flat landscape with one good
+pocket that Halton happens to cover early and the swarm never reaches. Under the
+scrambled control a bit-for-bit repeat would no longer be expected, but the
+argument does not depend on the repeat being exact: what it rests on is that four
+times the sampling budget buys no better pocket.
 
-That also disposes of the equal-wall-clock objection. Mayfly runs cost ~45% more
-wall time than the samplers at the same evaluation count, because the candidates
-it favours render longer, so at equal wall clock Halton would get ~1.45× the
-evaluations. On `sustain`, quadrupling Halton's budget moves it from 0.4118 to
+That also disposes of the equal-wall-clock objection. Mayfly runs generally cost
+more wall time than the samplers at the same evaluation count, because the
+candidates it favours render longer: measured baseline-over-halton, `sustain` is
+1.48×, `piano-mix` 1.53×, `joint-ir` 1.67×, and `attack` 0.96× — there the swarm
+is marginally the cheaper of the two. So on three cases Halton would get roughly
+1.5 to 1.7 times the evaluations at equal wall clock. It would not help. On
+`sustain`, quadrupling the unscrambled control's budget moved it from 0.4118 to
 0.4096 — 0.002 against a 0.06 gap. Extra evaluations are not what the control is
 missing.
 
@@ -210,10 +260,13 @@ missing.
 
 At 2400 evaluations, where restart policy is finally expressible:
 
-| case      | `baseline` | `long-round` | `warm-long-round` | `halton` |
-| --------- | ---------: | -----------: | ----------------: | -------: |
-| `sustain` |     0.3438 |   **0.3386** |            0.3381 |   0.4096 |
-| `attack`  | **0.4399** |       0.4413 |            0.4438 |   0.4366 |
+| case      | `baseline` | `long-round` | `warm-long-round` | `halton` (unscrambled) |
+| --------- | ---------: | -----------: | ----------------: | ---------------------: |
+| `sustain` |     0.3438 |   **0.3386** |            0.3381 |                 0.4096 |
+| `attack`  | **0.4399** |       0.4413 |            0.4438 |                 0.4366 |
+
+Neither 2400-evaluation case was re-measured against the scrambled control; both
+halton cells are the unscrambled sampler.
 
 Round length helps on `sustain` and slightly hurts on `attack`. Warm start at
 600 evaluations wins clearly on `sustain` (0.346 vs 0.354) and `joint-ir`
@@ -265,7 +318,9 @@ than "fixed" now.** Changing `analysis` norms is out of scope for this branch.
 **The optimizer is fit to run 11.6, and it is not the thing to fix first.**
 
 At an equal evaluation budget the search beats both trivial controls on three of
-four cases, decisively on the widest one. The one case it loses is a nearly flat
+four cases, decisively on the widest one — and the widest case is the one whose
+control has since been fixed and re-measured, where the margin held at 0.034. The
+one case it loses is a nearly flat
 landscape where 2400 Halton evaluations find nothing better than 600 do, so no
 optimizer would have distinguished itself there.
 

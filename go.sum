@@ -16,8 +16,8 @@ github.com/cwbudde/algo-vecmath v0.1.3 h1:lzXRUI1XP/RLgyCfSPGvAB7HFEU4bjQtZdfel6
 github.com/cwbudde/algo-vecmath v0.1.3/go.mod h1:lc9dLv41D4RCmhXG/CsIesfJXmONI7pQXcFrkxQSfeQ=
 github.com/cwbudde/mayfly v0.5.1 h1:M9F9jXPu1gb9SajZD6r4qKfzs4HRyYWQ3mqVDTRxQQ4=
 github.com/cwbudde/mayfly v0.5.1/go.mod h1:Kvhc6sAww1oFoR37ON2/iqIvOu/E8qHKAyQsM7tRs6U=
-github.com/cwbudde/qmc v0.1.0 h1:MwIYNl9S1I5wtXrYVOVWLgs8oxsYSV2RJsLgeul21WQ=
-github.com/cwbudde/qmc v0.1.0/go.mod h1:PX169uG71n+uRSFx64xMHMEKkX77VSyCXc6rRUUgSKQ=
+github.com/cwbudde/qmc v0.1.1 h1:AyyBVQ8rDHjqg5CNEpC+lo/0vdf3zK2YuAyAPePoNlA=
+github.com/cwbudde/qmc v0.1.1/go.mod h1:PX169uG71n+uRSFx64xMHMEKkX77VSyCXc6rRUUgSKQ=
 github.com/cwbudde/wav v0.0.0-20260207095734-97d781a5fb8a h1:e6kN+v8Z9TgJz6GClDFcOd7nfI4ZgF8+IvoAb3/XIBs=
 github.com/cwbudde/wav v0.0.0-20260207095734-97d781a5fb8a/go.mod h1:sc3u5nhwaPxuQ8NUWj1bAcZ7jhlTGk4fk5vARqgHrMs=
 github.com/go-audio/audio v1.0.0 h1:zS9vebldgbQqktK4H0lUqWrG8P0NxCJVqcj7ZpNnwd4=

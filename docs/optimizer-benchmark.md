@@ -137,14 +137,14 @@ Median over seeds of each run's own trace quantiles, over every score the run pr
 
 | Config            | median best | min      | max      | median wall (s) | n seeds | failures | Δ vs `halton` |
 | ----------------- | ----------- | -------- | -------- | --------------- | ------- | -------- | ------------- |
-| `baseline`        | 0.512916    | 0.495244 | 0.534487 | 3520.7          | 5       | 0        | -0.035366     |
-| `random`          | 0.557177    | 0.525975 | 0.571672 | 4744.0          | 5       | 0        | +0.008894     |
-| `halton`          | 0.548282    | 0.548282 | 0.548282 | 1573.6          | 5       | 0        | +0.000000     |
-| `long-round`      | 0.512916    | 0.493368 | 0.529214 | 3181.6          | 5       | 0        | -0.035366     |
-| `warm-long-round` | 0.494332    | 0.485851 | 0.497758 | 3958.3          | 5       | 0        | -0.053950     |
-| `warm-start`      | 0.494413    | 0.485851 | 0.497758 | 5531.7          | 5       | 0        | -0.053869     |
+| `baseline`        | 0.512916    | 0.495244 | 0.534487 | 3520.7          | 5       | 0        | -0.034275     |
+| `random`          | 0.557177    | 0.525975 | 0.571672 | 4744.0          | 5       | 0        | +0.009986     |
+| `halton`          | 0.547191    | 0.512794 | 0.549689 | 2112.2          | 5       | 0        | +0.000000     |
+| `long-round`      | 0.512916    | 0.493368 | 0.529214 | 3181.6          | 5       | 0        | -0.034275     |
+| `warm-long-round` | 0.494332    | 0.485851 | 0.497758 | 3958.3          | 5       | 0        | -0.052859     |
+| `warm-start`      | 0.494413    | 0.485851 | 0.497758 | 5531.7          | 5       | 0        | -0.052778     |
 
-**Verdict:** mayfly beats halton by 0.035366 (lower is better).
+**Verdict:** mayfly beats halton by 0.034275 (lower is better).
 
 ### Convergence (`joint-ir`)
 
@@ -154,7 +154,7 @@ Median over seeds of the incumbent `best` in the `--trace` JSONL, at fractions o
 | ----------------- | -------- | -------- | -------- | -------- | -------- |
 | `baseline`        | 0.589235 | 0.547185 | 0.524697 | 0.515603 | 0.512914 |
 | `random`          | 0.587685 | 0.564879 | 0.557974 | 0.557178 | 0.557178 |
-| `halton`          | 0.566701 | 0.566701 | 0.563704 | 0.548282 | 0.548282 |
+| `halton`          | 0.584140 | 0.581799 | 0.549689 | 0.547198 | 0.547198 |
 | `long-round`      | 0.589235 | 0.547185 | 0.524697 | 0.515603 | 0.512914 |
 | `warm-long-round` | 0.577639 | 0.518224 | 0.506074 | 0.496260 | 0.494332 |
 | `warm-start`      | 0.577639 | 0.518224 | 0.506074 | 0.496260 | 0.494413 |
@@ -167,7 +167,7 @@ Median over seeds of each run's own trace quantiles, over every score the run pr
 | ----------------- | -------- | -------- | -------- | -------- | -------- |
 | `baseline`        | 0.512914 | 0.519366 | 0.555389 | 0.834264 | 0.067819 |
 | `random`          | 0.557178 | 0.613377 | 0.809929 | 0.916178 | 0.155315 |
-| `halton`          | 0.548282 | 0.598829 | 0.807230 | 0.914884 | 0.153343 |
+| `halton`          | 0.547198 | 0.613614 | 0.807559 | 0.915745 | 0.160243 |
 | `long-round`      | 0.512914 | 0.518333 | 0.552060 | 0.802986 | 0.064207 |
 | `warm-long-round` | 0.494332 | 0.496891 | 0.545151 | 0.774150 | 0.062002 |
 | `warm-start`      | 0.494413 | 0.498360 | 0.549436 | 0.829082 | 0.071138 |
@@ -178,7 +178,7 @@ Median over seeds of each run's own trace quantiles, over every score the run pr
 - **Budget:** `--max-evals 600` per run, with `--time-budget 86400` pinned wide open. piano-fit enforces a wall-clock deadline unconditionally and defaults it to 120s, so the deadline has to be disabled explicitly for runs to be comparable by evaluation count rather than by machine speed and load.
 - **Seeds:** 1, 2, 3, 4, 5 (one independent piano-fit process each; all statistics are medians over these, never a mean of one repeated run).
 - **piano-fit workers:** `--workers 1`. One worker keeps a run a single search rather than a portfolio of independent Mayfly rounds.
-- **Driver parallelism:** 6 concurrent runs in the most recent driver invocation. A tree assembled over several invocations may have used other values; parallelism affects wall time only, never the eval-budgeted scores.
+- **Driver parallelism:** 9 concurrent runs in the most recent driver invocation. A tree assembled over several invocations may have used other values; parallelism affects wall time only, never the eval-budgeted scores.
 - **Binary:** `go build -tags asm -buildvcs=false -o <work>/piano-fit ./cmd/piano-fit`.
 - **Reference:** `reference/c4.wav`.
 - **Base preset:** `assets/presets/default.json`.
