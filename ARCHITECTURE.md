@@ -272,11 +272,14 @@ IR loading behavior:
 - WAV IRs are resampled to runtime sample rate if needed
 
 Offline structural body modelling is separated from realtime convolution.
-`algo-pde/cmd/plate-modes` solves an orthotropic ribbed plate once and exports a
-strict `body-modal-transfer-v1` JSON transfer from distributed bridge force to
-area-averaged normal velocity. `irsynth.GenerateModalBody` converts that cached
-transfer into a mono IR with explicit gain and loss scaling; it adds no random
-phase, random modal amplitude, or implicit normalization. `piano-fit
+The released `github.com/cwbudde/algo-pde/cmd/plate-modes@v0.3.0` command solves
+an orthotropic ribbed plate once and exports a strict
+`body-modal-transfer-v1` JSON transfer from distributed bridge force to
+area-averaged normal velocity. The producer is pinned by `just
+generate-body-transfer`; there is no compile-time dependency between the Go
+modules. `irsynth.GenerateModalBody` converts that cached transfer into a mono
+IR with explicit gain and loss scaling; it adds no random phase, random modal
+amplitude, or implicit normalization. `piano-fit
 --body-transfer` loads the artifact once before optimization and varies only
 the cheap IR-rendering controls.
 

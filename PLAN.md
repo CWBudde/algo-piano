@@ -134,7 +134,9 @@ Remaining non-blocking follow-ups from Phases 4, 5, 8B, 8C and 9 were moved to
   triangular geometry, with clamped/simply-supported boundaries, per-element
   orthotropic material, consistent mass/loss matrices and rib/bridge line
   stiffness and mass. It exports a strict, source/output-projected
-  `body-modal-transfer-v1` artifact; no eigensolve occurs in the fitting loop.
+  `body-modal-transfer-v1` artifact; the producer is released and pinned as
+  `github.com/cwbudde/algo-pde/cmd/plate-modes@v0.3.0`, and no eigensolve occurs
+  in the fitting loop.
 - **Piano integration.** `irsynth` validates and renders the signed modal
   force-to-velocity transfer deterministically, with explicit gain/loss and no
   stochastic residue or peak normalization. `piano-fit --body-transfer` loads

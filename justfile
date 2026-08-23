@@ -2,6 +2,11 @@ set shell := ["bash", "-uc"]
 
 export GOPRIVATE := "github.com/cwbudde"
 
+# Offline structural-transfer producer. Keep this pinned so artifacts used by
+# fitting and audits are reproducible without coupling algo-piano's Go module to
+# algo-pde.
+algo_pde_version := "v0.3.0"
+
 # Default recipe - show available commands
 default:
     @just --list
@@ -174,6 +179,27 @@ gate-c4 reference="reference/c4.wav" preset="assets/presets/fitted-c4-mayfly.jso
         --min-duration 2.0 \
         --release-after "$release_after" \
         --max-duration 30
+
+# Solve a soundboard model offline with the released structural producer. The
+# resulting strict JSON artifact is the only boundary between the repositories.
+generate-body-transfer model output="out/body-modal-transfer.json" modes="64" cover_frequency="5000":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    model_raw="{{model}}"
+    output_raw="{{output}}"
+    modes_raw="{{modes}}"
+    cover_frequency_raw="{{cover_frequency}}"
+    model="${model_raw#model=}"
+    output="${output_raw#output=}"
+    modes="${modes_raw#modes=}"
+    cover_frequency="${cover_frequency_raw#cover_frequency=}"
+    mkdir -p "$(dirname "$output")"
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run github.com/cwbudde/algo-pde/cmd/plate-modes@{{algo_pde_version}} \
+        -model "$model" \
+        -out "$output" \
+        -modes "$modes" \
+        -cover-frequency "$cover_frequency"
+    echo "generate-body-transfer: wrote $output with algo-pde {{algo_pde_version}}"
 
 # Attribute the current analytical body seed against the same C4 note,
 # velocity, release time, and sample rate used by the regression gate. The
