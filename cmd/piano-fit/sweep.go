@@ -33,9 +33,10 @@ const (
 const sweepJointSequence = "halton"
 
 // haltonPrimes are the bases of the Halton sequence, one per dimension. The
-// table holds the first 32 primes so that every pass's knob set fits: the
-// `attack` pass alone exposes 9 knobs, which the old 8-prime table refused
-// outright.
+// table holds the first 64 primes so that every knob set fits, including the
+// joint `piano,body-ir,room-ir,mix` selection at 39 knobs. It grew from 8 to
+// 32 when the `attack` pass's 9 knobs were refused outright, and from 32 to 64
+// when `--search halton` hit the same wall on the joint selection.
 //
 // The table length is not the intended dimensionality limit — `--sweep-joint-max-dims`
 // is. High Halton bases correlate badly at low sample counts, and this
@@ -47,7 +48,10 @@ var haltonPrimes = []int{
 	2, 3, 5, 7, 11, 13, 17, 19, 23, 29,
 	31, 37, 41, 43, 47, 53, 59, 61, 67, 71,
 	73, 79, 83, 89, 97, 101, 103, 107, 109, 113,
-	127, 131,
+	127, 131, 137, 139, 149, 151, 157, 163, 167, 173,
+	179, 181, 191, 193, 197, 199, 211, 223, 227, 229,
+	233, 239, 241, 251, 257, 263, 269, 271, 277, 281,
+	283, 293, 307, 311,
 }
 
 // sweepEvaluator renders one candidate and scores it under every requested

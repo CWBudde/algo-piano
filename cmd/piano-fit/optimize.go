@@ -76,6 +76,18 @@ type optimizationConfig struct {
 	// scorer overrides the metric comparison; nil means analysis.Compare.
 	scorer scorer
 
+	// search carries the optimizer-audit knobs. Its zero value is exactly the
+	// behaviour this tool had before those knobs existed (see searchOptions).
+	search searchOptions
+	// tracePath is the --trace JSONL destination; empty disables tracing.
+	tracePath string
+	// evaluator overrides the render-and-score step. It exists so the search
+	// itself can be benchmarked against a synthetic objective at a fraction of
+	// a second per evaluation instead of ~70 ms, which is what makes a
+	// hundreds-of-configurations optimizer sweep affordable. nil means the
+	// real one, so nothing outside a test or the bench harness is affected.
+	evaluator candidateEvaluator
+
 	// Deterministic polish stage (see polish.go).
 	polish            bool
 	polishOnly        bool
@@ -200,6 +212,9 @@ type optimizationResult struct {
 	// found a feasible point, or the post-gain-match re-check found one. Such
 	// a run must not report success, however good its primary score looks.
 	constraintInfeasible bool
+	// evalsPerIteration is the per-iteration evaluation cost the mayfly rounds
+	// actually reported. 0 when no round ran (sampler modes, --polish-only).
+	evalsPerIteration float64
 }
 
 type optimizationState struct {
@@ -238,9 +253,22 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		renderBlockSize: cfg.renderBlockSize,
 	}
 
-	eval := candidateEvaluator(func(c candidate, scratchPath string, settings evalSettings) (optimizationEval, error) {
-		return evaluateCandidate(cfg, c, scratchPath, settings)
-	})
+	eval := cfg.evaluator
+	if eval == nil {
+		eval = func(c candidate, scratchPath string, settings evalSettings) (optimizationEval, error) {
+			return evaluateCandidate(cfg, c, scratchPath, settings)
+		}
+	}
+
+	trace, err := newTraceWriter(cfg.tracePath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := trace.close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "trace: %v\n", closeErr)
+		}
+	}()
 
 	// --polish-only skips the stochastic search entirely: the incoming
 	// candidate is scored once at final settings and handed straight to the
@@ -326,6 +354,22 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 	var improves int64
 	var outputMu sync.Mutex
 	var latestPersistedImprove int64
+	// sampleIndex is shared so parallel sampler workers walk disjoint parts of
+	// one sequence instead of each replaying it from the start.
+	var sampleIndex atomic.Int64
+	var stats roundStats
+	// searchErr carries the first fatal search failure out of the workers. A
+	// search that cannot run at all must fail the whole invocation rather than
+	// leave a report describing the seed candidate.
+	var searchErrMu sync.Mutex
+	var searchErr error
+	recordSearchErr := func(err error) {
+		searchErrMu.Lock()
+		defer searchErrMu.Unlock()
+		if searchErr == nil {
+			searchErr = err
+		}
+	}
 
 	workers := cfg.workers
 	if workers == 0 {
@@ -341,6 +385,150 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		go func(workerID int) {
 			defer wg.Done()
 			workerScratch := filepath.Join(cfg.workDir, fmt.Sprintf("candidate_ir_worker_%d.wav", workerID))
+
+			// The objective is identical for every round, so it is built once
+			// per worker and shared by the mayfly path and the sampler
+			// controls alike. That sharing is the point: budget accounting,
+			// best-tracking, constraint penalties and tracing are then
+			// provably the same across search modes, and the sampling strategy
+			// is the only thing a comparison measures.
+			objective := func(pos []float64) float64 {
+				if time.Now().After(deadline) {
+					return currentBestScore(state) + 1.0
+				}
+				evalNum, ok := reserveEval(&evals, cfg.maxEvals)
+				if !ok {
+					return currentBestScore(state) + 1.0
+				}
+
+				cand := fromNormalized(pos, cfg.defs)
+				evalRes, err := eval(cand, workerScratch, optEvalSettings)
+				if err != nil {
+					return currentBestScore(state) + 0.8
+				}
+
+				improved := false
+				var improveNum int64
+				checkpointDue := false
+				var bestSnapshot candidate
+				var bestEvalSnapshot optimizationEval
+				var topSnapshot []topCandidate
+				bestScore := 0.0
+
+				state.mu.Lock()
+				state.top = updateTopCandidates(state.top, cfg.topK, int(evalNum), evalRes.aggregate, evalRes.metrics, cfg.defs, cand)
+				if evalRes.aggregate < state.bestEval.aggregate {
+					state.best = cloneCandidate(cand)
+					state.bestEval = cloneOptimizationEval(evalRes)
+					improved = true
+					improveNum = atomic.AddInt64(&improves, 1)
+					if cfg.checkpointEvery > 0 && improveNum%int64(cfg.checkpointEvery) == 0 {
+						checkpointDue = true
+					}
+					bestSnapshot = cloneCandidate(state.best)
+					bestEvalSnapshot = cloneOptimizationEval(state.bestEval)
+					topSnapshot = cloneTopCandidates(state.top)
+				}
+				bestScore = state.bestEval.aggregate
+				state.mu.Unlock()
+
+				if improved {
+					fmt.Printf("Improved #%d eval=%d score=%.4f sim=%.2f%% [%s]\n", improveNum, evalNum, bestEvalSnapshot.aggregate, bestEvalSnapshot.metrics.Similarity*100.0, formatDominant(bestEvalSnapshot.metrics))
+					outputMu.Lock()
+					if improveNum > latestPersistedImprove {
+						latestPersistedImprove = improveNum
+						if checkpointDue {
+							state.mu.Lock()
+							checkpointNum := state.checkpoints + 1
+							state.mu.Unlock()
+							if err := writeOutputs(outputRequest{
+								outputIR:       cfg.outputIR,
+								outputPreset:   cfg.outputPreset,
+								reportPath:     cfg.reportPath,
+								referencePath:  cfg.referencePath,
+								presetPath:     cfg.presetPath,
+								sampleRate:     optEvalSettings.sampleRate,
+								note:           cfg.targets[0].note,
+								velocity:       bestEvalSnapshot.velocity,
+								releaseAfter:   bestEvalSnapshot.releaseAfter,
+								elapsed:        time.Since(start).Seconds(),
+								evals:          int(atomic.LoadInt64(&evals)),
+								variant:        variant,
+								defs:           cfg.defs,
+								best:           bestSnapshot,
+								bestScore:      bestEvalSnapshot.aggregate,
+								bestMetrics:    bestEvalSnapshot.metrics,
+								bestParams:     bestEvalSnapshot.params,
+								bestBodyIR:     bestEvalSnapshot.bodyIR,
+								bestRoomIRL:    bestEvalSnapshot.roomIRL,
+								bestRoomIRR:    bestEvalSnapshot.roomIRR,
+								checkpoints:    checkpointNum,
+								top:            topSnapshot,
+								notes:          targetNotes(cfg.targets),
+								perNote:        bestEvalSnapshot.notes,
+								aggregate:      cfg.aggregate,
+								pass:           cfg.pass,
+								rendersPerEval: len(cfg.targets),
+
+								scoreConstraints:     cfg.scoreConstraints,
+								metricConstraints:    cfg.metricConstraints,
+								gateThresholds:       cfg.gateThresholdsPath,
+								constraintRejections: constraintRejectCount(cfg),
+								bestConstraintScores: bestEvalSnapshot.constraintScores,
+								bestMetricValues:     bestEvalSnapshot.metricValues,
+							}); err != nil {
+								fmt.Fprintf(os.Stderr, "checkpoint write failed: %v\n", err)
+							} else {
+								state.mu.Lock()
+								if checkpointNum > state.checkpoints {
+									state.checkpoints = checkpointNum
+								}
+								state.mu.Unlock()
+							}
+						}
+					}
+					outputMu.Unlock()
+				}
+
+				if cfg.reportEvery > 0 && evalNum%int64(cfg.reportEvery) == 0 {
+					fmt.Printf("Progress eval=%d/%d elapsed=%.1fs best=%.4f\n", evalNum, cfg.maxEvals, time.Since(start).Seconds(), bestScore)
+				}
+				trace.record(traceRecord{
+					Eval:      evalNum,
+					TimeSec:   time.Since(start).Seconds(),
+					Worker:    workerID,
+					Aggregate: evalRes.aggregate,
+					Best:      bestScore,
+				})
+
+				return evalRes.aggregate
+			}
+
+			if mode := cfg.search.effectiveMode(); mode != searchMayfly {
+				run := samplerRun{
+					mode:      mode,
+					dims:      len(cfg.defs),
+					seed:      cfg.seed,
+					workerID:  workerID,
+					deadline:  deadline,
+					evals:     &evals,
+					maxEvals:  cfg.maxEvals,
+					index:     &sampleIndex,
+					objective: objective,
+				}
+				if err := run.run(); err != nil {
+					// Fatal, not a warning. A sampler that cannot produce
+					// points ends the run after the single seed evaluation,
+					// and piano-fit would otherwise exit 0 with a report that
+					// looks like a completed search — which is exactly how a
+					// 39-dimensional Halton run entered a benchmark table as
+					// a valid observation.
+					recordSearchErr(fmt.Errorf("%s search failed: %w", mode, err))
+				}
+
+				return
+			}
+
 			for {
 				if time.Now().After(deadline) {
 					return
@@ -355,125 +543,42 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 					return
 				}
 				budget := minInt(cfg.mayflyRoundEvals, remaining)
-				iters := maxInt(1, budget/(2*cfg.mayflyPop))
+				iters := roundIterations(cfg.search, budget, cfg.mayflyPop)
 
 				mayflyConfig, err := newMayflyConfig(variant, cfg.mayflyPop, len(cfg.defs), iters)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "mayfly round %d setup failed: %v\n", round, err)
 					return
 				}
+				applySearchOptions(mayflyConfig, cfg.search, cfg.mayflyPop)
 				mayflyConfig.Rand = rand.New(rand.NewSource(cfg.seed + int64(round)*7919))
-				mayflyConfig.ObjectiveFunc = func(pos []float64) float64 {
-					if time.Now().After(deadline) {
-						return currentBestScore(state) + 1.0
-					}
-					evalNum, ok := reserveEval(&evals, cfg.maxEvals)
-					if !ok {
-						return currentBestScore(state) + 1.0
-					}
+				mayflyConfig.ObjectiveFunc = objective
 
-					cand := fromNormalized(pos, cfg.defs)
-					evalRes, err := eval(cand, workerScratch, optEvalSettings)
-					if err != nil {
-						return currentBestScore(state) + 0.8
-					}
-
-					improved := false
-					var improveNum int64
-					checkpointDue := false
-					var bestSnapshot candidate
-					var bestEvalSnapshot optimizationEval
-					var topSnapshot []topCandidate
-					bestScore := 0.0
-
-					state.mu.Lock()
-					state.top = updateTopCandidates(state.top, cfg.topK, int(evalNum), evalRes.aggregate, evalRes.metrics, cfg.defs, cand)
-					if evalRes.aggregate < state.bestEval.aggregate {
-						state.best = cloneCandidate(cand)
-						state.bestEval = cloneOptimizationEval(evalRes)
-						improved = true
-						improveNum = atomic.AddInt64(&improves, 1)
-						if cfg.checkpointEvery > 0 && improveNum%int64(cfg.checkpointEvery) == 0 {
-							checkpointDue = true
-						}
-						bestSnapshot = cloneCandidate(state.best)
-						bestEvalSnapshot = cloneOptimizationEval(state.bestEval)
-						topSnapshot = cloneTopCandidates(state.top)
-					}
-					bestScore = state.bestEval.aggregate
-					state.mu.Unlock()
-
-					if improved {
-						fmt.Printf("Improved #%d eval=%d score=%.4f sim=%.2f%% [%s]\n", improveNum, evalNum, bestEvalSnapshot.aggregate, bestEvalSnapshot.metrics.Similarity*100.0, formatDominant(bestEvalSnapshot.metrics))
-						outputMu.Lock()
-						if improveNum > latestPersistedImprove {
-							latestPersistedImprove = improveNum
-							if checkpointDue {
-								state.mu.Lock()
-								checkpointNum := state.checkpoints + 1
-								state.mu.Unlock()
-								if err := writeOutputs(outputRequest{
-									outputIR:       cfg.outputIR,
-									outputPreset:   cfg.outputPreset,
-									reportPath:     cfg.reportPath,
-									referencePath:  cfg.referencePath,
-									presetPath:     cfg.presetPath,
-									sampleRate:     optEvalSettings.sampleRate,
-									note:           cfg.targets[0].note,
-									velocity:       bestEvalSnapshot.velocity,
-									releaseAfter:   bestEvalSnapshot.releaseAfter,
-									elapsed:        time.Since(start).Seconds(),
-									evals:          int(atomic.LoadInt64(&evals)),
-									variant:        variant,
-									defs:           cfg.defs,
-									best:           bestSnapshot,
-									bestScore:      bestEvalSnapshot.aggregate,
-									bestMetrics:    bestEvalSnapshot.metrics,
-									bestParams:     bestEvalSnapshot.params,
-									bestBodyIR:     bestEvalSnapshot.bodyIR,
-									bestRoomIRL:    bestEvalSnapshot.roomIRL,
-									bestRoomIRR:    bestEvalSnapshot.roomIRR,
-									checkpoints:    checkpointNum,
-									top:            topSnapshot,
-									notes:          targetNotes(cfg.targets),
-									perNote:        bestEvalSnapshot.notes,
-									aggregate:      cfg.aggregate,
-									pass:           cfg.pass,
-									rendersPerEval: len(cfg.targets),
-
-									scoreConstraints:     cfg.scoreConstraints,
-									metricConstraints:    cfg.metricConstraints,
-									gateThresholds:       cfg.gateThresholdsPath,
-									constraintRejections: constraintRejectCount(cfg),
-									bestConstraintScores: bestEvalSnapshot.constraintScores,
-									bestMetricValues:     bestEvalSnapshot.metricValues,
-								}); err != nil {
-									fmt.Fprintf(os.Stderr, "checkpoint write failed: %v\n", err)
-								} else {
-									state.mu.Lock()
-									if checkpointNum > state.checkpoints {
-										state.checkpoints = checkpointNum
-									}
-									state.mu.Unlock()
-								}
-							}
-						}
-						outputMu.Unlock()
-					}
-
-					if cfg.reportEvery > 0 && evalNum%int64(cfg.reportEvery) == 0 {
-						fmt.Printf("Progress eval=%d/%d elapsed=%.1fs best=%.4f\n", evalNum, cfg.maxEvals, time.Since(start).Seconds(), bestScore)
-					}
-					return evalRes.aggregate
-				}
-
-				if _, err := runMayfly(mayflyConfig); err != nil {
+				// The warm start reads the incumbent at round construction
+				// time, so each restart re-enters the search from the best
+				// point known when it began rather than from noise.
+				runOpts := warmStartOptions(cfg.search, currentBestCandidate(state), cfg.defs)
+				res, err := runMayflyRound(mayflyConfig, runOpts...)
+				if err != nil {
 					fmt.Fprintf(os.Stderr, "mayfly round %d failed: %v\n", round, err)
 				}
+				stats.observe(res)
 			}
 		}(i + 1)
 	}
 	wg.Wait()
+
+	searchErrMu.Lock()
+	failure := searchErr
+	searchErrMu.Unlock()
+	if failure != nil {
+		return nil, failure
+	}
+
+	if perIter := stats.evalsPerIteration(); perIter > 0 {
+		fmt.Printf("Mayfly rounds=%d iterations=%d evals/iteration=%.1f (the round-length derivation assumes %d)\n",
+			stats.rounds.Load(), stats.iterations.Load(), perIter, 2*cfg.mayflyPop)
+	}
 
 	state.mu.Lock()
 	finalBest := cloneCandidate(state.best)
@@ -697,6 +802,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 		bestMetricValues:     finalEval.metricValues,
 		constraintRejections: constraintRejectCount(cfg),
 		constraintInfeasible: cfg.constrained() && finalEval.constraintViolated,
+		evalsPerIteration:    stats.evalsPerIteration(),
 	}, nil
 }
 
@@ -1148,15 +1254,6 @@ func newMayflyConfig(variant string, pop int, dims int, iters int) (*mayfly.Conf
 	return cfg, nil
 }
 
-func runMayfly(cfg *mayfly.Config) (_ *mayfly.Result, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("mayfly panic: %v", r)
-		}
-	}()
-	return mayfly.Optimize(cfg)
-}
-
 func reserveEval(evals *int64, maxEvals int) (int64, bool) {
 	for {
 		cur := atomic.LoadInt64(evals)
@@ -1167,6 +1264,16 @@ func reserveEval(evals *int64, maxEvals int) (int64, bool) {
 			return cur + 1, true
 		}
 	}
+}
+
+// currentBestCandidate snapshots the incumbent so a warm-started round can be
+// seeded from it without holding the lock across the whole round.
+func currentBestCandidate(state *optimizationState) candidate {
+	state.mu.Lock()
+	best := cloneCandidate(state.best)
+	state.mu.Unlock()
+
+	return best
 }
 
 func currentBestScore(state *optimizationState) float64 {

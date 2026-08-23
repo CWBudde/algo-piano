@@ -53,6 +53,17 @@ type runReport struct {
 	ScoreNorms     string `json:"score_norms,omitempty"`
 	RendersPerEval int    `json:"renders_per_eval,omitempty"`
 
+	// SearchMode names where candidate positions came from. Omitted for the
+	// mayfly default, so every report written before the samplers existed
+	// stays a valid mayfly report.
+	SearchMode string `json:"search_mode,omitempty"`
+	// EvalsPerIteration is the per-iteration evaluation cost the mayfly rounds
+	// actually reported, as opposed to the NPop+NPopF the round-length
+	// derivation assumes. The two disagree by roughly 2.3x at the default
+	// population, which is why the measured value is worth recording: it is
+	// the number that says how much of a round actually ran.
+	EvalsPerIteration float64 `json:"evals_per_iteration,omitempty"`
+
 	// Polish carries the deterministic polish-stage summary, when it ran.
 	Polish *polishSummary `json:"polish,omitempty"`
 	// ScoreConstraints lists the secondary-profile ceilings the run was
@@ -117,6 +128,8 @@ type outputRequest struct {
 	elapsed       float64
 	evals         int
 	variant       string
+	searchMode    searchMode
+	evalsPerIter  float64
 	defs          []knobDef
 	best          candidate
 	bestScore     float64
@@ -215,31 +228,33 @@ func writeOutputs(req outputRequest) error {
 	}
 
 	rep := runReport{
-		ReferencePath:   req.referencePath,
-		PresetPath:      req.presetPath,
-		OutputPreset:    req.outputPreset,
-		OutputIR:        req.outputIR,
-		SampleRate:      req.sampleRate,
-		Note:            req.note,
-		Velocity:        req.velocity,
-		ReleaseAfterSec: req.releaseAfter,
-		DurationSec:     req.elapsed,
-		Evaluations:     req.evals,
-		MayflyVariant:   req.variant,
-		BestScore:       bestScore,
-		BestSimilarity:  req.bestMetrics.Similarity,
-		BestMetrics:     req.bestMetrics,
-		BestKnobs:       knobs,
-		CheckpointCount: req.checkpoints,
-		TopCandidates:   req.top,
-		Notes:           notes,
-		PerNote:         perNote,
-		Aggregate:       aggregate,
-		Pass:            pass,
-		PassWindow:      req.passWindow,
-		ScoreProfile:    scoreProfile,
-		ScoreNorms:      scoreNorms,
-		RendersPerEval:  rendersPerEval,
+		ReferencePath:     req.referencePath,
+		PresetPath:        req.presetPath,
+		OutputPreset:      req.outputPreset,
+		OutputIR:          req.outputIR,
+		SampleRate:        req.sampleRate,
+		Note:              req.note,
+		Velocity:          req.velocity,
+		ReleaseAfterSec:   req.releaseAfter,
+		DurationSec:       req.elapsed,
+		Evaluations:       req.evals,
+		MayflyVariant:     req.variant,
+		SearchMode:        searchModeForReport(req.searchMode),
+		EvalsPerIteration: req.evalsPerIter,
+		BestScore:         bestScore,
+		BestSimilarity:    req.bestMetrics.Similarity,
+		BestMetrics:       req.bestMetrics,
+		BestKnobs:         knobs,
+		CheckpointCount:   req.checkpoints,
+		TopCandidates:     req.top,
+		Notes:             notes,
+		PerNote:           perNote,
+		Aggregate:         aggregate,
+		Pass:              pass,
+		PassWindow:        req.passWindow,
+		ScoreProfile:      scoreProfile,
+		ScoreNorms:        scoreNorms,
+		RendersPerEval:    rendersPerEval,
 
 		ScoreConstraints:     req.scoreConstraints,
 		ConstraintRejections: req.constraintRejections,
@@ -473,4 +488,14 @@ func writeJSON(path string, v any) error {
 	}
 	b = append(b, '\n')
 	return os.WriteFile(path, b, 0o644)
+}
+
+// searchModeForReport omits the default so a report written by a mayfly run
+// looks exactly like every report written before the sampler controls existed.
+func searchModeForReport(mode searchMode) string {
+	if mode == "" || mode == searchMayfly {
+		return ""
+	}
+
+	return string(mode)
 }
