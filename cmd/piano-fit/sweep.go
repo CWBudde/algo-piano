@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cwbudde/algo-piano/analysis"
+	"github.com/cwbudde/qmc"
 )
 
 // sweepSchema versions the report artifact. Bump it when a documented key
@@ -31,28 +32,6 @@ const (
 // stage. It is recorded in the report so a reader never has to guess how the
 // points were placed.
 const sweepJointSequence = "halton"
-
-// haltonPrimes are the bases of the Halton sequence, one per dimension. The
-// table holds the first 64 primes so that every knob set fits, including the
-// joint `piano,body-ir,room-ir,mix` selection at 39 knobs. It grew from 8 to
-// 32 when the `attack` pass's 9 knobs were refused outright, and from 32 to 64
-// when `--search halton` hit the same wall on the joint selection.
-//
-// The table length is not the intended dimensionality limit — `--sweep-joint-max-dims`
-// is. High Halton bases correlate badly at low sample counts, and this
-// implementation does not scramble, so the last coordinates of a
-// high-dimensional point are poorly distributed until the sample count grows
-// large. That is the reason for keeping a deliberate cap on the joint stage,
-// not a reason to keep the base table short.
-var haltonPrimes = []int{
-	2, 3, 5, 7, 11, 13, 17, 19, 23, 29,
-	31, 37, 41, 43, 47, 53, 59, 61, 67, 71,
-	73, 79, 83, 89, 97, 101, 103, 107, 109, 113,
-	127, 131, 137, 139, 149, 151, 157, 163, 167, 173,
-	179, 181, 191, 193, 197, 199, 211, 223, 227, 229,
-	233, 239, 241, 251, 257, 263, 269, 271, 277, 281,
-	283, 293, 307, 311,
-}
 
 // sweepEvaluator renders one candidate and scores it under every requested
 // profile. It is a distinct type from candidateEvaluator on purpose: the sweep
@@ -197,7 +176,11 @@ type sweepReport struct {
 	JointEvals    int    `json:"joint_evals"`
 	JointSequence string `json:"joint_sequence"`
 	JointSkip     int    `json:"joint_skip"`
-	Deduped       int    `json:"deduped"`
+	// JointScrambleSeed is set only when --sweep-joint-scramble is on. Its
+	// absence is the record that the points came from the plain, seed-free
+	// sequence; its presence is what makes a scrambled run reproducible.
+	JointScrambleSeed *uint64 `json:"joint_scramble_seed,omitempty"`
+	Deduped           int     `json:"deduped"`
 
 	Baseline sweepPoint   `json:"baseline"`
 	OAT      []sweepPoint `json:"oat"`
@@ -224,11 +207,13 @@ type sweepRunConfig struct {
 	profiles []string
 	primary  string
 
-	samples      int
-	jointEvals   int
-	jointSkip    int
-	jointMaxDims int
-	workers      int
+	samples       int
+	jointEvals    int
+	jointSkip     int
+	jointMaxDims  int
+	jointScramble bool
+	seed          uint64
+	workers       int
 
 	// Report metadata, copied through verbatim.
 	referencePath string
@@ -239,39 +224,6 @@ type sweepRunConfig struct {
 	sampleRate    int
 	pass          string
 	passWindow    *windowSpec
-}
-
-// radicalInverse returns the base-b radical inverse of index, i.e. the digits
-// of index in base b mirrored around the radix point. It is the building block
-// of the Halton sequence and is exactly reproducible: no state, no seed.
-func radicalInverse(index int, base int) float64 {
-	if base < 2 || index < 0 {
-		return 0
-	}
-	result := 0.0
-	f := 1.0 / float64(base)
-	for i := index; i > 0; i /= base {
-		result += float64(i%base) * f
-		f /= float64(base)
-	}
-	return result
-}
-
-// haltonPoint returns the index-th point of the dims-dimensional Halton
-// sequence. Index 1 is the first point (dim 0 = 1/2, dim 1 = 1/3); index 0 is
-// the degenerate origin and is normally skipped.
-func haltonPoint(index int, dims int) ([]float64, error) {
-	if dims < 1 {
-		return nil, fmt.Errorf("halton: dims must be >= 1, got %d", dims)
-	}
-	if dims > len(haltonPrimes) {
-		return nil, fmt.Errorf("halton: %d dimensions exceed the %d-prime base table", dims, len(haltonPrimes))
-	}
-	out := make([]float64, dims)
-	for d := 0; d < dims; d++ {
-		out[d] = radicalInverse(index, haltonPrimes[d])
-	}
-	return out, nil
 }
 
 // generateOATSamples builds the one-at-a-time scan: for every knob, `samples`
@@ -311,7 +263,14 @@ func generateOATSamples(defs []knobDef, baseline candidate, samples int) ([]swee
 // "is the trade-off a property of the box?" on its own. Halton fills the box
 // with no RNG whatsoever, which makes the whole report reproducible by
 // construction rather than by pinning a seed.
-func generateJointSamples(defs []knobDef, evals int, skip int, maxDims int) ([]sweepSample, error) {
+//
+// Scrambling is off by default and stays that way: every recorded sweep report
+// was produced by the unscrambled sequence, and qmc's unscrambled path is
+// bit-identical to the generator this replaced, so those reports still
+// reproduce. Turn it on with --sweep-joint-scramble above roughly twenty
+// knobs, where the unscrambled sequence stops filling the box; the seed is
+// then recorded in the report because the sequence depends on it.
+func generateJointSamples(defs []knobDef, evals, skip, maxDims int, scramble bool, seed uint64) ([]sweepSample, error) {
 	if evals <= 0 {
 		return nil, nil
 	}
@@ -321,15 +280,17 @@ func generateJointSamples(defs []knobDef, evals int, skip int, maxDims int) ([]s
 			len(defs), maxDims,
 		)
 	}
-	if skip < 0 {
-		skip = 0
+	opts := []qmc.Option{qmc.WithSkip(skip)}
+	if scramble {
+		opts = append(opts, qmc.WithScrambling(seed))
+	}
+	seq, err := qmc.NewHalton(len(defs), opts...)
+	if err != nil {
+		return nil, err
 	}
 	out := make([]sweepSample, 0, evals)
 	for i := 0; i < evals; i++ {
-		pos, err := haltonPoint(skip+i+1, len(defs))
-		if err != nil {
-			return nil, err
-		}
+		pos := seq.Next()
 		out = append(out, sweepSample{
 			Stage: sweepStageJoint,
 			Pos:   pos,
@@ -711,6 +672,17 @@ func constrainedBest(points []sweepPoint, primary string, secondary string, prim
 	return &entry, count
 }
 
+// scrambleSeedForReport returns the seed to record, or nil when the joint
+// stage ran unscrambled. Recording a seed that did not affect the points would
+// invite a reader to believe the sequence depended on it.
+func scrambleSeedForReport(cfg sweepRunConfig) *uint64 {
+	if !cfg.jointScramble {
+		return nil
+	}
+	seed := cfg.seed
+	return &seed
+}
+
 // runSweep executes the whole deterministic sweep and builds the report.
 func runSweep(cfg sweepRunConfig) (*sweepReport, error) {
 	start := time.Now()
@@ -742,6 +714,7 @@ func runSweep(cfg sweepRunConfig) (*sweepReport, error) {
 		JointEvals:          cfg.jointEvals,
 		JointSequence:       sweepJointSequence,
 		JointSkip:           cfg.jointSkip,
+		JointScrambleSeed:   scrambleSeedForReport(cfg),
 		Sensitivity:         []sweepSensitivity{},
 		Pareto:              []sweepParetoEntry{},
 		OAT:                 []sweepPoint{},
@@ -783,7 +756,7 @@ func runSweep(cfg sweepRunConfig) (*sweepReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	jointPlan, err := generateJointSamples(cfg.defs, cfg.jointEvals, cfg.jointSkip, cfg.jointMaxDims)
+	jointPlan, err := generateJointSamples(cfg.defs, cfg.jointEvals, cfg.jointSkip, cfg.jointMaxDims, cfg.jointScramble, cfg.seed)
 	if err != nil {
 		return nil, err
 	}
@@ -926,18 +899,19 @@ func printScoreLine(scores map[string]float64, profiles []string) {
 
 // sweepModeArgs carries the --sweep-* flag values into the glue below.
 type sweepModeArgs struct {
-	outPath      string
-	samples      int
-	jointEvals   int
-	jointSkip    int
-	jointMaxDims int
-	profilesRaw  string
-	passProfile  string
-	passName     string
-	passWindow   *windowSpec
-	note         int
-	workers      int
-	timeBudget   float64
+	outPath       string
+	samples       int
+	jointEvals    int
+	jointSkip     int
+	jointMaxDims  int
+	jointScramble bool
+	profilesRaw   string
+	passProfile   string
+	passName      string
+	passWindow    *windowSpec
+	note          int
+	workers       int
+	timeBudget    float64
 }
 
 // sweepEvalRate is the measured throughput of a final-settings evaluation on a
@@ -1006,6 +980,8 @@ func runSweepMode(cfg *optimizationConfig, args sweepModeArgs) {
 		jointEvals:    args.jointEvals,
 		jointSkip:     args.jointSkip,
 		jointMaxDims:  args.jointMaxDims,
+		jointScramble: args.jointScramble,
+		seed:          uint64(cfg.seed),
 		workers:       args.workers,
 		referencePath: cfg.referencePath,
 		presetPath:    cfg.presetPath,

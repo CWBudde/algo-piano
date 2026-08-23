@@ -19,6 +19,7 @@ import (
 	"github.com/cwbudde/algo-piano/irsynth"
 	"github.com/cwbudde/algo-piano/piano"
 	"github.com/cwbudde/mayfly"
+	"github.com/cwbudde/qmc"
 )
 
 type topCandidate struct {
@@ -505,6 +506,15 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 			}
 
 			if mode := cfg.search.effectiveMode(); mode != searchMayfly {
+				var halton *qmc.Halton
+				if mode == searchHalton {
+					var err error
+					halton, err = newSamplerHalton(len(cfg.defs), cfg.seed)
+					if err != nil {
+						recordSearchErr(fmt.Errorf("%s search failed: %w", mode, err))
+						return
+					}
+				}
 				run := samplerRun{
 					mode:      mode,
 					dims:      len(cfg.defs),
@@ -515,6 +525,7 @@ func runOptimization(cfg *optimizationConfig) (*optimizationResult, error) {
 					maxEvals:  cfg.maxEvals,
 					index:     &sampleIndex,
 					objective: objective,
+					halton:    halton,
 				}
 				if err := run.run(); err != nil {
 					// Fatal, not a warning. A sampler that cannot produce
