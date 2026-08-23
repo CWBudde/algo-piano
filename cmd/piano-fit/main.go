@@ -113,7 +113,9 @@ func main() {
 	searchFlag := flag.String("search", string(searchMayfly), "Where candidate positions come from: mayfly|random|halton. "+
 		"The two samplers are control conditions, not fitting modes: a stochastic search that cannot beat a "+
 		"low-discrepancy sequence at the same eval budget is not paying for itself. They feed the same objective, "+
-		"budget accounting and best-tracking, so the sampling strategy is the only thing that differs")
+		"budget accounting and best-tracking, so the sampling strategy is the only thing that differs. "+
+		"halton is a scrambled, 64-point-burn-in randomized QMC sequence and so varies with --seed; the joint "+
+		"sweep's sequence is a different, unscrambled one unless --sweep-joint-scramble is given")
 	tracePath := flag.String("trace", "", "Write a JSONL convergence trace, one record per evaluation "+
 		"{eval, t_sec, worker, aggregate, best}. Empty disables tracing")
 	mayflyIters := flag.Int("mayfly-iters", 0, "Iterations per Mayfly round (0 derives it from --mayfly-round-evals). "+
@@ -151,6 +153,10 @@ func main() {
 	sweepJointEvals := flag.Int("sweep-joint-evals", 2048, "Joint-stage sample count (0 disables the joint stage)")
 	sweepJointSkip := flag.Int("sweep-joint-skip", 64, "Halton index offset (burn-in) for the joint stage")
 	sweepJointMaxDims := flag.Int("sweep-joint-max-dims", 16, "Refuse the joint stage above this dimensionality")
+	sweepJointScramble := flag.Bool("sweep-joint-scramble", false,
+		"Scramble the joint stage's Halton sequence (seeded by --seed). Off by default so recorded sweep "+
+			"reports keep reproducing. Turn it on above ~20 knobs, where the plain sequence stops filling the box: "+
+			"its last coordinates have not left their first period and correlate with each other.")
 	sweepProfiles := flag.String("sweep-profiles", "", "Comma-separated scoring profiles to record per sample "+
 		"(empty = the pass profile first, then legacy-v1). The first profile is the primary Pareto objective")
 
@@ -545,18 +551,19 @@ func main() {
 
 	if *sweep {
 		runSweepMode(cfg, sweepModeArgs{
-			outPath:      *sweepOut,
-			samples:      *sweepSamples,
-			jointEvals:   *sweepJointEvals,
-			jointSkip:    *sweepJointSkip,
-			jointMaxDims: *sweepJointMaxDims,
-			profilesRaw:  *sweepProfiles,
-			passProfile:  passSpecification.profileName(),
-			passName:     passSpecification.Name,
-			passWindow:   passWindow,
-			note:         notes[0],
-			workers:      parsedWorkers,
-			timeBudget:   *timeBudget,
+			outPath:       *sweepOut,
+			samples:       *sweepSamples,
+			jointEvals:    *sweepJointEvals,
+			jointSkip:     *sweepJointSkip,
+			jointMaxDims:  *sweepJointMaxDims,
+			jointScramble: *sweepJointScramble,
+			profilesRaw:   *sweepProfiles,
+			passProfile:   passSpecification.profileName(),
+			passName:      passSpecification.Name,
+			passWindow:    passWindow,
+			note:          notes[0],
+			workers:       parsedWorkers,
+			timeBudget:    *timeBudget,
 		})
 		return
 	}

@@ -9,7 +9,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/cwbudde/qmc"
 )
 
 // searchTestDefs is a small, well-conditioned box: three linear knobs, so a
@@ -233,10 +237,21 @@ func (cfg *optimizationConfig) evaluatorScoreAt(t *testing.T, c candidate) float
 	return ev.aggregate
 }
 
-// TestHaltonSearchIsDeterministic pins the property that makes the Halton
-// control usable as a baseline: it carries no RNG, so the same flags produce
-// the same answer and a comparison against it needs no seed averaging.
-func TestHaltonSearchIsDeterministic(t *testing.T) {
+// TestHaltonSearchIsReproducibleAtAFixedSeed pins what the Halton control
+// guarantees now that it scrambles.
+//
+// It used to guarantee more: no RNG at all, so the same flags gave the same
+// answer at any seed and a comparison against it needed no seed averaging.
+// That is gone on purpose. Unscrambled Halton does not fill a high-dimensional
+// box at the budgets this tool runs at — over 39 knobs and 600 points its
+// adjacent coordinates correlate at 0.81, because the last dimensions are
+// still walking a linear ramp through their first period — and a control that
+// is not filling the box flatters the optimizer it is supposed to check.
+// Scrambling fixes the coverage and costs seed-independence, so the control is
+// now averaged over seeds like the others.
+//
+// What survives, and what this test pins, is reproducibility at a fixed seed.
+func TestHaltonSearchIsReproducibleAtAFixedSeed(t *testing.T) {
 	defs := searchTestDefs()
 	target := []float64{0.3, 0.7, 0.5}
 
@@ -254,12 +269,42 @@ func TestHaltonSearchIsDeterministic(t *testing.T) {
 
 	first, second := run(1), run(1)
 	if first != second {
-		t.Fatalf("halton is not reproducible: %v then %v", first, second)
+		t.Fatalf("halton is not reproducible at a fixed seed: %v then %v", first, second)
 	}
-	// The seed must not matter either — a Halton run that moved with --seed
-	// would be a random search wearing a deterministic name.
-	if other := run(7); other != first {
-		t.Fatalf("halton moved with the seed: %v at seed 1, %v at seed 7", first, other)
+	// And the seed has to actually reach the sampler. A scrambled sequence
+	// that ignored it would be the unscrambled sequence wearing a new name.
+	if other := run(7); other == first {
+		t.Fatalf("seeds 1 and 7 both gave %v; the scrambling seed is not reaching the sampler", first)
+	}
+}
+
+// TestHaltonSamplerBurnsIn pins that the control no longer starts at Halton
+// index 1.
+//
+// Point 1 is (1/2, 1/3, 1/5, 1/7, ...), a corner of the box in every
+// coordinate with a large base. The joint sweep has skipped past it since it
+// was written (--sweep-joint-skip defaults to 64); the --search halton control
+// did not, which made the two disagree about the same sequence.
+func TestHaltonSamplerBurnsIn(t *testing.T) {
+	const dims = 5
+
+	burned, err := newSamplerHalton(dims, 1)
+	if err != nil {
+		t.Fatalf("newSamplerHalton: %v", err)
+	}
+	raw, err := qmc.NewHalton(dims, qmc.WithScrambling(1))
+	if err != nil {
+		t.Fatalf("NewHalton: %v", err)
+	}
+
+	got := burned.At(0)
+	want := raw.At(samplerHaltonBurnIn)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("first sampled point = %v, want the point %d into the sequence = %v",
+			got, samplerHaltonBurnIn, want)
+	}
+	if reflect.DeepEqual(got, raw.At(0)) {
+		t.Fatal("the sampler still starts at the first Halton point; the burn-in is not applied")
 	}
 }
 
@@ -364,15 +409,16 @@ func TestEvaluatorInjectionIsUsed(t *testing.T) {
 	}
 }
 
-// TestSamplerFailureFailsTheRun pins that a search which cannot run at all
-// fails the invocation instead of reporting the seed candidate as a result.
+// TestHaltonSamplerClearsTheOldBaseTableWall pins that the failure this test
+// used to reproduce is gone rather than merely relocated.
 //
-// This was not hypothetical. --search halton on the joint
-// piano,body-ir,room-ir,mix selection exceeded the Halton base table, printed a
-// warning, and exited 0 with a report holding one evaluation — which then
-// entered a benchmark table as if it were a finished 600-evaluation run.
-func TestSamplerFailureFailsTheRun(t *testing.T) {
-	dims := len(haltonPrimes) + 1
+// --search halton on the joint piano,body-ir,room-ir,mix selection once
+// exceeded a hand-written 64-prime base table, printed a warning, and exited 0
+// with a report holding one evaluation — which then entered a benchmark table
+// as if it were a finished 600-evaluation run. qmc sieves its bases on demand,
+// so there is no table to exceed; 65 dimensions has to run the full budget.
+func TestHaltonSamplerClearsTheOldBaseTableWall(t *testing.T) {
+	const dims = 65
 	defs := make([]knobDef, dims)
 	for i := range defs {
 		defs[i] = knobDef{Name: fmt.Sprintf("x%02d", i), Min: 0, Max: 1}
@@ -382,7 +428,32 @@ func TestSamplerFailureFailsTheRun(t *testing.T) {
 	cfg := searchTestConfig(t, defs, target)
 	cfg.search.mode = searchHalton
 
-	if _, err := runOptimization(cfg); err == nil {
-		t.Fatal("a sampler that cannot produce points must fail the run, not report the seed candidate")
+	res, err := runOptimization(cfg)
+	if err != nil {
+		t.Fatalf("halton at %d dimensions: %v", dims, err)
+	}
+	if res.evals < cfg.maxEvals {
+		t.Fatalf("ran %d evaluations of a %d budget; the sampler stopped early", res.evals, cfg.maxEvals)
+	}
+}
+
+// TestSamplerRejectsANonSamplerMode keeps the fatal-error path exercised. The
+// dimensionality wall that used to reach it is gone, so this drives
+// samplerRun.run directly: a search error must come back as an error, because
+// the alternative is a run that reports its seed candidate as a result.
+func TestSamplerRejectsANonSamplerMode(t *testing.T) {
+	var index atomic.Int64
+	evals := int64(0)
+	run := samplerRun{
+		mode:      searchMayfly,
+		dims:      3,
+		deadline:  time.Now().Add(time.Minute),
+		evals:     &evals,
+		maxEvals:  10,
+		index:     &index,
+		objective: func([]float64) float64 { return 0 },
+	}
+	if err := run.run(); err == nil {
+		t.Fatal("samplerRun must refuse a mode that is not a sampler")
 	}
 }

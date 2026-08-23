@@ -15,6 +15,7 @@ import (
 
 	"github.com/cwbudde/algo-piano/analysis"
 	"github.com/cwbudde/algo-piano/piano"
+	"github.com/cwbudde/qmc"
 )
 
 // sweepTestDefs mirrors the five knobs `--pass sustain` leaves active at note
@@ -157,81 +158,39 @@ func TestDedupeSamplesDropsNoOpIntegerSteps(t *testing.T) {
 	}
 }
 
-func TestRadicalInverseAndHaltonPoint(t *testing.T) {
-	base2 := []float64{1.0 / 2, 1.0 / 4, 3.0 / 4, 1.0 / 8}
-	for i, want := range base2 {
-		if got := radicalInverse(i+1, 2); math.Abs(got-want) > 1e-12 {
-			t.Fatalf("radicalInverse(%d, 2) = %v, want %v", i+1, got, want)
+// TestJointStageReachesEveryKnobSelection pins the dimensionality the joint
+// stage has to cover, which is the widest selection the tool offers: the
+// combined piano,body-ir,room-ir,mix set at 39 knobs.
+//
+// The sequence itself is tested in github.com/cwbudde/qmc. What is worth
+// pinning here is that nothing between the flag and the generator caps the
+// dimensionality by accident. The hand-rolled generator this replaced carried
+// a fixed prime table that had to be grown by hand twice, and both times the
+// failure was silent until a run hit it; qmc sieves its bases on demand, so
+// the wall is gone rather than merely moved.
+func TestJointStageReachesEveryKnobSelection(t *testing.T) {
+	for _, dims := range []int{5, 9, 20, 39, 80} {
+		wide := make([]knobDef, dims)
+		for i := range wide {
+			wide[i] = knobDef{Name: fmt.Sprintf("k%02d", i), Min: 0, Max: 1}
 		}
-	}
-	base3 := []float64{1.0 / 3, 2.0 / 3, 1.0 / 9}
-	for i, want := range base3 {
-		if got := radicalInverse(i+1, 3); math.Abs(got-want) > 1e-12 {
-			t.Fatalf("radicalInverse(%d, 3) = %v, want %v", i+1, got, want)
-		}
-	}
-
-	p, err := haltonPoint(1, 5)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	want := []float64{1.0 / 2, 1.0 / 3, 1.0 / 5, 1.0 / 7, 1.0 / 11}
-	for i := range want {
-		if math.Abs(p[i]-want[i]) > 1e-12 {
-			t.Fatalf("haltonPoint(1,5)[%d] = %v, want %v", i, p[i], want[i])
-		}
-	}
-
-	for idx := 0; idx < 200; idx++ {
-		pt, err := haltonPoint(idx, 5)
+		got, err := generateJointSamples(wide, 8, 64, dims, false, 0)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("%d dimensions: %v", dims, err)
 		}
-		for d, v := range pt {
-			if v < 0 || v >= 1 {
-				t.Fatalf("haltonPoint(%d,5)[%d] = %v, want [0,1)", idx, d, v)
+		if len(got) != 8 {
+			t.Fatalf("%d dimensions: got %d samples, want 8", dims, len(got))
+		}
+		for i, sample := range got {
+			if len(sample.Pos) != dims {
+				t.Fatalf("%d dimensions: sample %d has %d coordinates", dims, i, len(sample.Pos))
+			}
+			for d, v := range sample.Pos {
+				if v < 0 || v >= 1 {
+					t.Fatalf("%d dimensions: sample %d coord %d = %v, want [0,1)", dims, i, d, v)
+				}
 			}
 		}
-		again, err := haltonPoint(idx, 5)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !reflect.DeepEqual(pt, again) {
-			t.Fatalf("haltonPoint(%d,5) is not deterministic: %v vs %v", idx, pt, again)
-		}
-	}
-
-	// The `attack` pass exposes 9 knobs, so 9 dimensions must be reachable.
-	for idx := 1; idx < 50; idx++ {
-		pt, err := haltonPoint(idx, 9)
-		if err != nil {
-			t.Fatalf("haltonPoint(%d,9): unexpected error: %v", idx, err)
-		}
-		if len(pt) != 9 {
-			t.Fatalf("haltonPoint(%d,9) returned %d coordinates, want 9", idx, len(pt))
-		}
-		for d, v := range pt {
-			if v < 0 || v >= 1 {
-				t.Fatalf("haltonPoint(%d,9)[%d] = %v, want [0,1)", idx, d, v)
-			}
-		}
-	}
-
-	// The table has to cover the widest knob selection the tool offers, which
-	// is the joint piano,body-ir,room-ir,mix set at 39 knobs. A table that
-	// merely covers the passes leaves --search halton unable to run on the
-	// joint case at all.
-	if n := len(haltonPrimes); n < 39 {
-		t.Fatalf("len(haltonPrimes) = %d, too few for the 39-knob joint selection", n)
-	}
-	if _, err := haltonPoint(1, 39); err != nil {
-		t.Fatalf("haltonPoint at the joint selection's 39 dimensions: %v", err)
-	}
-	if _, err := haltonPoint(1, len(haltonPrimes)+1); err == nil {
-		t.Fatal("expected an error beyond the prime table")
-	}
-	if _, err := haltonPoint(1, 0); err == nil {
-		t.Fatal("expected an error for zero dimensions")
 	}
 }
 
@@ -239,7 +198,7 @@ func TestGenerateJointSamples(t *testing.T) {
 	defs := sweepTestDefs()
 
 	t.Run("zero evals yields no samples", func(t *testing.T) {
-		got, err := generateJointSamples(defs, 0, 64, 8)
+		got, err := generateJointSamples(defs, 0, 64, 8, false, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -249,7 +208,7 @@ func TestGenerateJointSamples(t *testing.T) {
 	})
 
 	t.Run("respects the dimensionality cap", func(t *testing.T) {
-		_, err := generateJointSamples(defs, 16, 64, 4)
+		_, err := generateJointSamples(defs, 16, 64, 4, false, 0)
 		if err == nil {
 			t.Fatal("expected an error above the cap")
 		}
@@ -266,7 +225,7 @@ func TestGenerateJointSamples(t *testing.T) {
 			wide = append(wide, knobDef{Name: fmt.Sprintf("k%d", i), Min: 0, Max: 1})
 		}
 		const evals = 128
-		got, err := generateJointSamples(wide, evals, 64, 16)
+		got, err := generateJointSamples(wide, evals, 64, 16, false, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -287,22 +246,55 @@ func TestGenerateJointSamples(t *testing.T) {
 	})
 
 	t.Run("skip offsets the sequence", func(t *testing.T) {
-		got, err := generateJointSamples(defs, 3, 64, 8)
+		got, err := generateJointSamples(defs, 3, 64, 8, false, 0)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(got) != 3 {
 			t.Fatalf("got %d samples, want 3", len(got))
 		}
-		want, err := haltonPoint(65, len(defs))
+		seq, err := qmc.NewHalton(len(defs), qmc.WithSkip(64))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
+		want := seq.Next()
 		if !reflect.DeepEqual(got[0].Pos, want) {
-			t.Fatalf("first joint point = %v, want halton index 65 = %v", got[0].Pos, want)
+			t.Fatalf("first joint point = %v, want the point after a 64-point burn-in = %v", got[0].Pos, want)
 		}
 		if got[0].Stage != sweepStageJoint {
 			t.Fatalf("stage = %q, want %q", got[0].Stage, sweepStageJoint)
+		}
+	})
+
+	t.Run("scrambling is off by default and seeded when on", func(t *testing.T) {
+		plain, err := generateJointSamples(defs, 16, 64, 8, false, 7)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The seed argument must be inert while scrambling is off: every
+		// recorded sweep report was produced without it, and they have to
+		// keep reproducing.
+		ignoresSeed, err := generateJointSamples(defs, 16, 64, 8, false, 99)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !reflect.DeepEqual(plain, ignoresSeed) {
+			t.Fatal("the seed changed the unscrambled sequence; recorded sweep reports would no longer reproduce")
+		}
+
+		scrambled, err := generateJointSamples(defs, 16, 64, 8, true, 7)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if reflect.DeepEqual(plain, scrambled) {
+			t.Fatal("scrambling did not change the sequence")
+		}
+		again, err := generateJointSamples(defs, 16, 64, 8, true, 7)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !reflect.DeepEqual(scrambled, again) {
+			t.Fatal("the same seed produced different points; a scrambled sweep would not be reproducible")
 		}
 	})
 }
@@ -849,7 +841,7 @@ func TestSweepSustainPassSelectsTheExpectedKnobs(t *testing.T) {
 	if len(gotCand.Vals) != len(want) {
 		t.Fatalf("candidate has %d values, want %d", len(gotCand.Vals), len(want))
 	}
-	if _, err := generateJointSamples(got, 8, 64, 8); err != nil {
+	if _, err := generateJointSamples(got, 8, 64, 8, false, 0); err != nil {
 		t.Fatalf("the sustain knob set must fit the joint stage: %v", err)
 	}
 }

@@ -70,7 +70,7 @@ func defaultConfigs() []benchConfig {
 	return []benchConfig{
 		{Name: "baseline", Desc: "mayfly, stock settings", Flags: nil},
 		{Name: "random", Desc: "uniform random sampler", Flags: []string{"--search", "random"}},
-		{Name: "halton", Desc: "Halton low-discrepancy sampler", Flags: []string{"--search", "halton"}},
+		{Name: "halton", Desc: "scrambled Halton low-discrepancy sampler", Flags: []string{"--search", "halton"}},
 	}
 }
 

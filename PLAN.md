@@ -138,6 +138,40 @@ Remaining non-blocking follow-ups from Phases 4, 5, 8B, 8C and 9 were moved to
 - [ ] Stage 4: joint optimization
 - [ ] Target: score < 0.25 (currently 0.39), spectral RMSE < 10 dB (currently 20 dB)
 
+#### 11.7 — Optimizer audit ✅ (prerequisite for 11.6)
+
+11.6 spends hours of fitting. Before spending them, the search itself was
+measured against trivial controls at equal evaluation budgets, so an optimizer
+failure could not be mistaken for a model failure. **Verdict: the optimizer is
+fit to run 11.6, and the objective — not the search — is what to fix first.**
+Method, matrix and numbers: `docs/optimizer-audit.md`.
+
+- [x] Benchmark harness `cmd/opt-bench`, four cases (5/9/20/39 knobs), five
+      seeds, `random` and `halton` controls at equal eval budgets
+- [x] Render-free synthetic screening (`OPT_SCREEN=1`, `just opt-screen`)
+- [x] A round costs **47.7 evaluations per iteration, not the 20 the derivation
+      assumes**, so `--mayfly-round-evals` does not mean what it says and rounds
+      truncate around iteration 5 of 12. Fixing the derivation changes search
+      behaviour, so it wants a branch that can re-run the matrix.
+- [x] The incumbent was never seeded into the swarm. Now `--mayfly-warm-start`;
+      largest single win measured on the joint IR fit (0.513 → 0.494)
+- [x] `--mayfly-stagnation 15` was bit-identical to baseline — a 12-iteration
+      round can never reach a 15-iteration window
+- [x] Spectral saturation confirmed on every case: the winner is pinned at the
+      clamp under `attack-v1`, `decay-v1` and `legacy-v1` alike, so a fifth to a
+      third of the weight carries no gradient. This is model distance, not a
+      normalization bug — the calibrated norm is exceeded by about two decibels.
+- [x] Halton generator extracted to **`github.com/cwbudde/qmc`** and fixed. The
+      private copy did not scramble, so over 39 knobs and 600 points its
+      adjacent coordinates correlated at 0.81 and the control was not filling
+      its box. `--search halton` now scrambles and burns in; the joint sweep
+      keeps the plain sequence by default (`--sweep-joint-scramble` opts in) so
+      recorded sweep reports still reproduce bit-for-bit.
+- [ ] Re-measure saturation once the 11.1–11.4 model fixes land. If the spectral
+      term comes back inside its norm, the search has more signal than anything
+      measured here, and the round-length and warm-start items are worth
+      re-testing against it.
+
 ### Tools created
 
 #### `cmd/spectral-compare`
