@@ -132,7 +132,20 @@ Per-note behavior:
   position cannot express "next sample" — `injectionOffset` maps `[0,1]` affinely onto the
   round trip, so even its smallest input is ~1% of it (1 sample at MIDI 60, 17 at MIDI 21),
   which is why this has its own entry point. `NewStringBank` clamps the strength to
-  `maxUnisonCrossfeed`. This is what produces unison beating and the two-stage decay.
+  `maxUnisonCrossfeed`. This is what produces unison **beating**.
+- A second, orthogonal term damps the group's **common** motion: the force on string `i` is
+  `-bridge_coupling * g_i * mix`, injected through the same entry point. The two are not
+  re-voicings of each other. Written as matrices on `y`, the crossfeed is
+  `c*(g g^T - diag(g))`, which **annihilates the in-phase vector** — when the strings move
+  together `mix == y_i` and it is identically zero at any `c`, so it damps relative motion
+  only. The bridge term is `-b * g g^T`, which damps the in-phase motion alone. That
+  ordering is the double decay: the hammer drives the strings in phase, so the note opens in
+  the mode the bridge drains fastest (the **prompt**), and detune then rotates the energy
+  into out-of-phase motion that cancels at the bridge and rings on (the **aftersound**).
+  The `g_i` weight is load-bearing — without it the energy pairing `sum(y_i*F_i)` becomes
+  sign-indefinite for unequal gains and the term can add energy. `NewStringBank` clamps to
+  `maxBridgeCoupling`. See `piano/bridge_coupling.go` for the derivation and the measured
+  stability sweep.
 
 ## 3.2 Modal Mode (`string_model = "modal"`)
 
@@ -170,19 +183,28 @@ Key knobs:
 
 Unison coupling:
 
-- The strings of a modal group are coupled the same way as in the waveguide core, with the
-  force on string `si` proportional to `unison_crossfeed * 0.08 * g_i * (sample -
-stringOut[si])` — the difference between the bridge mix and that string's own contribution
-  to it. It is written into the first mode of each string only, which the very next
-  rotate-decay step reads, so the modal core needs no equivalent of
-  `StringWaveguide.InjectForceNext`.
-- The subtraction is what makes the sign correct: a string louder than the bridge is pushed
-  back, never further. The Jensen argument the waveguide core can make does not transfer,
-  because the correction lands on mode 0 instead of being distributed over the string's
-  modes, so the modal term is fenced by measurement (`modal_unison_coupling_test.go`) rather
-  than by construction. Before 2026-08-23 the force was `sample * c * 0.08` added into every
-  string with no subtraction, which added 9–14% of a note's energy at the default crossfeed
-  and diverged at `maxUnisonCrossfeed`.
+- The strings of a modal group carry both terms the waveguide core does, scaled by
+  `modalCrossfeedScale` (0.08): `unison_crossfeed * 0.08 * g_i * (sample - stringOut[si])`
+  for the relative motion, and `-bridge_coupling * 0.08 * g_i * sample` for the common
+  motion. The modal core needs no equivalent of `StringWaveguide.InjectForceNext` — the very
+  next rotate-decay step reads the state the force is written into, which is already the
+  shortest path a modal bank has.
+- The force is **distributed over each string's modes in proportion to `g.gain`**, the same
+  shape the string is read through (`y_si = sum(gain[i]*re[i])`). That collocation is what
+  lets the bridge term claim the same strict energy bound in this core that the waveguide
+  core gets: the change in `sum(re²+im²)` is `2·alpha·y_si`, summing to `-2·b·sample² ≤ 0`.
+- The crossfeed's own bound is weaker and stays weaker: it is fenced at 1.02x by measurement
+  (`modal_unison_coupling_test.go`) rather than by construction. That tolerance was long
+  attributed to the force landing on mode 0; distributing it in 14.2 left the measured range
+  unchanged (0.99951–1.00729), so the residual belongs to the difference form on modal state,
+  where Jensen's inequality does not close, and not to the injection site.
+- Before 2026-08-23 the force was `sample * c * 0.08` added into every string with no
+  subtraction, which added 9–14% of a note's energy at the default crossfeed and diverged at
+  `maxUnisonCrossfeed`.
+- **Double decay is not observable in this core**, and the envelope tests are DWG-only. Its
+  notes fall 40 dB in 0.099–0.124 s against unison beat periods of 0.88–1.84 s — 9–15 decays
+  per beat cycle — so the detune never gets time to rotate energy into the out-of-phase mode
+  the aftersound lives in. `TestModalDecayOutrunsItsUnisonBeat` fails if that stops holding.
 
 Damper semantics:
 
@@ -314,6 +336,7 @@ Preset loader (`preset/json.go`) validates and applies:
 - IR paths
 - hammer scales
 - string model and modal knobs
+- unison coupling (`unison_detune_scale`, `unison_crossfeed`, `bridge_coupling`)
 - coupling mode and parameters
 - per-note overrides:
   - `f0`

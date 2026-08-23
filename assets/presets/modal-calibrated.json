@@ -18,6 +18,7 @@
   "hammer_contact_time_scale": 1.0654026,
   "unison_detune_scale": 0.9019648,
   "unison_crossfeed": 0.0037426183,
+  "bridge_coupling": 0.0,
   "string_model": "modal",
   "modal_partials": 20,
   "modal_gain_exponent": 1.6002105,

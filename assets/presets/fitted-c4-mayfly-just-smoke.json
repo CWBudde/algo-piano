@@ -14,6 +14,7 @@
   "hammer_contact_time_scale": 1.0893513,
   "unison_detune_scale": 1.7467353,
   "unison_crossfeed": 0.00057798845,
+  "bridge_coupling": 0.0,
   "soft_pedal_strike_offset": 0.08,
   "soft_pedal_hardness": 0.78,
   "per_note": {

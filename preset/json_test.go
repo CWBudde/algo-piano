@@ -31,6 +31,7 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
   "hammer_contact_time_scale": 0.9,
   "unison_detune_scale": 0.8,
   "unison_crossfeed": 0.001,
+  "bridge_coupling": 0.03,
   "string_model": "modal",
   "modal_partials": 10,
   "modal_gain_exponent": 1.4,
@@ -87,6 +88,7 @@ func TestLoadJSONAppliesGlobalAndPerNote(t *testing.T) {
 		p.HammerContactTimeScale != 0.9 ||
 		p.UnisonDetuneScale != 0.8 ||
 		p.UnisonCrossfeed != 0.001 ||
+		p.BridgeCoupling != 0.03 ||
 		p.StringModel != "modal" ||
 		p.ModalPartials != 10 ||
 		p.ModalGainExponent != 1.4 ||

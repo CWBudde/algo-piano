@@ -57,6 +57,7 @@ type Params struct {
 
 	UnisonDetuneScale float32
 	UnisonCrossfeed   float32
+	BridgeCoupling    float32
 	StringModel       StringModel
 	ModalPartials     int
 	ModalGainExponent float32
@@ -142,6 +143,41 @@ const DefaultResonanceGain = float32(0.00018)
 // the coupling does and maxUnisonCrossfeed for the range it is stable over.
 const DefaultUnisonCrossfeed = float32(0.0008)
 
+// DefaultBridgeCoupling is how strongly the COMMON motion of a unison is damped
+// by the bridge, which is the half of the coupling that produces double decay.
+// See bridgeCouplingForce for what the term does and maxBridgeCoupling for the
+// range it is stable over.
+//
+// It is deliberately a separate knob from DefaultUnisonCrossfeed and not a
+// re-voicing of it: the two damp orthogonal motions. unison_crossfeed damps
+// RELATIVE motion and vanishes when the strings already move together;
+// bridge_coupling damps the common motion and vanishes when they cancel at the
+// bridge.
+//
+// 0.035 is chosen from measured decay PROLONGATION - how much longer a note
+// takes to fall 40 dB than its own prompt slope predicts, which is 1.0 for a
+// single exponential (see decayProlongation). DWG core, one note struck under a
+// held pedal, unison_crossfeed = 0, 30 s:
+//
+//	b        note 60   note 67   note 72   note 76   |  same, unison_detune_scale = 0
+//	0             -      0.93      0.91      1.00    |   -     1.01   1.02   1.11
+//	0.02       2.54      2.49      3.67      2.95    |  1.04   1.04   1.05   1.01
+//	0.035      4.35      3.96      3.54      2.94    |  1.01   1.05   1.00   1.02
+//	0.05       5.46      4.86      4.59      3.73    |  1.02   1.06   1.03   1.04
+//	0.1        5.49      4.63      6.86      3.80    |  1.03   1.17   1.12   1.15
+//
+// The right-hand block is the control that makes the left one mean something:
+// with the detune removed the whole motion is common motion, there is no
+// out-of-phase mode to ring on, and the prolongation stays at 1.0 at EVERY
+// strength. So the left block is the prompt/aftersound split and not an artefact
+// of the term merely being present.
+//
+// 0.035 sits above the b >~ 0.026 the effect needs, 2.9x under
+// maxBridgeCoupling, and deep inside the stable region of that constant's sweep.
+// Note 60 has no b = 0 entry because an uncoupled note 60 never falls 40 dB
+// inside 30 s.
+const DefaultBridgeCoupling = float32(0.035)
+
 // NewDefaultParams creates default parameters.
 func NewDefaultParams() *Params {
 	return &Params{
@@ -168,6 +204,7 @@ func NewDefaultParams() *Params {
 		HighFreqDamping:            0.05,
 		UnisonDetuneScale:          1.0,
 		UnisonCrossfeed:            DefaultUnisonCrossfeed,
+		BridgeCoupling:             DefaultBridgeCoupling,
 		StringModel:                StringModelDWG,
 		ModalPartials:              8,
 		ModalGainExponent:          1.1,

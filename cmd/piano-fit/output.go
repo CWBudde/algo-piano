@@ -359,6 +359,7 @@ func writePresetJSON(path string, p *piano.Params) error {
 		HighFreqDamping            float32              `json:"high_freq_damping,omitempty"`
 		UnisonDetuneScale          float32              `json:"unison_detune_scale,omitempty"`
 		UnisonCrossfeed            float32              `json:"unison_crossfeed,omitempty"`
+		BridgeCoupling             float32              `json:"bridge_coupling,omitempty"`
 		SoftPedalStrikeOffset      float32              `json:"soft_pedal_strike_offset,omitempty"`
 		SoftPedalHardness          float32              `json:"soft_pedal_hardness,omitempty"`
 		AttackNoiseLevel           float32              `json:"attack_noise_level,omitempty"`
@@ -408,6 +409,7 @@ func writePresetJSON(path string, p *piano.Params) error {
 		HighFreqDamping:            p.HighFreqDamping,
 		UnisonDetuneScale:          p.UnisonDetuneScale,
 		UnisonCrossfeed:            p.UnisonCrossfeed,
+		BridgeCoupling:             p.BridgeCoupling,
 		SoftPedalStrikeOffset:      p.SoftPedalStrikeOffset,
 		SoftPedalHardness:          p.SoftPedalHardness,
 		AttackNoiseLevel:           p.AttackNoiseLevel,

@@ -15,6 +15,12 @@ func couplingProbeParams(crossfeed float32) *Params {
 	params.CouplingEnabled = false
 	params.CouplingMode = CouplingModeOff
 	params.UnisonCrossfeed = crossfeed
+	// Pinned to zero so these stay tests of the CROSSFEED. The bridge term
+	// damps the common motion far harder than the crossfeed damps the
+	// relative one, so at its shipped default the note is already silent by
+	// the reference window these ratios are taken against - and every number
+	// below would quietly become a measurement of bridge_coupling instead.
+	params.BridgeCoupling = 0
 	return params
 }
 

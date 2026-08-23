@@ -257,7 +257,7 @@ func (sb *StringBank) ProcessUndampedTargetCouplingOnly(numFrames int, hammer *H
 			if g == nil || !g.active {
 				continue
 			}
-			s := g.processSample(sb.unisonCrossfeed)
+			s := g.processSample(sb.unisonCrossfeed, sb.bridgeCoupling)
 			sb.sampleOut[note] = s
 			mix += s
 			sf := float64(s)
