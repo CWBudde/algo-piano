@@ -273,6 +273,22 @@ bank was the defect itself, so there is deliberately no second injection path
 left. Probes that need to drive the bank with a known signal pass a `drive`
 slice to `processWithBridge`.
 
+**Level and stability are one decision.** The loop is exactly linear in
+`resonance_gain`, so every increase buys proportional sympathetic level and there
+is no saturation to stop it: the useful range runs right up to the critical gain.
+Measured 2026-08-23, the DWG core's critical gain is 0.000741 (44.1 kHz binds,
+because the injection lag is one sample and so a larger fraction of a period
+there). `resonance_gain` is therefore clamped at `piano.maxResonanceGain` =
+0.00037, half the critical gain, and the shipped default of 0.00025 sits a third
+of the way under it. The modal core is about 1000x further from its own cliff and
+is bounded by inheritance, not by its own measurement.
+
+Note what this means for headroom: 2.96x under the cliff **is** the safety
+margin, not spare level on top of one. The `noteResonator` normalisation cost
+−45.3 dB at A0 against −8.3 at MIDI 96, and no scalar has that shape — closing
+that gap needs wider resonator bandwidths, more partials or per-target injection
+scaling, not more gain.
+
 One thing deliberately stayed at block rate: `syncResonatingNotes` enrolls
 newly energized groups once per block, because `activeNotes` and the modal arena
 layout are fixed for a block's duration. That costs one block per group at first
@@ -350,6 +366,9 @@ Preset loader (`preset/json.go`) validates and applies:
 - hammer scales
 - string model and modal knobs
 - unison coupling (`unison_detune_scale`, `unison_crossfeed`, `bridge_coupling`)
+- sympathetic resonance (`resonance_enabled`, `resonance_gain`,
+  `resonance_per_note_filter`). `resonance_gain` is validated non-negative by the
+  loader and clamped above at `piano.maxResonanceGain` when the engine is built
 - coupling mode and parameters
 - per-note overrides:
   - `f0`

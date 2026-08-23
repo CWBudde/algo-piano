@@ -23,12 +23,114 @@ type ResonanceEngine struct {
 	lpState       float32
 }
 
+// maxResonanceGain is the ceiling NewResonanceEngine clamps ResonanceGain to.
+//
+// This parameter had no upper bound at all until 2026-08-23, alone among the
+// three that close a feedback path around the string bank: maxUnisonCrossfeed
+// (ringing.go) and maxBridgeCoupling (bridge_coupling.go) have always been
+// enforced. It is also the only one of the three that actually diverges the
+// renderer at a value a hand-edited preset may legally ask for - resonance_gain
+// 0.005 reaches 1.3e12 over 120 s.
+//
+// THE MARGIN RUNS DOWNWARD FROM THE CLIFF, which is the opposite of its two
+// siblings and is why the factor looks small next to theirs. maxUnisonCrossfeed
+// sits 25x BELOW its divergence and maxBridgeCoupling 5x below, because for
+// those terms the useful range is far under the unstable one. Here the useful
+// range runs right up to the cliff: the loop is linear in this gain, so every
+// increase buys proportional sympathetic level, and a clamp set above the
+// critical gain would enforce nothing at all. So the bound is a safety factor
+// on a measured critical gain, not a headroom multiple on a shipped value.
+//
+// Measured 2026-08-23 (Go 1.26.5, linux/amd64) by two independent estimators,
+// pooled by taking the minimum:
+//
+//   - the CLOSED-LOOP decay rate sigma, in dB/s, by least squares over 5 s RMS
+//     windows of a 120 s pedal-held render, skipping the first five. sigma = 0
+//     is the stability boundary exactly, and the critical gain is its root.
+//
+//   - the OPEN-LOOP certificate, g_probe * resonanceProbeSettleFraction /
+//     reading. The loop is exactly linear in this gain - measured constant to
+//     eight significant figures over 0.00025/0.0005/0.001 on both cores - so one
+//     probe run certifies every gain, which is what made a wide sweep
+//     affordable at all.
+//
+//     axis                                   sigma root   certificate
+//     dwg 48 kHz, filter on                    0.000830      0.000756
+//     dwg 44.1 kHz, filter on                  0.000796      0.000741  <- binds
+//     dwg 96 kHz, filter on                           -      0.000981
+//     dwg 48 kHz, filter off                          -      0.003274
+//     modal, any rate                                 -      0.70-1.00
+//
+// 44.1 kHz diverges before 48 kHz for the same reason it does for
+// bridge_coupling: the injection lag is one SAMPLE, so it is a larger fraction
+// of a period at the lower rate. The certificate reads low against the sigma
+// root because the DWG probe never settles inside its budget and 0.73 is
+// measured at a hotter configuration than these; it is a conservative bound by
+// construction, and pooling by minimum keeps it that way.
+//
+// So G* = 0.000741, and the bound is G*/2. The pre-committed factor is 2 rather
+// than the 5 or 25 the siblings carry because G* here is measured directly by
+// root-finding rather than inferred, and tighter than that because this
+// parameter has a documented history of the probes measuring the wrong thing:
+// the same renderer once diverged at 0.00025 while the open-loop probe read
+// 0.174 against a bound of 0.5. See maxResonanceLoopGain.
+//
+// CONFIRMED AT THE CLAMP on every axis the certificate cannot see. The open-loop
+// probe holds the pedal down and drives a synthetic sine, so it ignores which
+// notes were struck, at what velocity, how far the pedal is down and whether
+// inter-note coupling runs: every such row returns an identical number. Those
+// questions have to be answered by the closed-loop render, and are, in sigma at
+// g = maxResonanceGain against the same render at g = 0 (60 s, 48 kHz):
+//
+//	axis                          sigma(0)   sigma(clamp)
+//	six-note chord, v100           -0.2114        -0.1888
+//	bass 21/24/28/33               -0.1270        -0.1311
+//	treble 72/79/84/88            (silent)        -0.1930
+//	velocity 127                   -0.2179        -0.1967
+//	velocity 20                    -0.2047        -0.1742
+//	single note 33                 -0.1929        -0.1856
+//	half pedal (0.35)              -0.2114        -0.1891
+//	inter-note coupling physical   -0.2114        -0.1888
+//
+// Every row is negative at the clamp, and the bass row is MORE negative than its
+// own uncoupled arm. Velocity moves sigma a little in both arms (the hammer
+// decides which modes are energised, so a finite render sees a slightly
+// different dominant mode) but it does not move the boundary: the loop is linear
+// above injectSample's 1e-8 gate, which sits ~181 dB under a struck chord and is
+// never reached in a 120 s render, and a deadzone can only ever REMOVE loop
+// gain, so the linear reading is already the worst case.
+//
+// Two rows are equal to their reference by construction rather than by accident,
+// and are kept because a reader will otherwise assume a harness bug. Half pedal:
+// every note here is key-down, so pedal depth cannot change ITS damper state,
+// and any sustain > 0 undamps all the others exactly as 1.0 does. Coupling:
+// 50364 of 51200 samples differ between the two renders, so it is certainly
+// running - it redistributes energy between notes without adding or removing it,
+// so it moves the waveform and not the dominant eigenvalue. That invariance is
+// the reason sigma is the statistic here and a peak ratio is not.
+//
+// The treble sigma(0) is (silent) rather than a number: that render reaches
+// digital silence inside 60 s, so a fit there measures the floor and not the
+// loop. Its clamp arm is a real measurement.
+//
+// Nothing in assets/presets is affected - every preset pins 0.00025 - and
+// cmd/piano-fit has no resonance knob, so no fit can reach this either.
+const maxResonanceGain = float32(0.00037)
+
 func NewResonanceEngine(sampleRate int, injectionGain float32, perNoteFilter bool) *ResonanceEngine {
 	if sampleRate < 8000 {
 		sampleRate = 8000
 	}
 	if injectionGain < 0 {
 		injectionGain = 0
+	}
+	// A preset is a JSON file a human can edit, so the gain is clamped rather
+	// than trusted, exactly as NewStringBank clamps its two coupling strengths.
+	// This is the single funnel: Piano and the probe banks both build their
+	// engine here. Probes that must exceed the clamp write injectionGain
+	// directly afterwards.
+	if injectionGain > maxResonanceGain {
+		injectionGain = maxResonanceGain
 	}
 	cutoffHz := 3200.0
 	a := float32(math.Exp(-2.0 * math.Pi * cutoffHz / float64(sampleRate)))
@@ -128,17 +230,19 @@ func newNoteResonator(sampleRate int, centerHz float32, bandwidthHz float32, gai
 	w0 := 2.0 * math.Pi * f0 / fs
 	a1 := float32(2.0 * r * math.Cos(w0))
 	a2 := float32(-(r * r))
-	// Unity peak gain, normalised at the response's true maximum.
+	// Unity gain at the tuned partial.
 	//
 	// H(z) = b0 / (1 - a1 z^-1 - a2 z^-2) with poles at r*e^(+-j*w0), so
 	// |H(e^jw)| = b0 / |D(w)| with
 	//
 	//	|D(w)|^2 = (1 - a1*cos(w) - a2*cos(2w))^2 + (a1*sin(w) + a2*sin(2w))^2
 	//
-	// Setting b0 to |D| at the frequency where it is smallest makes the peak
-	// exactly one. The naive b0 = 1-r instead peaks at roughly 1/(2*sin(w0)),
-	// a 1/f0 law that reached 183x at A0 and pushed the summed sympathetic
-	// loop past unity in the bass; see the Phase 9.6 notes in PLAN.md.
+	// Setting b0 to |D(w0)| therefore makes the gain AT the tuned partial
+	// exactly one - which is the choice made here, and deliberately not the
+	// |D| minimum that would instead cap the peak; see below. The naive
+	// b0 = 1-r peaks at roughly 1/(2*sin(w0)), a 1/f0 law that reached 183x
+	// at A0 and pushed the summed sympathetic loop past unity in the bass;
+	// see the Phase 9.6 notes in PLAN.md.
 	//
 	// Normalisation is at w0 — the partial the resonator is tuned to — and
 	// deliberately NOT at the response's true maximum.

@@ -163,14 +163,31 @@ assert equality with no tolerance.
   injection path at all
 - `TestDWGSustainedBankDecaysWithoutResonance` (`resonance_growth_test.go`) — six notes struck
   once under a held pedal, resonance off, coupling off: the DWG output must fall to 0.138x of
-  its 25-30 s peak by 120 s. Measured 0.1275. Until the unison coupling was made dissipative
-  on 2026-08-23 this same render **grew** 1.21x over 120 s and 5.41x over 300 s, and the test
-  recorded that as a fence on a known-bad number
+  its 25-30 s peak by 120 s. **Measured 0.1322**, 96% of the bound. Until the unison coupling
+  was made dissipative on 2026-08-23 this same render **grew** 1.21x over 120 s and 5.41x over
+  300 s, and the test recorded that as a fence on a known-bad number
 - `TestDWGResonanceSustainedDecayIsFenced` (`resonance_growth_test.go`) — the same render with
-  the loop on at the shipped `resonance_gain` 0.00025: 0.1338 against the 0.1275 above, i.e.
-  the sympathetic path costs about 5% of the ratio and the render still ends 17 dB below its
-  own reference window. It used to read 5.06x, which was read at the time as the resonance
+  the loop on at the shipped `resonance_gain` 0.00025: **0.1392** against the 0.1322 above,
+  i.e. the sympathetic path costs about 5% of the ratio and the render still ends 17 dB below
+  its own reference window. It used to read 5.06x, which was read at the time as the resonance
   loop being unstable; it was not, it was compounding a plant that was already above unity
+- Both numbers above were re-measured on 2026-08-23 for PLAN.md 14.3, after 14.2 shipped a
+  non-zero `bridge_coupling` default into the params these renders use without re-measuring
+  them. They previously read 0.1270 / 0.1331 in the test file and 0.1275 / 0.1338 here — three
+  sites, two renders, no two agreeing. All are superseded by one measurement on one revision.
+  **Neither bound moved**: the measured+8% convention would have widened both, and the
+  no-loosening rule in `assets/thresholds/c4.json` outranks it
+- `TestResonanceGainIsClamped` (`resonance_test.go`) — `NewResonanceEngine` enforces
+  `maxResonanceGain`, through `NewPiano` as well, and is inert at or under the bound. A
+  plumbing test: it cannot tell whether the bound is the right number
+- `TestResonanceGainStaysFiniteBeyondTheClamp` (`resonance_test.go`) — 2x and 5x the clamp with
+  the clamp bypassed. Only 2x/5x, not the 25x `maxUnisonCrossfeed` carries, because this bound
+  sits just **under** a real cliff rather than far below one; past roughly 4x the render is
+  supposed to grow, and what is asserted is that it stays finite
+- `TestZeroResonanceGainIsSilentNotDefault` (`resonance_test.go`) — `resonance_enabled: true`
+  with `resonance_gain: 0` must render **bit-identically** to resonance off, with a control
+  proving the probe can see the loop at the default gain. Until 2026-08-23 `NewPiano` gated on
+  `ResonanceGain > 0` and silently substituted the default
 
 ### Unison bridge coupling (`unison_coupling_test.go`)
 

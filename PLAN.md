@@ -621,28 +621,98 @@ blocked by nothing.
 
 ### 14.3 — Recover sympathetic resonance level
 
-The `noteResonator` normalisation is correct, but it removed the mechanism that
-made sympathetic resonance audible, and the loss is register-dependent rather
-than flat: −45.3 dB at A0, −38.0 at MIDI 36, −26.1 at C4, −14.2 at MIDI 84,
-−8.3 at MIDI 96. Interleaving took back 13.3 dB (DWG) / 13.0 dB (modal) without
-touching a scalar, which is what "a scalar cannot bring it back" predicted. With
-the unison coupling corrected the headroom is back and measurable: the unity
-crossing sits at `resonance_gain` ≈ 0.00092, so the shipped 0.00025 is **3.7x
-under the ceiling**, worth about +11 dB before stability binds again.
+- [x] Done 2026-08-23. A stability margin study, an enforced `maxResonanceGain`,
+      and a **+2.9 dB raise of the Params default only** — no shipped voice
+      changes. The headroom this item was built on does not exist, and retracting
+      that claim is the main result.
 
-**This item must not be closed by turning the knob up.** Three things first:
+      **The premise was a unit error.** 14.3 read the shipped 0.00025 as "3.7x
+      under the ceiling, worth about +11 dB" of spendable headroom. Measured, the
+      critical gain is `G* = 0.000741`, so 0.00025 sits **2.96x** under it — and
+      that ratio *is* the safety margin, not headroom on top of one. Spending it
+      to reach the cliff would leave a margin of 1.0x. For comparison
+      `maxBridgeCoupling` ships with 5x and `maxUnisonCrossfeed` with 25x. The
+      +11 dB is not available; the honest number is what a 3x margin allows,
+      which is where the default already should have been.
 
-- [ ] Run a **stability margin study across registers and velocities**. The
-      0.00092 cliff is one render — six notes, one velocity, coupling off — and
-      the margin a shipped preset needs is a separate question from where a
-      render diverges.
-- [ ] Respect the standing rejection recorded in `assets/thresholds/c4.json`:
-      re-voicing `resonance_gain` to buy back `spectral_rmse_db` was rejected on
-      **spectral** grounds, not stability grounds, so that rejection survives the
-      stability fix.
-- [ ] Plan the re-fit that follows. Every shipped preset would have to be
-      re-fitted afterwards — the third such debt in this area. It is scheduled as
-      **17.1**.
+      **Method.** Two independent estimators, pooled by minimum. The loop is
+      **exactly linear** in `resonance_gain` — `loopGain/gain` measured constant
+      to eight significant figures on both cores — so the open-loop certificate
+      `g_probe * settleFraction / reading` certifies every gain from one probe
+      run, which is what made a wide sweep affordable. The closed-loop statistic
+      is the decay rate **sigma in dB/s**, by least squares over 5 s RMS windows
+      of a 120 s pedal-held render, skipping the first five. Sigma = 0 is the
+      stability boundary exactly, where the previously used last/reference peak
+      ratio is `10^(sigma*dt/20)` — a warped coordinate whose 8% fence means 3.8%
+      on the rate at 90 s and something else at any other length.
+
+      	axis                        sigma root   certificate
+      	dwg 48 kHz, filter on         0.000830      0.000756
+      	dwg 44.1 kHz, filter on       0.000796      0.000741  <- binds
+      	dwg 96 kHz, filter on                -      0.000981
+      	dwg 48 kHz, filter off               -      0.003274
+      	modal, any rate                      -      0.70-1.00
+
+      **44.1 kHz binds**, for the reason 14.2 found for `bridge_coupling`: the
+      injection lag is one SAMPLE, so it is a larger fraction of a period there.
+      Neither this loop's tables nor the crossfeed's had ever checked a second
+      rate. The three estimates of the DWG cliff — certificate 0.000741, sigma
+      root 0.000796, and the old peak-ratio 0.00092 — agree to within 20%, and
+      the certificate reads low by construction because the DWG probe never
+      settles.
+
+      `maxResonanceGain = 0.00037` (`G*/2`) and `DefaultResonanceGain = 0.00025`
+      (`G*/3` = 0.000247, rounded to the value every preset already pins). Both
+      factors were fixed before the numbers were in. **The clamp's margin runs
+      DOWNWARD from the cliff**, unlike its two siblings: the loop is linear, so
+      the useful range runs right up to the critical gain and a clamp above it
+      would enforce nothing.
+
+      **What velocity and register turned out to be.** The closed loop is LTI
+      above `injectSample`'s 1e-8 deadzone, which sits ~181 dB below a struck
+      chord's peak and is never reached in a 120 s render at any velocity — and a
+      deadzone can only ever REMOVE loop gain, so the linear analysis is already
+      the worst case. Under a held pedal all 88 groups are injection targets
+      whichever notes were struck, so register selects only the initial
+      condition. Both are therefore controls rather than axes, and the study says
+      so with measurements instead of dropping them. Worth recording that the
+      open-loop probe is structurally **blind** to register, velocity, pedal
+      depth and inter-note coupling — every such row returns an identical number
+      — so those questions can only be answered by the closed-loop render.
+
+      **`gate-c4` is bit-identical, and structurally so**: it renders
+      `fitted-c4-mayfly.json`, which pins `resonance_gain` explicitly, as do all
+      eight presets. So unlike 14.2 no preset-pinning pass was needed at all, and
+      spectral stands at 77.35 against 78.30. Nothing was loosened.
+
+      Two latent defects in the same parameter were fixed on the way: a
+      `resonance_gain,omitempty` in `cmd/piano-fit/output.go` (the defect review
+      caught on `bridge_coupling` in #40, older than that feature and disagreeing
+      with `cmd/piano-modal-fit`), and `NewPiano` gating on `ResonanceGain > 0`,
+      which made a deliberate zero indistinguishable from an unset field.
+
+- [x] The `assets/thresholds/c4.json` citation was **false and is corrected**.
+      `resonance_gain` appears zero times in that file, in all nine commits that
+      ever touched it. The rejection was real but lived in
+      `docs/plans/2026-08-23-resonance-and-coupling.md` (deleted in `65e2738`),
+      and it was made on **stability** grounds — "0.001 squarely in the marginal
+      band" — not spectral ones.
+
+      It is now **moot rather than standing**. Its 22 dB lever (0 -> 75.8 dB,
+      0.00025 -> 62.2, 0.001 -> 56.5, 0.002 -> 53.8) was measured on the
+      BLOCK-DEPOSIT renderer, where more gain meant more 375 Hz-spaced broadband
+      imaging masking the high band. The interleave deleted that artefact.
+      Re-measured on current main against `reference/c4.wav`: 0 -> 77.5,
+      0.00025 -> 77.4, 0.0005 -> 77.3, 0.001 -> 76.6, 0.002 -> 76.3. The whole
+      knob is worth **1.2 dB** of `spectral_rmse_db` and it moves in the helpful
+      direction. There is no spectral purchase left to make and therefore none to
+      refuse. What does still bind is that file's own rule — "The next thing that
+      touches this metric has to improve the model, not the number" — and this
+      change does not touch it.
+
+- [x] The re-fit remains **17.1**, which already owns it. Nothing here forces one:
+      no shipped preset's rendered output changes, because every preset pins this
+      knob and none of them is at the new default's old value.
 
 **Done when:** both cores' coupling terms are sign-correct and fenced against
 pumping the bank (done for the DWG core, and for the modal core in 14.1), unison

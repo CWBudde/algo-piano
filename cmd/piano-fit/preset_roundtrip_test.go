@@ -144,3 +144,50 @@ func TestWritePresetJSONStatesBridgeCouplingExplicitly(t *testing.T) {
 		}
 	}
 }
+
+// TestWritePresetJSONStatesResonanceGainExplicitly is the twin of the
+// bridge_coupling test above, for the field that carried the same defect for
+// far longer.
+//
+// DefaultResonanceGain is NON-ZERO, so zero is a meaningful value a
+// preset can hold: "resonance enabled, contributing nothing". Under omitempty
+// that zero vanished on write and reloading resurrected it as the default, so a
+// fit that legitimately drove the sympathetic path to silence wrote a preset
+// that rings.
+//
+// Unlike bridge_coupling this was never introduced by a feature commit - the
+// tag predates PLAN.md 14.2 - and cmd/piano-modal-fit has always written the
+// field unconditionally, so the two serialisers disagreed about the same knob.
+// Found while auditing the parameter for PLAN.md 14.3.
+func TestWritePresetJSONStatesResonanceGainExplicitly(t *testing.T) {
+	for _, gain := range []float32{0, piano.DefaultResonanceGain} {
+		params := piano.NewDefaultParams()
+		params.ResonanceEnabled = true
+		params.ResonanceGain = gain
+
+		path := filepath.Join(t.TempDir(), "preset.json")
+		if err := writePresetJSON(path, params); err != nil {
+			t.Fatalf("writePresetJSON: %v", err)
+		}
+
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile: %v", err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if _, ok := fields["resonance_gain"]; !ok {
+			t.Fatalf("resonance_gain missing from preset written with ResonanceGain=%v:\n%s", gain, raw)
+		}
+
+		loaded, err := preset.LoadJSON(path)
+		if err != nil {
+			t.Fatalf("LoadJSON: %v", err)
+		}
+		if loaded.ResonanceGain != gain {
+			t.Fatalf("resonance_gain round-trip: got %v want %v", loaded.ResonanceGain, gain)
+		}
+	}
+}

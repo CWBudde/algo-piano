@@ -22,11 +22,18 @@ func blockSizeProbeParams(model StringModel) *Params {
 	params.StringModel = model
 	params.ResonanceEnabled = true
 	params.ResonancePerNoteFilter = true
-	// Well above the 0.00018 default and the 0.00025 every shipped preset pins,
-	// but under the ~0.0009 the loop is stable to. The point is to make the loop
-	// a large term in the output rather than to render a plausible piano: at the
-	// default gain a mismatch could hide under the struck note's round-off.
-	params.ResonanceGain = 0.0005
+	// The hottest gain the engine will accept, so the loop is a large term in
+	// the output rather than a plausible piano: at the default gain a mismatch
+	// could hide under the struck note's round-off.
+	//
+	// This was the literal 0.0005 until 2026-08-23, described as "under the
+	// ~0.0009 the loop is stable to". That is still true of the loop, but 0.0005
+	// is now above maxResonanceGain, so NewResonanceEngine would have clamped it
+	// and the comment would have described a gain the probe was not running.
+	// Naming the constant keeps the probe at the top of the legal range
+	// automatically, the way the coupling probes use maxUnisonCrossfeed and
+	// maxBridgeCoupling.
+	params.ResonanceGain = maxResonanceGain
 	params.CouplingEnabled = false
 	params.CouplingMode = CouplingModeOff
 	return params

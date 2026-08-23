@@ -110,7 +110,16 @@ func NewPiano(sampleRate int, maxPolyphony int, params *Params) *Piano {
 	if params == nil || params.ResonanceEnabled {
 		gain := DefaultResonanceGain
 		perNoteFilter := true
-		if params != nil && params.ResonanceGain > 0 {
+		// >= 0, not > 0: the params != nil guard already covers the nil
+		// fallback, so the strict test only had the effect of making a
+		// DELIBERATE zero indistinguishable from an unset field. A preset
+		// asking for resonance_enabled true with resonance_gain 0 - "the loop
+		// is wired but contributes nothing" - silently got DefaultResonanceGain
+		// instead of silence. UnisonCrossfeed and BridgeCoupling both use >= 0
+		// for exactly this reason (NewStringBank); resonance was the odd one
+		// out. Paired with dropping omitempty in cmd/piano-fit/output.go, which
+		// was the other half of the same round trip.
+		if params != nil && params.ResonanceGain >= 0 {
 			gain = params.ResonanceGain
 		}
 		if params != nil {

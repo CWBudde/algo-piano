@@ -136,7 +136,36 @@ const (
 // room to compensate with a scalar. Raising it is a separate change that has to
 // come with a mechanism that widens the loop's margin, not just more gain. See
 // the Phase 9.6 notes in PLAN.md.
-const DefaultResonanceGain = float32(0.00018)
+//
+// RAISED 0.00018 -> 0.00025 on 2026-08-23 by the PLAN.md 14.3 margin study, and
+// the table above is superseded: it was measured on a plant that was itself
+// above unity, which is why 0.00018 reads as "flat (1.75)" there rather than as
+// a decay. The mechanism the paragraph above demanded did arrive - the unison
+// coupling fix of 14.1/14.2, which returned the loop to a real ceiling - so this
+// is that separate change, not a knob turn.
+//
+// It is a +2.9 dB move and it changes NO shipped voice. Every preset under
+// assets/presets already pins resonance_gain: 0.00025, including
+// assets/presets/default.json and the fitted preset gate-c4 renders, so this
+// constant is only what a bare NewDefaultParams() gets. What it fixes is that
+// the default was the one configuration nothing shipped and nothing fenced -
+// see shippedResonanceGain in resonance_growth_test.go, which had to name the
+// discrepancy to explain what it was testing.
+//
+// WHAT THE STUDY ACTUALLY FOUND, because it is not what 14.3 predicted. That
+// item read the shipped 0.00025 as "3.7x under the ceiling, worth about +11 dB"
+// of spendable headroom. Measured, the critical gain is G* = 0.000741 (44.1 kHz
+// binds; see maxResonanceGain for the full table), so 0.00025 sits 2.96x under
+// it. That ratio IS the safety margin, not headroom on top of one: spending it
+// to reach the cliff would leave a margin of 1.0x. The +11 dB is not available
+// and the claim is retracted rather than banked. This value is G*/3 and
+// maxResonanceGain is G*/2, both fixed before the numbers were in.
+//
+// Register-dependent level is untouched by any of this. The normalisation cost
+// -45.3 dB at A0 against -8.3 at MIDI 96, and no scalar has that shape; closing
+// it needs wider resonator bandwidths, more partials or per-target injection
+// scaling. That is deliberately not this change.
+const DefaultResonanceGain = float32(0.00025)
 
 // DefaultUnisonCrossfeed is how strongly the strings of a unison are coupled to
 // each other through the bridge. See RingingStringGroup.processSample for what
