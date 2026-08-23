@@ -280,43 +280,46 @@ func TestLoadDatasetAcceptsSummaryAsCompletion(t *testing.T) {
 	}
 }
 
-// TestTraceSpreadExcludesPenaltyScores pins that the spread describes the
-// landscape rather than the budget. piano-fit answers an exhausted budget with
-// "current best + 0.8" instead of a real score, and a run's trace ends in a
-// burst of those; counting them would make every objective look wide.
-func TestTraceSpreadExcludesPenaltyScores(t *testing.T) {
+// TestTraceSpreadCountsEveryRecord pins that the spread describes the whole
+// landscape. An earlier version trimmed values above 0.75, believing them to be
+// the objective's "current best + 0.8" penalty answers — but no penalty path
+// reaches trace.record, and 1.0 is a legitimate worst-case score because the
+// objective sums clamped components. Trimming removed exactly the wide tail
+// that distinguishes a flat objective from a concentrated swarm.
+func TestTraceSpreadCountsEveryRecord(t *testing.T) {
 	recs := make([]traceRecord, 0, 120)
 	for i := range 100 {
 		recs = append(recs, traceRecord{Eval: int64(i + 1), Aggregate: 0.40 + float64(i)*0.001})
 	}
 	for i := range 20 {
-		recs = append(recs, traceRecord{Eval: int64(101 + i), Aggregate: 1.2})
+		recs = append(recs, traceRecord{Eval: int64(101 + i), Aggregate: 1.0})
 	}
 
 	got := traceSpread(recs)
 	if !got.Valid {
 		t.Fatal("spread must be valid for a non-empty trace")
 	}
-	if got.P95 > penaltyFloor {
-		t.Errorf("p95 = %v, want the penalty tail excluded (below %v)", got.P95, penaltyFloor)
+	if got.P95 < 1.0 {
+		t.Errorf("p95 = %v, want the genuine worst-case tail of 1.0 retained", got.P95)
 	}
-	if got.IQR <= 0 || got.IQR > 0.1 {
-		t.Errorf("IQR = %v, want the real landscape's ~0.05", got.IQR)
+	if got.IQR < 0.02 {
+		t.Errorf("IQR = %v, want the full spread rather than the lower tail alone", got.IQR)
 	}
 }
 
-// TestTraceSpreadKeepsLandscapesAboveTheFloor guards the trim: a case whose
-// genuine scores sit above the penalty floor must not have its landscape
-// discarded as if it were all penalties.
-func TestTraceSpreadKeepsLandscapesAboveTheFloor(t *testing.T) {
+// TestTraceSpreadHandlesAFlatLandscape is the attack case in miniature: a run
+// whose proposals all sit inside a narrow band must report a correspondingly
+// tiny IQR, because that number is what the audit reads as swarm
+// concentration.
+func TestTraceSpreadHandlesAFlatLandscape(t *testing.T) {
 	recs := make([]traceRecord, 0, 100)
 	for i := range 100 {
-		recs = append(recs, traceRecord{Eval: int64(i + 1), Aggregate: 0.80 + float64(i)*0.001})
+		recs = append(recs, traceRecord{Eval: int64(i + 1), Aggregate: 0.4430 + float64(i%5)*0.0002})
 	}
 
 	got := traceSpread(recs)
-	if !got.Valid || got.Median < penaltyFloor {
-		t.Fatalf("spread %+v discarded a landscape that genuinely lives above %v", got, penaltyFloor)
+	if !got.Valid || got.IQR > 0.001 {
+		t.Fatalf("spread %+v must report a tiny IQR for a flat landscape", got)
 	}
 }
 
@@ -375,6 +378,61 @@ func TestLoadDatasetIgnoresSummaryRowsWithoutArtifacts(t *testing.T) {
 	for _, rec := range ds.Records {
 		if rec.OK {
 			t.Fatalf("a summary row with no artifacts must not become an observation: %+v", rec)
+		}
+	}
+}
+
+// TestEvalsMatchBudget pins both directions. Too few evaluations means the
+// search did not run; too many means the artifact belongs to a different,
+// larger matrix, which is what makes reusing an output directory at a new
+// --max-evals dangerous rather than merely wasteful.
+func TestEvalsMatchBudget(t *testing.T) {
+	cases := []struct {
+		name   string
+		evals  int
+		budget int
+		want   bool
+	}{
+		{"exact", 600, 600, true},
+		{"a hair early", 560, 600, true},
+		{"far short", 1, 600, false},
+		{"cached from a larger matrix", 2400, 600, false},
+		{"unknown budget", 2400, 0, true},
+		{"unknown evals", 0, 600, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := evalsMatchBudget(tc.evals, tc.budget); got != tc.want {
+				t.Errorf("evalsMatchBudget(%d, %d) = %v, want %v", tc.evals, tc.budget, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLoadDatasetSkipsOversizedRuns is the cached-cell hazard seen from the
+// report side: a 2400-evaluation cell must not be tabulated as if it had run
+// at 600.
+func TestLoadDatasetSkipsOversizedRuns(t *testing.T) {
+	outDir := t.TempDir()
+	dir := filepath.Join(outDir, "sustain", "baseline", "seed1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "result.json"),
+		[]byte(`{"best_score":0.30,"evaluations":2400,"elapsed_seconds":1300}`), 0o600); err != nil {
+		t.Fatalf("write result: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, completionMarker), []byte("ok\n"), 0o600); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	ds, err := loadDataset(outDir, dataset{OutDir: outDir, MaxEvals: 600})
+	if err != nil {
+		t.Fatalf("loadDataset: %v", err)
+	}
+	for _, rec := range ds.Records {
+		if rec.OK {
+			t.Fatalf("a 2400-eval cell must not count as a 600-eval observation: %+v", rec)
 		}
 	}
 }

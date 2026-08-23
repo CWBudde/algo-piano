@@ -281,8 +281,8 @@ func renderCases(b *strings.Builder, doc benchDoc) {
 func renderSpread(b *strings.Builder, cr caseReport) {
 	fmt.Fprintf(b, "### Proposed-score distribution (`%s`)\n\n", cr.Case)
 	b.WriteString("Median over seeds of each run's own trace quantiles, over every score the run proposed " +
-		"(not just the one it kept). Penalty scores, which report the budget rather than the landscape, " +
-		"are excluded.\n\n")
+		"(not just the one it kept). Every trace record counts: the objective sums clamped components, " +
+		"so 1.0 is a genuine worst case rather than a sentinel.\n\n")
 	b.WriteString("| Config | min | p05 | median | p95 | IQR |\n")
 	b.WriteString("| ------ | --- | --- | ------ | --- | --- |\n")
 	for _, cs := range cr.Configs {

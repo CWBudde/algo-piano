@@ -141,8 +141,8 @@ func executeOne(bin string, spec runSpec) runOutcome {
 	// dimensionality exceeded the base table used to exit 0 after its single
 	// seed evaluation, with a report that read like a finished run. A cell
 	// that did not spend its budget is not a fixed-budget observation.
-	if spec.MaxEvals > 0 && rep.Evaluations < minCompleteEvals(spec.MaxEvals) {
-		out.Error = fmt.Sprintf("run spent only %d of %d evaluations; the search did not run",
+	if !evalsMatchBudget(rep.Evaluations, spec.MaxEvals) {
+		out.Error = fmt.Sprintf("run spent %d evaluations against a budget of %d; the search did not run its budget",
 			rep.Evaluations, spec.MaxEvals)
 		out.ExitCode = -1
 
@@ -214,7 +214,8 @@ func runMatrix(ctx context.Context, bin string, specs []runSpec, jobs int, force
 					// search that never happened. Resuming against that would
 					// silently mix truncated runs into a fixed-budget
 					// comparison.
-					if rep, err := readCompletedReport(spec); err == nil {
+					if rep, err := readCompletedReport(spec); err == nil &&
+						evalsMatchBudget(rep.Evaluations, spec.MaxEvals) {
 						outcomes[i] = runOutcome{
 							Case: spec.Case, Config: spec.Config, Seed: spec.Seed, Dir: spec.Dir,
 							Skipped: true, OK: true, Complete: true, WallSeconds: rep.ElapsedSeconds,
@@ -232,6 +233,12 @@ func runMatrix(ctx context.Context, bin string, specs []runSpec, jobs int, force
 					}
 				}
 
+				// Clear any stale completion marker first. --force relaunches a
+				// cell that already has one, and piano-fit rewrites result.json
+				// at its first evaluation, so a replacement run that then dies
+				// would leave a partial report standing behind an old marker
+				// that still calls it complete.
+				clearCompletionMarker(spec.Dir)
 				res := executeOne(bin, spec)
 				outcomes[i] = res
 
@@ -323,6 +330,23 @@ func minCompleteEvals(budget int) int {
 	return budget - budget/10
 }
 
+// evalsMatchBudget reports whether a report describes a run of the requested
+// budget.
+//
+// Both directions matter. Too few evaluations means the search did not run.
+// Too many means the artifact belongs to a different, larger matrix — reusing
+// an output directory at a new --max-evals would otherwise let a cached
+// 2400-evaluation cell be skipped during a 600-evaluation run and then be
+// tabulated under a summary that claims 600, handing that configuration a
+// fourfold advantage over every cell that really ran at 600.
+func evalsMatchBudget(evals, budget int) bool {
+	if budget <= 0 || evals <= 0 {
+		return true
+	}
+
+	return evals >= minCompleteEvals(budget) && evals <= budget+budget/10
+}
+
 // completionMarker is the file name a finished run leaves in its directory.
 const completionMarker = "complete"
 
@@ -333,6 +357,12 @@ func writeCompletionMarker(dir string) bool {
 	path := filepath.Join(dir, completionMarker)
 
 	return os.WriteFile(path, []byte("ok\n"), 0o600) == nil
+}
+
+// clearCompletionMarker removes a cell's marker so only a run that finishes can
+// put it back. A missing marker is the safe state: it means "re-run this".
+func clearCompletionMarker(dir string) {
+	_ = os.Remove(filepath.Join(dir, completionMarker))
 }
 
 // readCompletedReport returns a run's report only when the run is known to have

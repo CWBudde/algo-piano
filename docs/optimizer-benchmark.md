@@ -38,16 +38,16 @@ Median over seeds of the incumbent `best` in the `--trace` JSONL, at fractions o
 
 ### Proposed-score distribution (`sustain`)
 
-Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Penalty scores, which report the budget rather than the landscape, are excluded.
+Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Every trace record counts: the objective sums clamped components, so 1.0 is a genuine worst case rather than a sentinel.
 
 | Config            | min      | p05      | median   | p95      | IQR      |
 | ----------------- | -------- | -------- | -------- | -------- | -------- |
-| `baseline`        | 0.353913 | 0.357522 | 0.453991 | 0.673836 | 0.194167 |
+| `baseline`        | 0.353913 | 0.357639 | 0.487015 | 0.963509 | 0.242383 |
 | `random`          | 0.441305 | 0.590987 | 0.930238 | 1.000000 | 0.228231 |
 | `halton`          | 0.411779 | 0.596814 | 0.923291 | 1.000000 | 0.226850 |
-| `long-round`      | 0.350981 | 0.357392 | 0.439145 | 0.663791 | 0.187408 |
-| `warm-long-round` | 0.342558 | 0.351203 | 0.388806 | 0.649757 | 0.153023 |
-| `warm-start`      | 0.346250 | 0.354570 | 0.397467 | 0.658313 | 0.153381 |
+| `long-round`      | 0.350981 | 0.357522 | 0.469385 | 0.936859 | 0.218075 |
+| `warm-long-round` | 0.342558 | 0.352253 | 0.408505 | 0.906405 | 0.175174 |
+| `warm-start`      | 0.346250 | 0.355163 | 0.427987 | 0.951435 | 0.212460 |
 
 ## Case `attack`
 
@@ -79,7 +79,7 @@ Median over seeds of the incumbent `best` in the `--trace` JSONL, at fractions o
 
 ### Proposed-score distribution (`attack`)
 
-Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Penalty scores, which report the budget rather than the landscape, are excluded.
+Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Every trace record counts: the objective sums clamped components, so 1.0 is a genuine worst case rather than a sentinel.
 
 | Config            | min      | p05      | median   | p95      | IQR      |
 | ----------------- | -------- | -------- | -------- | -------- | -------- |
@@ -120,16 +120,16 @@ Median over seeds of the incumbent `best` in the `--trace` JSONL, at fractions o
 
 ### Proposed-score distribution (`piano-mix`)
 
-Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Penalty scores, which report the budget rather than the landscape, are excluded.
+Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Every trace record counts: the objective sums clamped components, so 1.0 is a genuine worst case rather than a sentinel.
 
 | Config            | min      | p05      | median   | p95      | IQR      |
 | ----------------- | -------- | -------- | -------- | -------- | -------- |
-| `baseline`        | 0.537056 | 0.538603 | 0.562430 | 0.663642 | 0.034953 |
+| `baseline`        | 0.537056 | 0.538720 | 0.563926 | 0.791473 | 0.041135 |
 | `random`          | 0.569002 | 0.603378 | 0.797089 | 0.903363 | 0.171928 |
 | `halton`          | 0.561436 | 0.598630 | 0.806961 | 0.904423 | 0.174911 |
-| `long-round`      | 0.536695 | 0.538315 | 0.560641 | 0.650809 | 0.031350 |
-| `warm-long-round` | 0.537903 | 0.540213 | 0.556906 | 0.645474 | 0.027244 |
-| `warm-start`      | 0.538285 | 0.540495 | 0.558698 | 0.658858 | 0.029523 |
+| `long-round`      | 0.536695 | 0.538382 | 0.561480 | 0.732977 | 0.036169 |
+| `warm-long-round` | 0.537903 | 0.540253 | 0.558604 | 0.724818 | 0.031014 |
+| `warm-start`      | 0.538285 | 0.540534 | 0.560739 | 0.782843 | 0.036421 |
 
 ## Case `joint-ir`
 
@@ -161,16 +161,16 @@ Median over seeds of the incumbent `best` in the `--trace` JSONL, at fractions o
 
 ### Proposed-score distribution (`joint-ir`)
 
-Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Penalty scores, which report the budget rather than the landscape, are excluded.
+Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Every trace record counts: the objective sums clamped components, so 1.0 is a genuine worst case rather than a sentinel.
 
 | Config            | min      | p05      | median   | p95      | IQR      |
 | ----------------- | -------- | -------- | -------- | -------- | -------- |
-| `baseline`        | 0.512914 | 0.518686 | 0.552306 | 0.660620 | 0.054986 |
+| `baseline`        | 0.512914 | 0.519366 | 0.555389 | 0.834264 | 0.067819 |
 | `random`          | 0.557178 | 0.613377 | 0.809929 | 0.916178 | 0.155315 |
 | `halton`          | 0.548282 | 0.598829 | 0.807230 | 0.914884 | 0.153343 |
-| `long-round`      | 0.512914 | 0.517956 | 0.550571 | 0.657790 | 0.056008 |
-| `warm-long-round` | 0.494332 | 0.496802 | 0.542225 | 0.658043 | 0.050792 |
-| `warm-start`      | 0.494413 | 0.498118 | 0.545455 | 0.668396 | 0.052055 |
+| `long-round`      | 0.512914 | 0.518333 | 0.552060 | 0.802986 | 0.064207 |
+| `warm-long-round` | 0.494332 | 0.496891 | 0.545151 | 0.774150 | 0.062002 |
+| `warm-start`      | 0.494413 | 0.498360 | 0.549436 | 0.829082 | 0.071138 |
 
 ## Method
 

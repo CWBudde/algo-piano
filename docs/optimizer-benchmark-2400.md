@@ -36,15 +36,15 @@ Median over seeds of the incumbent `best` in the `--trace` JSONL, at fractions o
 
 ### Proposed-score distribution (`sustain`)
 
-Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Penalty scores, which report the budget rather than the landscape, are excluded.
+Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Every trace record counts: the objective sums clamped components, so 1.0 is a genuine worst case rather than a sentinel.
 
 | Config            | min      | p05      | median   | p95      | IQR      |
 | ----------------- | -------- | -------- | -------- | -------- | -------- |
-| `baseline`        | 0.343766 | 0.353212 | 0.458582 | 0.666301 | 0.173917 |
+| `baseline`        | 0.343766 | 0.354463 | 0.471788 | 0.959155 | 0.233604 |
 | `random`          | 0.416313 | 0.603575 | 0.926516 | 1.000000 | 0.225273 |
 | `halton`          | 0.409639 | 0.597357 | 0.921043 | 1.000000 | 0.229089 |
-| `long-round`      | 0.338633 | 0.339399 | 0.353351 | 0.598027 | 0.061846 |
-| `warm-long-round` | 0.338061 | 0.340366 | 0.350136 | 0.583341 | 0.033111 |
+| `long-round`      | 0.338633 | 0.339432 | 0.354416 | 0.635131 | 0.076539 |
+| `warm-long-round` | 0.338061 | 0.340430 | 0.350407 | 0.610512 | 0.041216 |
 
 ## Case `attack`
 
@@ -74,12 +74,12 @@ Median over seeds of the incumbent `best` in the `--trace` JSONL, at fractions o
 
 ### Proposed-score distribution (`attack`)
 
-Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Penalty scores, which report the budget rather than the landscape, are excluded.
+Median over seeds of each run's own trace quantiles, over every score the run proposed (not just the one it kept). Every trace record counts: the objective sums clamped components, so 1.0 is a genuine worst case rather than a sentinel.
 
 | Config            | min      | p05      | median   | p95      | IQR      |
 | ----------------- | -------- | -------- | -------- | -------- | -------- |
 | `baseline`        | 0.439954 | 0.444596 | 0.447334 | 0.487709 | 0.003947 |
-| `random`          | 0.439054 | 0.447279 | 0.476086 | 0.665824 | 0.063245 |
+| `random`          | 0.439054 | 0.447279 | 0.476086 | 0.666012 | 0.063245 |
 | `halton`          | 0.436636 | 0.447210 | 0.473942 | 0.660869 | 0.062966 |
 | `long-round`      | 0.441306 | 0.441921 | 0.445182 | 0.458510 | 0.005073 |
 | `warm-long-round` | 0.439693 | 0.439760 | 0.446215 | 0.454682 | 0.006180 |

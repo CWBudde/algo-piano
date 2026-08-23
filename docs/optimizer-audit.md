@@ -178,11 +178,20 @@ loses at 9. The proposed-score distributions say what actually happens:
 | `warm-start`        | 0.4425 | 0.4470 | 0.498 | **0.0034** |
 
 The samplers, which probe the box evenly, see an interquartile range of ~0.062.
-Every Mayfly configuration sees ~0.004. The convergence table shows the swarm is
+Every Mayfly configuration sees ~0.004. Every trace record counts towards these
+quantiles: the objective sums clamped components, so 1.0 is a genuine worst-case
+score rather than a sentinel, and filtering it out would remove exactly the wide
+tail that distinguishes a flat objective from a concentrated swarm. The convergence table shows the swarm is
 already inside that band at 10% of the budget and never leaves it, while Halton
 is still improving at the halfway mark. That is premature convergence: with
 `DanceDamp 0.8` over ~12 iterations the nuptial dance is at `0.8^12 ≈ 0.07`, and
 at a one-round budget no restart ever restores diversity.
+
+The contrast across cases is what makes this specific to `attack` rather than a
+property of the search. Taking each case's search IQR against its own control's:
+`sustain` is x1.07 — the swarm ranges slightly _wider_ than the sampler and
+still converges better — `joint-ir` x0.44, `piano-mix` x0.24, and `attack`
+x0.07.
 
 The 2400-evaluation re-run adds the other half of the picture. **Halton on
 `attack` returns exactly 0.436636 at 2400 evaluations — the identical value it

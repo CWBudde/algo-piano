@@ -59,6 +59,8 @@ type runRecord struct {
 // A wide spread under the Halton control says the objective has dynamic range
 // for a search to exploit; a narrow one says the knobs barely move the score,
 // and no optimizer can beat a space-filling sequence on a landscape that flat.
+// Every value in the trace counts, including 1.0: the objective sums clamped
+// components, so 1.0 is the genuine worst case and not a sentinel.
 // A narrow IQR under the real search says the swarm has concentrated — useful
 // when it concentrates somewhere good, premature convergence when it does not.
 // Neither is visible in the best-score tables, which report only the single
@@ -182,12 +184,6 @@ func traceCheckpoints(recs []traceRecord, budget int, fracs []float64) []float64
 
 // readTrace parses a JSONL trace. A missing file is not an error: tracing is
 // opt-in on the piano-fit side and an older artifact tree may predate it.
-// penaltyFloor is the smallest aggregate the objective's own penalty paths can
-// return. piano-fit answers an over-budget or failed evaluation with
-// "current best + 0.8" rather than a real score, so those records describe the
-// budget, not the landscape, and would inflate every spread statistic.
-const penaltyFloor = 0.75
-
 // traceSpread summarises the proposed objective values in a trace.
 func traceSpread(recs []traceRecord) spreadStats {
 	vals := make([]float64, 0, len(recs))
@@ -201,25 +197,19 @@ func traceSpread(recs []traceRecord) spreadStats {
 		return spreadStats{}
 	}
 	sort.Float64s(vals)
-	// Trim the penalty tail only when it is a tail: on a case whose real
-	// scores live above the floor, dropping everything above it would discard
-	// the landscape itself.
-	if trimmed := trimPenaltyTail(vals); len(trimmed) > len(vals)/2 {
-		vals = trimmed
-	}
+	// No filtering. An earlier version trimmed values above 0.75 on the theory
+	// that they were the objective's "current best + 0.8" penalty answers, but
+	// those never reach the trace: every penalty path in the objective returns
+	// before trace.record is called (cmd/piano-fit/optimize.go). Every record
+	// here is a real evaluation, and 1.0 is a legitimate worst-case score
+	// because the objective sums clamped components. Trimming discarded exactly
+	// the wide tail that tells a flat landscape from a concentrated swarm.
 	q := func(f float64) float64 { return vals[int(f*float64(len(vals)-1))] }
 
 	return spreadStats{
 		Valid: true, Min: vals[0], P05: q(0.05), Median: q(0.5), P95: q(0.95),
 		IQR: q(0.75) - q(0.25),
 	}
-}
-
-// trimPenaltyTail drops the sorted values at or above the penalty floor.
-func trimPenaltyTail(sorted []float64) []float64 {
-	cut := sort.SearchFloat64s(sorted, penaltyFloor)
-
-	return sorted[:cut]
 }
 
 func readTrace(path string) ([]traceRecord, error) {
@@ -340,8 +330,8 @@ func loadDataset(outDir string, fallback dataset) (dataset, error) {
 		}
 		// The same guard the driver applies, repeated here because --report
 		// also runs against trees written by an older driver, or copied from
-		// another machine, where the short run was recorded as OK.
-		if ds.MaxEvals > 0 && rep.Evaluations > 0 && rep.Evaluations < minCompleteEvals(ds.MaxEvals) {
+		// another machine, where a mismatched run was recorded as OK.
+		if !evalsMatchBudget(rep.Evaluations, ds.MaxEvals) {
 			return nil
 		}
 		if !exists {
