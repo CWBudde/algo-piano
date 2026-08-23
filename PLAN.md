@@ -61,28 +61,29 @@ linked docs. Kept here as a one-line record of what each phase established.
   analytically matched output gain, aspect-specific profiles/passes,
   calibrated norms, multi-note objectives, raw-metric/score constraints and
   `just gate-c4` regression guardrails. Attack fitting produced the net win;
-  sustain and inharmonicity passes moved to **Phase 16**. The workflow and
+  sustain and inharmonicity passes moved to **Phase 17**. The workflow and
   measurement history live in `docs/optimization-workflow.md` and
   `docs/plans/2026-08-21-phase8b-metrics.md`.
 - **Phase 8C — IR-shape optimization.** `cmd/piano-fit-ir` runs a checkpointed,
   resumable Mayfly outer loop over the full `irsynth.Config`, optionally joined
   with fast piano/mix knobs, and stores fitted IRs plus report sidecars under
-  `assets/ir/fitted/`; default-IR selection moved to **Phase 16.3**.
+  `assets/ir/fitted/`; default-IR selection moved to **Phase 17.4**.
 - **Phase 9 — Full-instrument ringing architecture.** Refactored transient key
   and hammer control away from a persistent allocation-free 1–3-string-per-note
   bank; added stable sparse static/physical coupling, instrument-wide physical
   damper and partial-pedal semantics, and the linear
   `string bank -> body IR -> room IR` radiation path with WASM migration.
   Behaviour, API/export compatibility, multi-rate long-render stability and
-  coupling cost/density are covered by tests and benchmarks. Body-IR/web checks
-  and physical-coupling calibration moved to **Phase 17**.
+  coupling cost/density are covered by tests and benchmarks. The body IR moved to
+  **Phase 15.1**, coupling calibration to **Phase 17.6** and the web checks to
+  **Phase 18.2**.
 - **Phase 10 — Web demo.** Go-only WASM engine with stable note/process exports,
   an AudioWorklet bridge, playable two-octave keyboard with sustain and computer
   bindings, scripted WASM build, GitHub Pages deployment, and graceful IR
   fallback.
 
 Remaining non-blocking follow-ups from Phases 4, 5, 8B, 8C and 9 were moved to
-**Phases 15–17** so these phases close cleanly.
+**Phases 14–18** so these phases close cleanly.
 
 > **Recorded fitting scores are comparable only within one renderer/metric
 > generation.** Use the current `just gate-c4` result against
@@ -128,9 +129,13 @@ Remaining non-blocking follow-ups from Phases 4, 5, 8B, 8C and 9 were moved to
 #### 11.5 — Body IR Kirchhoff model refinements (deferred)
 
 - [ ] Full tier: algo-pde Helmholtz eigensolve for arbitrary plate geometry with ribs
-- [ ] Investigate whether the body IR is contributing to or compensating for the level gap
+- [ ] Investigate whether the body IR is contributing to or compensating for the
+      level gap. Settled together with **15.1**, which picks the shipped body IR.
 
 #### 11.6 — Re-run optimization pipeline after model fixes
+
+Runs as part of **Phase 17**, not before it: Phases 14–15 still change the
+renderer, so a pipeline run before them would have to be repeated.
 
 - [ ] Stage 1: piano,mix with new hammer noise + level fix
 - [ ] Stage 2: body-ir,mix with Kirchhoff plate modes
@@ -167,7 +172,8 @@ Method, matrix and numbers: `docs/optimizer-audit.md`.
       its box. `--search halton` now scrambles and burns in; the joint sweep
       keeps the plain sequence by default (`--sweep-joint-scramble` opts in) so
       recorded sweep reports still reproduce bit-for-bit.
-- [ ] Re-measure saturation once the 11.1–11.4 model fixes land. If the spectral
+- [ ] Re-measure saturation once the 11.1–11.4 model fixes land (in **Phase 17**,
+      alongside 11.6). If the spectral
       term comes back inside its norm, the search has more signal than anything
       measured here, and the round-length and warm-start items are worth
       re-testing against it.
@@ -226,9 +232,9 @@ Output: peak/RMS levels, FFT-based lag alignment, per-window RMS gap, then a tab
   `assets/presets`. Tooling: `cmd/piano-modal-fit`, whose objective search was
   moved from ad-hoc random mutation to Mayfly (`--mayfly-variant`,
   `--mayfly-pop`) with local post-refinement. The optional shared global priors
-  are deferred to **Phase 15**.
+  are deferred to **Phase 17.5**.
 
-### 12.4 — Validation + performance acceptance ✓ (open items → Phase 18)
+### 12.4 — Validation + performance acceptance ✓ (open items → Phases 14, 16, 17)
 
 The measurement record for this subphase is in
 **`docs/plans/2026-08-23-resonance-and-coupling.md`** (cross-core A/B results,
@@ -292,11 +298,11 @@ probe calibration) and **`docs/plans/2026-08-23-modal-core-profile.md`**
       281 KiB modal at 8 partials, modal linear in `modal_partials` at ~11.7 kB
       per partial). Memory does not decide the core profile.
 
-Four items are open — the modal crossfeed's non-passive shape, recovering
-sympathetic resonance level, re-fitting `modal-calibrated.json`, and the shipping
-rule — all moved to **Phase 18**.
+Four items are open: the modal crossfeed's non-passive shape (**14.1**),
+recovering sympathetic resonance level (**14.3**), the shipping rule (**16.3**)
+and re-fitting `modal-calibrated.json` (**17.1**).
 
-### 12.5 — Upstream SIMD integration (`algo-dsp` + `algo-vecmath`) ✓ (`PIANO-406` → Phase 18)
+### 12.5 — Upstream SIMD integration (`algo-dsp` + `algo-vecmath`) ✓ (`PIANO-406` → Phase 16)
 
 SIMD modal kernels are adopted. The upstream audit, the full benchmark set and
 the shipping-profile evidence are in
@@ -339,7 +345,7 @@ larger win than the SIMD work.
 Revisit the upstream dependency if `algo-dsp` Phase 41 ships, or if `VEC-306`
 lands and arm64 becomes a target.
 
-**Done when:** modal core is selectable and calibrated against DWG via an automated matching step. ✓ — documenting the low-CPU vs high-accuracy profiles is the remaining half and is tracked as **Phase 18.4**.
+**Done when:** modal core is selectable and calibrated against DWG via an automated matching step. ✓ — documenting the low-CPU vs high-accuracy profiles is the remaining half and is tracked as **Phase 16**.
 
 ---
 
@@ -466,20 +472,50 @@ Two things found on the way that contradict the earlier reading of this finding:
 
 ---
 
-## Phase 14 — Polish (only after the core is solid)
+## Working order for the remaining phases
 
-- [ ] Add key-off / pedal noise (small synthesized bursts or tiny samples)
-- [ ] Add output limiter/safety clipper
-- [ ] Improve dispersion/loss mapping across the keyboard
+Phases 14–19 are ordered so they can be worked straight through: each one is
+blocked only by the phases above it, and none of them forces work in an earlier
+phase to be redone. Four gates decide the order.
+
+1. **Change the renderer first.** Anything that alters rendered output lands
+   before anything that measures or fits rendered output (Phases 14–15).
+2. **Freeze the parameter surface next.** A knob has to exist before a fit can
+   search it (Phase 15).
+3. **Decide the core before fitting.** The two string cores are 0.83–0.84 apart
+   (see 12.4), so this is a choice between two audibly different instruments,
+   not two implementations of one — and fitting a core that may not ship is
+   waste (Phase 16).
+4. **Fit, then harden, then polish** (Phases 17–19).
+
+If a new item arrives, place it by these gates rather than by which phase it fell
+out of.
 
 ---
 
-## Phase 15 — Deferred refinements (moved from earlier phases)
+## Phase 14 — Coupling and resonance correctness
 
-These items were open inside otherwise-complete phases. They are unchanged in
-scope, only split into smaller steps so they can be picked up independently.
+Open work carried out of Phases 4 and 12.4. The evidence for the resonance and
+crossfeed items is in `docs/plans/2026-08-23-resonance-and-coupling.md`.
 
-### 15.1 — Weak bridge coupling for double decay (from Phase 4)
+**This phase gates every fitting phase.** Each item changes rendered output and
+therefore invalidates fitted presets, so all of it lands before Phase 17. It is
+blocked by nothing.
+
+### 14.1 — Make the modal unison crossfeed passive
+
+- [ ] `ModalStringGroup.applyCrossfeed` still adds `sample * c * 0.08` into each
+      string's first mode, with no subtraction of that string's own contribution
+      — structurally the defect the DWG core had. It is **not currently
+      observable**: the 0.08 factor and the modal damping keep it far under
+      unity, and a 120 s pedal-held chord render reaches digital silence either
+      way. It is worth doing for the same reason the DWG fix was — the bound is
+      an accident of the 0.08, not a property of the term. Making it passive
+      needs per-string sub-sums, which live inside three reduce variants in
+      `piano/modal_kernel.go` including the SIMD one, so the change touches the
+      hot path and the kernel-parity tests rather than one function.
+
+### 14.2 — Weak bridge coupling for double decay (from Phase 4)
 
 - [ ] Add weak inter-string coupling at the bridge inside a unison group in the
       DWG core (beyond the existing output crossfeed)
@@ -487,40 +523,151 @@ scope, only split into smaller steps so they can be picked up independently.
 - [ ] Expose coupling strength as a preset parameter with a safe default
 - [ ] Add a test measuring the two-stage (prompt/aftersound) decay envelope
 
-### 15.2 — Non-uniform partitioned convolution (from Phase 5)
+### 14.3 — Recover sympathetic resonance level
 
-- [ ] Small early partitions to cut convolver latency
-- [ ] Larger late partitions for throughput on long IRs
-- [ ] Correctness test against direct convolution at the existing error bound
-- [ ] Benchmark against the uniform scheme at equal IR length and block size
+The `noteResonator` normalisation is correct, but it removed the mechanism that
+made sympathetic resonance audible, and the loss is register-dependent rather
+than flat: −45.3 dB at A0, −38.0 at MIDI 36, −26.1 at C4, −14.2 at MIDI 84,
+−8.3 at MIDI 96. Interleaving took back 13.3 dB (DWG) / 13.0 dB (modal) without
+touching a scalar, which is what "a scalar cannot bring it back" predicted. With
+the unison coupling corrected the headroom is back and measurable: the unity
+crossing sits at `resonance_gain` ≈ 0.00092, so the shipped 0.00025 is **3.7x
+under the ceiling**, worth about +11 dB before stability binds again.
 
-### 15.3 — Complete the `Params` schema (from Phase 8)
+**This item must not be closed by turning the knob up.** Three things first:
+
+- [ ] Run a **stability margin study across registers and velocities**. The
+      0.00092 cliff is one render — six notes, one velocity, coupling off — and
+      the margin a shipped preset needs is a separate question from where a
+      render diverges.
+- [ ] Respect the standing rejection recorded in `assets/thresholds/c4.json`:
+      re-voicing `resonance_gain` to buy back `spectral_rmse_db` was rejected on
+      **spectral** grounds, not stability grounds, so that rejection survives the
+      stability fix.
+- [ ] Plan the re-fit that follows. Every shipped preset would have to be
+      re-fitted afterwards — the third such debt in this area. It is scheduled as
+      **17.1**.
+
+**Done when:** both cores' coupling terms are passive by construction, unison
+groups show a measured two-stage decay, and sympathetic resonance level is
+recovered with a measured stability margin rather than a louder scalar.
+
+---
+
+## Phase 15 — Radiation chain and parameter surface
+
+Open work carried out of Phases 8, 9.5 and the old polish list.
+
+**This is the last phase that moves the sound or adds knobs.** After it, the
+renderer and the parameter set are frozen for the fitting work in Phase 17.
+Blocked by Phase 14, because a body IR chosen against a non-passive coupling term
+would be chosen against the wrong signal.
+
+### 15.1 — Ship a body IR asset (from 9.5)
+
+- [ ] **Ship a body IR asset** and give `assets/presets/default.json` a
+      `body_ir_wav_path`. Deferred from 9.5: the dual-IR path exists and is
+      fenced by `piano/radiation_test.go`, but there is no shipped body IR and
+      picking one is a separate modelling decision. **11.5** asks a related
+      question — whether the body IR contributes to or compensates for the level
+      gap — and the two are worth settling together, so 11.5's second box is
+      answered here.
+
+### 15.2 — Complete the `Params` schema (from Phase 8)
 
 - [ ] Unison block: per-note detune map and per-string gains
 - [ ] Global block: IR set selection and output gain
 - [ ] Global block: optional limiter settings
 - [ ] Preset round-trip test (load → serialize → load) covering the new fields
 
-### 15.4 — Offline fitting helpers (optional, from Phase 8)
+### 15.3 — Dispersion and loss mapping across the keyboard
 
-- [ ] Helper that fits decay times from recordings to loss parameters
-- [ ] Helper that fits inharmonicity targets from recordings to dispersion
-- [ ] CLI entrypoint wiring both helpers with reproducible output artifacts
-- [ ] Document the workflow alongside the existing fitting tools
+- [ ] Improve dispersion/loss mapping across the keyboard. Moved out of the
+      polish list because it changes multi-note timbre: any multi-note fit run
+      before it would have to be re-run afterwards.
 
-### 15.5 — Shared global priors for modal fitting (from Phase 12.3)
-
-- [ ] Define a register-wise prior parameterization for mode gain/damping
-- [ ] Fit per-note deviations against the priors to cut parameter count
-- [ ] Verify fit quality does not regress against the current per-note profiles
+**Done when:** the shipped default preset renders through a real body IR, the
+`Params` schema round-trips every field a fit can reach, and dispersion/loss
+follow one deliberate keyboard-wide mapping.
 
 ---
 
-## Phase 16 — Fitting pipeline: remaining passes and IR selection
+## Phase 16 — Benchmarks, core profile and the v1 core decision
 
-Open work carried out of Phases 8B and 8C. Nothing here is blocked on Phase 18.
+Open work carried out of Phase 12.5 (`PIANO-406`). The evidence is in
+`docs/plans/2026-08-23-modal-core-profile.md` and BENCHMARKS.md.
 
-### 16.1 — Sustain/decay pass (from 8B)
+**This phase decides which instrument Phase 17 fits.** Blocked by Phase 14,
+because 14.1 changes the modal hot path and so changes the CPU numbers 16.1
+re-measures.
+
+### 16.1 — Re-measure the polyphony sweep
+
+- [ ] **Re-measure "Voice cost per block and polyphony sweep"** in BENCHMARKS.md
+      under the same discipline used for the partials sweep (separate
+      invocations, quiet machine, load average recorded) and either correct the
+      recorded table or explain the disagreement. On a quiet machine modal is
+      36-39% cheaper than DWG; the recorded table, taken at load average 8-13,
+      says 6-25% more expensive. Load should blur a 25% effect, not reverse its
+      sign, and that is unexplained. **This is the one remaining input to the
+      decision.**
+
+### 16.2 — Put a scale on the modal quality difference
+
+- [ ] **Calibrate an acceptance threshold for `partial_level_rmse_db`, or run a
+      listening test**, so the quality half of the `modal_partials` sweep can be
+      closed on evidence rather than on a difference measurement with no scale
+      attached. The CPU half is answered; the quality half only shows that
+      lower-partial renders _differ_ from the same core at 32 partials.
+
+### 16.3 — Adopt the shipping rule
+
+- [ ] **Then adopt the shipping rule:** "low CPU" defaults to the modal core,
+      "high accuracy" defaults to DWG, with DWG kept as the high-accuracy
+      reference for regression checks. One thing about its shape is already
+      settled by measurement, on the CPU axis alone: a "low CPU" profile must
+      **not** be implemented by lowering `modal_partials` — ~55% of the cost at 8
+      partials is a fixed floor, so 8→4 buys only 19-23% and 8→1 only 38-40%. If
+      adopted, it is adopted as "low CPU ⇒ modal core at the default 8 partials",
+      with the partial count left alone.
+
+### 16.4 — Decide the primary string core for v1
+
+- [ ] Decide: primary string core for v1
+  - [ ] DWG (matches `goal.md`)
+  - [ ] Modal bank (supported by `research.md` for stability/alias control)
+  - The measured inputs to this decision — CPU, retained heap and the
+    `modal_partials` quality-vs-CPU curve — are collected under **16.1–16.3**,
+    which have to close first. Note that the cores do not currently agree
+    (distance 0.83-0.84, see 12.4), so this is a choice between two audibly
+    different instruments, not between two implementations of one.
+
+**Done when:** the low-CPU/high-accuracy profile rule is adopted on measurements
+that do not contradict each other, and the v1 core is chosen.
+
+---
+
+## Phase 17 — Fitting pipeline against the corrected renderer
+
+Open work carried out of Phases 8B, 8C, 9.6 and 12.4.
+
+**Everything here is invalidated if any of Phases 14–16 lands afterwards**, which
+is the whole reason for this ordering. Two items that stay written under Phase 11
+also execute at this point, not earlier: **11.6** (re-run the optimization
+pipeline, stages 1–4) and the last open box of **11.7** (re-measure spectral
+saturation once the 11.1–11.4 model fixes have settled).
+
+### 17.1 — Re-fit `assets/presets/modal-calibrated.json` (from 12.4)
+
+- [ ] The tool is now capable of a clean fit (`--no-resonance` landed in
+      `cmd/piano-modal-fit`), but the shipped preset is still the one produced
+      against diverging resonance renders, and `analysis/norms.go:55` still has
+      to exclude it as a degenerate outlier. This is its own piece of work: the
+      new preset changes the norm corpus, so the exclusion and the normalisation
+      constants have to be re-derived together with it. **The exclusion stays
+      exactly as it is until then.**
+
+### 17.2 — Sustain/decay pass (from 8B)
 
 The pass fits loss/damper behaviour to match decay slope and envelope shape. It
 is **built, constrained, gated and measured — but nothing has been shipped from
@@ -560,7 +707,7 @@ re-fit", "Constraining what the gate measures"), and it stands as follows:
       pass baseline reached a better `decay-v1` and failed the gate on
       `spectral_rmse_db`.
 
-### 16.2 — Inharmonicity pass (from 8B)
+### 17.3 — Inharmonicity pass (from 8B)
 
 - [ ] Give the pass leverage at C4, or retire it on the evidence. Re-run
       2026-08-22 it is marginally **negative** (legacy score 0.5214 → 0.5234) and
@@ -570,140 +717,75 @@ re-fit", "Constraining what the gate measures"), and it stands as follows:
       `attack` → `inharmonicity` chain that `just fit-c4-passes` produces is
       slightly worse than the attack pass alone.
 
-### 16.3 — IR selection (from 8C)
+### 17.4 — IR selection (from 8C)
 
 - [ ] Compare the top-K fitted IRs in `assets/ir/fitted/` under multi-note
       validation before selecting a default. Selecting on C4 alone is what this
       item exists to avoid.
 
-**Done when:** the sustain pass either ships behind the gate or is retired on
-evidence, the inharmonicity pass has leverage or is retired, and a default
-synthetic IR is selected on multi-note validation — with C4 distance and its
-sub-metrics stable across the changes.
+### 17.5 — Shared global priors for modal fitting (from 12.3)
 
----
+- [ ] Define a register-wise prior parameterization for mode gain/damping
+- [ ] Fit per-note deviations against the priors to cut parameter count
+- [ ] Verify fit quality does not regress against the current per-note profiles
 
-## Phase 17 — Instrument semantics, radiation and web compatibility
+### 17.6 — Calibrate the physical coupling knobs (from 9.6)
 
-Open work carried out of Phases 9.5 and 9.6.
-
-- [ ] **Ship a body IR asset** and give `assets/presets/default.json` a
-      `body_ir_wav_path`. Deferred from 9.5: the dual-IR path exists and is
-      fenced by `piano/radiation_test.go`, but there is no shipped body IR and
-      picking one is a separate modelling decision. Phase 11.5 asks a related
-      question — whether the body IR contributes to or compensates for the level
-      gap — and the two are worth settling together.
-- [ ] **Web/demo compatibility:**
-  - [ ] keep the JS/WASM note + pedal API stable.
-        `cmd/piano-wasm/export_contract_test.go` pins the export names against
-        the `web/` call sites; what is missing is the behavioural half.
-  - [ ] verify no UI/playability regressions after the physical pedal semantics
-        replaced the timer-based release.
 - [ ] **Define a calibration workflow for the physical coupling knobs** against
       multi-note recordings — `coupling_amount`, harmonic falloff, detune sigma,
       distance exponent and max neighbours. The knobs and their behaviour are
       tested (`piano/coupling_behaviour_test.go`) and benchmarked; what is
       missing is a procedure that sets them from recordings rather than by hand.
 
-**Done when:** the shipped default preset renders through a real body IR, the web
-demo is verified against the current engine API with no playability regression,
-and coupling strength can be calibrated from multi-note recordings.
+### 17.7 — Offline fitting helpers (optional, from Phase 8)
+
+- [ ] Helper that fits decay times from recordings to loss parameters
+- [ ] Helper that fits inharmonicity targets from recordings to dispersion
+- [ ] CLI entrypoint wiring both helpers with reproducible output artifacts
+- [ ] Document the workflow alongside the existing fitting tools
+
+**Done when:** `modal-calibrated.json` is re-fitted with the norm corpus
+re-derived alongside it, the sustain pass either ships behind the gate or is
+retired on evidence, the inharmonicity pass has leverage or is retired, a default
+synthetic IR is selected on multi-note validation, and coupling strength can be
+calibrated from multi-note recordings — with C4 distance and its sub-metrics
+stable across the changes.
 
 ---
 
-## Phase 18 — Resonance, coupling and core-profile follow-ups
+## Phase 18 — Performance and web/demo hardening
 
-Open work carried out of Phases 12.4 and 12.5. The evidence for every item is in
-`docs/plans/2026-08-23-resonance-and-coupling.md` and
-`docs/plans/2026-08-23-modal-core-profile.md`.
+Open work carried out of Phases 5 and 9.6. Neither item changes the rendered
+signal, so both are safe to run after the fits are in.
 
-### 18.1 — Make the modal unison crossfeed passive
+### 18.1 — Non-uniform partitioned convolution (from Phase 5)
 
-- [ ] `ModalStringGroup.applyCrossfeed` still adds `sample * c * 0.08` into each
-      string's first mode, with no subtraction of that string's own contribution
-      — structurally the defect the DWG core had. It is **not currently
-      observable**: the 0.08 factor and the modal damping keep it far under
-      unity, and a 120 s pedal-held chord render reaches digital silence either
-      way. It is worth doing for the same reason the DWG fix was — the bound is
-      an accident of the 0.08, not a property of the term. Making it passive
-      needs per-string sub-sums, which live inside three reduce variants in
-      `piano/modal_kernel.go` including the SIMD one, so the change touches the
-      hot path and the kernel-parity tests rather than one function.
+- [ ] Small early partitions to cut convolver latency
+- [ ] Larger late partitions for throughput on long IRs
+- [ ] Correctness test against direct convolution at the existing error bound
+- [ ] Benchmark against the uniform scheme at equal IR length and block size
 
-### 18.2 — Recover sympathetic resonance level
+### 18.2 — Web/demo compatibility (from 9.6)
 
-The `noteResonator` normalisation is correct, but it removed the mechanism that
-made sympathetic resonance audible, and the loss is register-dependent rather
-than flat: −45.3 dB at A0, −38.0 at MIDI 36, −26.1 at C4, −14.2 at MIDI 84,
-−8.3 at MIDI 96. Interleaving took back 13.3 dB (DWG) / 13.0 dB (modal) without
-touching a scalar, which is what "a scalar cannot bring it back" predicted. With
-the unison coupling corrected the headroom is back and measurable: the unity
-crossing sits at `resonance_gain` ≈ 0.00092, so the shipped 0.00025 is **3.7x
-under the ceiling**, worth about +11 dB before stability binds again.
+- [ ] **Web/demo compatibility:**
+  - [ ] keep the JS/WASM note + pedal API stable.
+        `cmd/piano-wasm/export_contract_test.go` pins the export names against
+        the `web/` call sites; what is missing is the behavioural half.
+  - [ ] verify no UI/playability regressions after the physical pedal semantics
+        replaced the timer-based release.
 
-**This item must not be closed by turning the knob up.** Three things first:
-
-- [ ] Run a **stability margin study across registers and velocities**. The
-      0.00092 cliff is one render — six notes, one velocity, coupling off — and
-      the margin a shipped preset needs is a separate question from where a
-      render diverges.
-- [ ] Respect the standing rejection recorded in `assets/thresholds/c4.json`:
-      re-voicing `resonance_gain` to buy back `spectral_rmse_db` was rejected on
-      **spectral** grounds, not stability grounds, so that rejection survives the
-      stability fix.
-- [ ] Plan the re-fit that follows. Every shipped preset would have to be
-      re-fitted afterwards — the third such debt in this area.
-
-### 18.3 — Re-fit `assets/presets/modal-calibrated.json`
-
-- [ ] The tool is now capable of a clean fit (`--no-resonance` landed in
-      `cmd/piano-modal-fit`), but the shipped preset is still the one produced
-      against diverging resonance renders, and `analysis/norms.go:55` still has
-      to exclude it as a degenerate outlier. This is its own piece of work: the
-      new preset changes the norm corpus, so the exclusion and the normalisation
-      constants have to be re-derived together with it. **The exclusion stays
-      exactly as it is until then.**
-
-### 18.4 — `PIANO-406` — shipping profile decision
-
-- [ ] **Re-measure "Voice cost per block and polyphony sweep"** in BENCHMARKS.md
-      under the same discipline used for the partials sweep (separate
-      invocations, quiet machine, load average recorded) and either correct the
-      recorded table or explain the disagreement. On a quiet machine modal is
-      36-39% cheaper than DWG; the recorded table, taken at load average 8-13,
-      says 6-25% more expensive. Load should blur a 25% effect, not reverse its
-      sign, and that is unexplained. **This is the one remaining input to the
-      decision.**
-- [ ] **Calibrate an acceptance threshold for `partial_level_rmse_db`, or run a
-      listening test**, so the quality half of the `modal_partials` sweep can be
-      closed on evidence rather than on a difference measurement with no scale
-      attached. The CPU half is answered; the quality half only shows that
-      lower-partial renders _differ_ from the same core at 32 partials.
-- [ ] **Then adopt the shipping rule:** "low CPU" defaults to the modal core,
-      "high accuracy" defaults to DWG, with DWG kept as the high-accuracy
-      reference for regression checks. One thing about its shape is already
-      settled by measurement, on the CPU axis alone: a "low CPU" profile must
-      **not** be implemented by lowering `modal_partials` — ~55% of the cost at 8
-      partials is a fixed floor, so 8→4 buys only 19-23% and 8→1 only 38-40%. If
-      adopted, it is adopted as "low CPU ⇒ modal core at the default 8 partials",
-      with the partial count left alone. Feeds the "primary string core for v1"
-      decision at the end of this file.
-
-**Done when:** both cores' coupling terms are passive by construction,
-sympathetic resonance level is recovered with a measured stability margin rather
-than a louder scalar, `modal-calibrated.json` is re-fitted with the norm corpus
-re-derived alongside it, and the low-CPU/high-accuracy profile rule is adopted on
-measurements that do not contradict each other.
+**Done when:** convolver latency and throughput are decided by measurement rather
+than by one uniform partition size, and the web demo is verified against the
+current engine API with no playability regression.
 
 ---
 
-## Open decisions (resolve early)
+## Phase 19 — Polish (only after the core is solid)
 
-- [ ] Decide: primary string core for v1
-  - [ ] DWG (matches `goal.md`)
-  - [ ] Modal bank (supported by `research.md` for stability/alias control)
-  - The measured inputs to this decision — CPU, retained heap and the
-    `modal_partials` quality-vs-CPU curve — are collected under **Phase 18.4**,
-    which has to close first. Note that the cores do not currently agree
-    (distance 0.83-0.84, see 12.4), so this is a choice between two audibly
-    different instruments, not between two implementations of one.
+Last phase. Everything here is additive and none of it is a prerequisite for
+anything above.
+
+- [ ] Add key-off / pedal noise (small synthesized bursts or tiny samples)
+- [ ] Add output limiter/safety clipper. A limiter exists today in the **web
+      layer only** (`cmd/piano-wasm/main.go`); this is the engine-side one, and
+      **15.2** adds the preset fields that configure it.
