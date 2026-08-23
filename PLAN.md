@@ -504,16 +504,36 @@ blocked by nothing.
 
 ### 14.1 — Make the modal unison crossfeed passive
 
-- [ ] `ModalStringGroup.applyCrossfeed` still adds `sample * c * 0.08` into each
-      string's first mode, with no subtraction of that string's own contribution
-      — structurally the defect the DWG core had. It is **not currently
-      observable**: the 0.08 factor and the modal damping keep it far under
-      unity, and a 120 s pedal-held chord render reaches digital silence either
-      way. It is worth doing for the same reason the DWG fix was — the bound is
-      an accident of the 0.08, not a property of the term. Making it passive
-      needs per-string sub-sums, which live inside three reduce variants in
-      `piano/modal_kernel.go` including the SIMD one, so the change touches the
-      hot path and the kernel-parity tests rather than one function.
+- [x] Done 2026-08-23. The force is now
+      `c * 0.08 * g_i * (sample - stringOut[si])`, the same difference form the
+      DWG core uses: the three reduce variants in `piano/modal_kernel.go` spill
+      the per-string sub-sum they already compute into a group-owned scratch
+      slice, and `applyCrossfeed` subtracts it. All three variants and the arena
+      path stay bit-exact (`assertKernelParity`), and the change is allocation-
+      free.
+
+      The item said the defect was **not currently observable**. That was wrong,
+      and it was wrong in the direction that mattered: measured as whole-render
+      energy against the same render at `unison_crossfeed = 0` (one note, pedal
+      held, 8 s, resonance and string coupling off), the old form added **9–14%
+      of a note's energy at the shipped default** `c = 0.0008`, up to 5.6x at
+      `c = 0.005` — the largest value any preset carries — and went
+      **non-finite at `maxUnisonCrossfeed`**, which a hand-edited preset may
+      legally ask for. The 120 s peak-ratio probe the claim rested on could not
+      see it because the modal note reaches digital silence first. After the fix
+      the same measurements read 0.9995–1.0073x, and the render stays finite at
+      25x the clamp.
+
+      What is *not* claimed is passivity by construction: the correction lands on
+      mode 0 alone rather than being distributed over the string's modes, so
+      Jensen's inequality does not close as it does in the waveguide core and the
+      residual +0.7% at note 72 is energy moved into the fundamental. The
+      property is fenced by measurement instead —
+      `piano/modal_unison_coupling_test.go`, four tests, all of which fail on the
+      old form except the single-string control.
+
+      The 0.08 scale is deliberately unchanged; re-voicing it is level work for
+      **17.1**, which already owns the modal re-fit this invalidates.
 
 ### 14.2 — Weak bridge coupling for double decay (from Phase 4)
 
@@ -548,7 +568,8 @@ under the ceiling**, worth about +11 dB before stability binds again.
       re-fitted afterwards — the third such debt in this area. It is scheduled as
       **17.1**.
 
-**Done when:** both cores' coupling terms are passive by construction, unison
+**Done when:** both cores' coupling terms are sign-correct and fenced against
+pumping the bank (done for the DWG core, and for the modal core in 14.1), unison
 groups show a measured two-stage decay, and sympathetic resonance level is
 recovered with a measured stability margin rather than a louder scalar.
 

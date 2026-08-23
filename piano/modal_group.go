@@ -57,6 +57,13 @@ type ModalStringGroup struct {
 	order     []int32 // partial order per mode, for modalShape
 	modeStart []int32 // len == stringCount+1, monotonically non-decreasing
 
+	// stringOut holds what each unison string contributed to the last sample,
+	// before its unison gain is applied. It mirrors RingingStringGroup.stringOut
+	// and exists for the same reason: the bridge coupling force needs a string's
+	// own contribution, not only the mix. Per-string scratch rather than
+	// per-mode state, so the modal arena does not compact it.
+	stringOut []float32
+
 	gains      []float32
 	resFilters []noteResonator
 	partials   int
@@ -187,6 +194,7 @@ func newModalStringGroup(sampleRate int, note int, params *Params) *ModalStringG
 		hammerShapePos: modalNoStrikePos,
 
 		soaBuf:     soaBuf,
+		stringOut:  make([]float32, len(detunes)),
 		order:      make([]int32, n),
 		modeStart:  modeStart,
 		gains:      append([]float32(nil), gains...),
@@ -470,16 +478,62 @@ func (g *ModalStringGroup) reduceArenaSample(unisonCrossfeed float32) float32 {
 	return g.applyCrossfeed(g.reduceAcc(), unisonCrossfeed)
 }
 
+// modalCrossfeedScale keeps the unison crossfeed lightweight in modal mode: the
+// force lands on the first mode of each string only, scaled by this factor, so
+// the whole coupling costs one multiply-add per string per sample.
+//
+// The value is the one the pre-2026-08-23 form shipped with. It is deliberately
+// unchanged by the passivity fix below: the difference form injects less than
+// the old bare mix on strings that already move together, so re-voicing the
+// scale is a level decision for the modal re-fit (PLAN.md 17.1), not part of
+// making the term correct.
+const modalCrossfeedScale = float32(0.08)
+
+// applyCrossfeed couples the strings of a unison to each other through the
+// bridge, with the force on string si proportional to sample - stringOut[si]:
+// the difference between the common bridge motion and that string's own
+// contribution to it. See RingingStringGroup.processSample for the energy
+// argument; this is the modal half of the same fix.
+//
+// Until 2026-08-23 the modal force was sample*c*modalCrossfeedScale, added into
+// every string including the one that produced the sample - positive feedback
+// around an already resonant bank, with no subtraction anywhere. It was believed
+// unobservable because the scale keeps it far under unity. It is not. Note 60
+// struck once under a held pedal, resonance and string coupling off, whole-render
+// energy over 8 s against the same render at c = 0
+// (TestModalUnisonCouplingDoesNotPumpTheBank has the other three notes):
+//
+//	           c = 0.0008   c = 0.005   c = 0.02 (the clamp)
+//	before         1.1171      3.0163   non-finite
+//	after          1.0001      1.0006      1.0016
+//
+// So the old form added 9-14% of a note's energy at the shipped default, and
+// diverged at maxUnisonCrossfeed - a value a hand-edited preset may legally ask
+// for, which is what made the old bound an accident of the 0.08 rather than a
+// property of the term.
+//
+// What carries over from the waveguide case is the sign: a string louder than
+// the bridge is pushed back, never further, so the term can no longer add energy
+// unconditionally. What does not carry over is the proof - the correction lands
+// on mode 0 alone rather than being distributed over the string's modes, so
+// Jensen's inequality does not close here and the property is asserted by
+// measurement instead.
+//
+// The injection site needs no equivalent of StringWaveguide.InjectForceNext:
+// g.re[lo] is read by the very next rotate-decay step, which is already the
+// shortest path a modal bank has. The waveguide needed its own entry point only
+// because a strike position there maps onto the round trip.
 func (g *ModalStringGroup) applyCrossfeed(sample float32, unisonCrossfeed float32) float32 {
-	// Keep unison crossfeed very lightweight in modal mode (1st mode only).
 	if g.stringCount() > 1 && unisonCrossfeed > 0 {
-		cross := sample * unisonCrossfeed * 0.08
+		k := unisonCrossfeed * modalCrossfeedScale
 		for si := 0; si+1 < len(g.modeStart); si++ {
 			lo, hi := g.modeStart[si], g.modeStart[si+1]
 			if lo == hi {
 				continue
 			}
-			g.re[lo] += cross
+			// The gain weight has to be the SAME one used to build the mix,
+			// exactly as in the waveguide core.
+			g.re[lo] += k * g.stringGain(si) * (sample - g.stringOut[si])
 		}
 	}
 	return sample

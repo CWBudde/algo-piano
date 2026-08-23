@@ -198,6 +198,39 @@ grow. These four tests pin the property rather than the number.
   non-finite at `c = 0.5`, so `NewStringBank` clamps to `maxUnisonCrossfeed` rather than
   trusting
 
+### Unison bridge coupling, modal core (`modal_unison_coupling_test.go`)
+
+The modal core carried the same non-passive shape until 2026-08-23:
+`ModalStringGroup.applyCrossfeed` added `sample * c * 0.08` into every string's first mode
+with no subtraction of that string's own contribution. It was believed unobservable because
+the 0.08 keeps it far under unity. It was not: measured whole-render energy against the same
+render at `unison_crossfeed = 0` (one note, pedal held, 8 s, resonance and string coupling
+off) the old form added **9–14% of a note's energy at the shipped default** `c = 0.0008`, up
+to 5.6x at `c = 0.005`, and went **non-finite at `maxUnisonCrossfeed`** — a value a
+hand-edited preset may legally ask for. The force is now `c * 0.08 * g_i * (sample -
+stringOut[si])`, with the per-string sub-sum spilled by all three reduce variants in
+`modal_kernel.go`.
+
+- `TestModalUnisonCouplingDoesNotPumpTheBank` — the load-bearing one, and the modal twin of
+  `TestUnisonCouplingRemovesEnergy`. Whole-render energy at `c` = 0.0008 / 0.005 / 0.02 must
+  stay within 1.02x of the uncoupled render on notes 45, 52, 60, 72. Measured 0.9995–1.0073;
+  the old form measured 1.086–5.61 and non-finite. The bound is 1.02 and not 1.0 because the
+  corrected force lands on mode 0 alone rather than being spread over the string's modes, so
+  it moves a little energy into the fundamental — redistribution, not growth, which is why
+  `applyCrossfeed` claims a correct sign and not a proof of passivity
+- `TestModalUnisonCouplingStaysFiniteBeyondTheClamp` — what PLAN.md 14.1 was actually about:
+  the old bound was an accident of the 0.08, not a property of the term. At 5x and 25x
+  `maxUnisonCrossfeed` (written to the bank field, bypassing the clamp) the render must stay
+  finite and end quieter than it started. The old form went non-finite at every one of them,
+  and at the clamp itself
+- `TestModalUnisonCouplingIsInertOnSingleStringNotes` — the control. Notes below MIDI 40 have
+  one string and skip the branch, so their render is bit-identical at any crossfeed
+- `TestModalUnisonCouplingDecaysAcrossTheKnobRange` — sweeps 0 … 0.005 plus the clamp and
+  requires the note to decay, not merely to stay finite
+
+Bit-exactness across the three reduce variants and the arena path is fenced separately by
+`assertKernelParity` in `modal_parity_test.go`, which covers the coupling path directly.
+
 Both open-loop probes drive until the reading stops moving, up to a 24 s budget, and report
 whether it did. A **settled** reading is the steady-state loop gain; an **unsettled** one is a
 **lower bound**, because an undamped string's transient runs for minutes. The modal rows

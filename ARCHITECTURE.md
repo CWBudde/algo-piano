@@ -168,6 +168,22 @@ Key knobs:
 - `modal_undamped_loss`
 - `modal_damped_loss`
 
+Unison coupling:
+
+- The strings of a modal group are coupled the same way as in the waveguide core, with the
+  force on string `si` proportional to `unison_crossfeed * 0.08 * g_i * (sample -
+stringOut[si])` — the difference between the bridge mix and that string's own contribution
+  to it. It is written into the first mode of each string only, which the very next
+  rotate-decay step reads, so the modal core needs no equivalent of
+  `StringWaveguide.InjectForceNext`.
+- The subtraction is what makes the sign correct: a string louder than the bridge is pushed
+  back, never further. The Jensen argument the waveguide core can make does not transfer,
+  because the correction lands on mode 0 instead of being distributed over the string's
+  modes, so the modal term is fenced by measurement (`modal_unison_coupling_test.go`) rather
+  than by construction. Before 2026-08-23 the force was `sample * c * 0.08` added into every
+  string with no subtraction, which added 9–14% of a note's energy at the default crossfeed
+  and diverged at `maxUnisonCrossfeed`.
+
 Damper semantics:
 
 - Key up + no sustain -> use damped decay

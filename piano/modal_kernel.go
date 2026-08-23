@@ -71,6 +71,7 @@ func (g *ModalStringGroup) advanceModesScalar() float32 {
 			g.im[i] = ny
 			str += nx * g.gain[i]
 		}
+		g.stringOut[si] = str
 		sample += str * g.stringGain(si)
 	}
 	return sample
@@ -97,6 +98,7 @@ func (g *ModalStringGroup) reduceAcc() float32 {
 			str += seg[i]
 			seg[i] = 0
 		}
+		g.stringOut[si] = str
 		sample += str * g.stringGain(si)
 	}
 	return sample
@@ -114,6 +116,7 @@ func (g *ModalStringGroup) advanceModesRotate() float32 {
 		for i := lo; i < hi; i++ {
 			str += g.re[i] * g.gain[i]
 		}
+		g.stringOut[si] = str
 		sample += str * g.stringGain(si)
 	}
 	return sample

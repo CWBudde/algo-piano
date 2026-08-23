@@ -127,13 +127,18 @@ func renderNoteMono(model StringModel, note int, velocity int, blocks int) []flo
 // distance from analysis.Compare, so a change that quietly pulls one core away
 // from the other shows up as a number instead of a listening session.
 //
-// Re-measured on 2026-08-21 (Go 1.26.5, linux/amd64) after the DWG injection
-// and loop DC fixes, 750 blocks of 128 frames at 48 kHz, sustain held,
-// resonance and coupling disabled:
+// Re-measured on 2026-08-23 (Go 1.26.5, linux/amd64) after the modal unison
+// crossfeed was made passive, 750 blocks of 128 frames at 48 kHz, sustain held,
+// resonance and coupling disabled (the 2026-08-21 reading, taken after the DWG
+// injection and loop DC fixes, is in brackets):
 //
-//	note 48: score 0.8421  similarity 3.45%  dominant=spectral
-//	note 60: score 0.8386  similarity 3.49%  dominant=spectral
-//	note 72: score 0.8292  similarity 3.63%  dominant=spectral
+//	note 48: score 0.8425 [0.8421]  similarity 3.44%  dominant=spectral
+//	note 60: score 0.8365 [0.8386]  similarity 3.52%  dominant=spectral
+//	note 72: score 0.8260 [0.8292]  similarity 3.67%  dominant=spectral
+//
+// The modal side moved because the coupling term changed; the cores came very
+// slightly closer, which is what a modal core that no longer pumps its own
+// unison should do, and nowhere near enough to matter.
 //
 // The bound is tightened from 0.90 to 0.89, about 6% of headroom over the worst
 // measured score.
@@ -200,11 +205,12 @@ var coreDistanceChords = []struct {
 // stage and whatever inter-voice interaction each core has, so a change that
 // only shows up under polyphony has somewhere to fail.
 //
-// Measured on 2026-08-22 (Go 1.26.5, linux/amd64), 750 blocks of 128 frames at
-// 48 kHz, sustain held from the first block, resonance and coupling disabled:
+// Re-measured on 2026-08-23 (Go 1.26.5, linux/amd64), 750 blocks of 128 frames
+// at 48 kHz, sustain held from the first block, resonance and coupling disabled,
+// after the modal unison crossfeed was made passive (2026-08-22 in brackets):
 //
-//	C3-major (48/55/60/64): score 0.8434  similarity 3.43%  dominant=spectral
-//	C4-major (60/67/72/76): score 0.8401  similarity 3.47%  dominant=spectral
+//	C3-major (48/55/60/64): score 0.8420 [0.8434]  similarity 3.45%  dominant=spectral
+//	C4-major (60/67/72/76): score 0.8378 [0.8401]  similarity 3.50%  dominant=spectral
 //
 // The bound is 0.89, the same one the single-note test uses, which is about 5.5%
 // of headroom over the worst measured chord score. Keeping the two tests on one
