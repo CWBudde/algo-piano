@@ -351,3 +351,29 @@ func TestLoadDatasetSkipsShortRuns(t *testing.T) {
 		t.Fatalf("got %+v, want only the run that spent its budget", ds.Records)
 	}
 }
+
+// TestLoadDatasetIgnoresSummaryRowsWithoutArtifacts pins the provenance rule: a
+// summary.json row attests that a run finished, but only the artifacts make it
+// an observation. Without this, deleting a bad cell's directory would leave its
+// score in the tables, sourced from a summary that was written before the cell
+// was known to be invalid.
+func TestLoadDatasetIgnoresSummaryRowsWithoutArtifacts(t *testing.T) {
+	outDir := t.TempDir()
+	dir := filepath.Join(outDir, "joint-ir", "halton", "seed1")
+	summary := fmt.Sprintf(
+		`{"max_evals":600,"runs":[{"case":"joint-ir","config":"halton","seed":1,"dir":%q,"ok":true,"best_score":0.69}]}`,
+		dir)
+	if err := os.WriteFile(filepath.Join(outDir, "summary.json"), []byte(summary), 0o600); err != nil {
+		t.Fatalf("write summary: %v", err)
+	}
+
+	ds, err := loadDataset(outDir, dataset{OutDir: outDir, MaxEvals: 600})
+	if err != nil {
+		t.Fatalf("loadDataset: %v", err)
+	}
+	for _, rec := range ds.Records {
+		if rec.OK {
+			t.Fatalf("a summary row with no artifacts must not become an observation: %+v", rec)
+		}
+	}
+}

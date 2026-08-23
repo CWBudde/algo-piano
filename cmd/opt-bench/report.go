@@ -32,11 +32,17 @@ type traceRecord struct {
 // It is deliberately reconstructible from the artifacts on disk alone, so
 // --report never has to rebuild or rerun anything.
 type runRecord struct {
-	Case        string
-	Config      string
-	Seed        int64
-	Dir         string
-	OK          bool
+	Case   string
+	Config string
+	Seed   int64
+	Dir    string
+	// OK marks a confirmed observation. Only the artifact walk sets it: a
+	// summary.json row is an attestation, not evidence, because the artifacts
+	// it describes may have been deleted, truncated, or never written.
+	OK bool
+	// SummaryOK carries what summary.json claimed, which is what lets a tree
+	// written before the completion marker existed still be read.
+	SummaryOK   bool
 	BestScore   float64
 	WallSeconds float64
 	// Checkpoints holds the incumbent at each checkpointFractions entry, NaN
@@ -270,7 +276,7 @@ func readSummary(path string) (*matrixSummary, error) {
 
 // runIsComplete reports whether a run finished its whole evaluation budget.
 func runIsComplete(dir string, rec *runRecord, known bool) bool {
-	if known && rec.OK {
+	if known && rec.SummaryOK {
 		return true
 	}
 	_, err := os.Stat(filepath.Join(dir, completionMarker))
@@ -300,7 +306,7 @@ func loadDataset(outDir string, fallback dataset) (dataset, error) {
 		for _, row := range sum.Runs {
 			rec := &runRecord{
 				Case: row.Case, Config: row.Config, Seed: row.Seed, Dir: row.Dir,
-				OK: row.OK, BestScore: row.BestScore, WallSeconds: row.WallSeconds,
+				SummaryOK: row.OK, BestScore: row.BestScore, WallSeconds: row.WallSeconds,
 			}
 			if !row.OK {
 				rec.BestScore = math.NaN()
