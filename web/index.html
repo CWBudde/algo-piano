@@ -93,28 +93,36 @@
 
       <section class="control-deck" aria-label="Piano controls">
         <article class="control-card">
-          <h2>Damper</h2>
-          <button
-            id="damper-toggle"
-            class="damper-toggle active"
-            type="button"
-            aria-pressed="true"
-          >
-            ON
-          </button>
-        </article>
-
-        <article class="control-card">
-          <h2>Sustain</h2>
-          <button
-            id="sustain-pedal"
-            class="rocker-toggle"
-            type="button"
-            aria-pressed="false"
-          >
-            <span class="rocker-cap" aria-hidden="true"></span>
-            <span id="sustain-state">OFF</span>
-          </button>
+          <h2>Pedals</h2>
+          <div class="control-stack">
+            <div class="switch-row">
+              <div>
+                <h3>Damper</h3>
+                <span class="control-caption">String damping</span>
+              </div>
+              <button
+                id="damper-toggle"
+                class="damper-toggle active"
+                type="button"
+                aria-pressed="true"
+              >
+                ON
+              </button>
+            </div>
+            <div class="control-divider"></div>
+            <div class="pedal-control">
+              <h3>Sustain</h3>
+              <button
+                id="sustain-pedal"
+                class="rocker-toggle"
+                type="button"
+                aria-pressed="false"
+              >
+                <span class="rocker-cap" aria-hidden="true"></span>
+                <span id="sustain-state">OFF</span>
+              </button>
+            </div>
+          </div>
         </article>
 
         <article class="control-card">
@@ -123,7 +131,7 @@
             <span>0%</span>
             <input
               id="sustain-level"
-              class="sustain-slider"
+              class="control-slider"
               type="range"
               min="0"
               max="100"
@@ -136,14 +144,77 @@
           <p class="control-hint">Sets how far the sustain pedal is pressed while it is engaged. Partial depth lifts the dampers only partially, giving a half-pedal.</p>
         </article>
 
+        <article class="control-card output-card">
+          <h2>Output</h2>
+          <div class="parameter-control">
+            <div class="parameter-heading">
+              <label for="master-volume">Volume</label>
+              <output id="master-volume-value" for="master-volume">100%</output>
+            </div>
+            <input
+              id="master-volume"
+              class="control-slider"
+              type="range"
+              min="0"
+              max="100"
+              value="100"
+            />
+          </div>
+          <div class="control-divider"></div>
+          <div class="switch-row">
+            <div>
+              <h3>Limiter</h3>
+              <span class="control-caption">−1 dB ceiling</span>
+            </div>
+            <button
+              id="limiter-toggle"
+              class="compact-toggle"
+              type="button"
+              aria-pressed="false"
+            >
+              OFF
+            </button>
+          </div>
+          <div class="control-divider"></div>
+          <div class="switch-row">
+            <div>
+              <h3>Reverb</h3>
+              <span class="control-caption">Algo-DSP room</span>
+            </div>
+            <button
+              id="reverb-toggle"
+              class="compact-toggle"
+              type="button"
+              aria-pressed="false"
+            >
+              OFF
+            </button>
+          </div>
+          <div class="parameter-control compact-parameter">
+            <div class="parameter-heading">
+              <label for="reverb-amount">Amount</label>
+              <output id="reverb-amount-value" for="reverb-amount">20%</output>
+            </div>
+            <input
+              id="reverb-amount"
+              class="control-slider"
+              type="range"
+              min="0"
+              max="100"
+              value="20"
+            />
+          </div>
+        </article>
+
         <article class="control-card">
-          <h2>Coupling</h2>
+          <h2>Model</h2>
+          <h3>Coupling</h3>
           <select id="coupling-mode" class="coupling-select" aria-label="Coupling mode">
             <option value="off">Off</option>
             <option value="static" selected>Static</option>
             <option value="physical">Physical</option>
           </select>
-          <h2>String Model</h2>
+          <h3>String Model</h3>
           <select id="string-model" class="coupling-select" aria-label="String model">
             <option value="dwg" selected>DWG</option>
             <option value="modal">Modal</option>
@@ -162,6 +233,6 @@
     </main>
 
     <script src="wasm_exec.js"></script>
-    <script src="main.js?v=20260215-5" type="module"></script>
+    <script src="main.js?v=20260823-1" type="module"></script>
   </body>
 </html>

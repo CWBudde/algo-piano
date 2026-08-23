@@ -7,12 +7,25 @@ import (
 	"syscall/js"
 	"unsafe"
 
+	"github.com/cwbudde/algo-dsp/dsp/effects/dynamics"
+	"github.com/cwbudde/algo-dsp/dsp/effects/reverb"
 	"github.com/cwbudde/algo-piano/piano"
 )
 
 var (
 	globalPiano  *piano.Piano
 	outputBuffer []float32
+	masterGain   = float32(1)
+	limiterOn    bool
+	limiters     [2]*dynamics.Limiter
+	reverbOn     bool
+	reverbs      [2]*reverb.Reverb
+)
+
+const (
+	limiterCeilingDB = -1.0
+	limiterReleaseMS = 80.0
+	defaultReverbWet = 0.2
 )
 
 // Provisional modal profile from initial DWG->modal calibration run (notes 36,48,60,72,84).
@@ -41,6 +54,10 @@ func main() {
 	js.Global().Set("wasmSetStringModel", js.FuncOf(wasmSetStringModel))
 	js.Global().Set("wasmLoadIR", js.FuncOf(wasmLoadIR))
 	js.Global().Set("wasmSetIRMix", js.FuncOf(wasmSetIRMix))
+	js.Global().Set("wasmSetMasterGain", js.FuncOf(wasmSetMasterGain))
+	js.Global().Set("wasmSetLimiterEnabled", js.FuncOf(wasmSetLimiterEnabled))
+	js.Global().Set("wasmSetReverbEnabled", js.FuncOf(wasmSetReverbEnabled))
+	js.Global().Set("wasmSetReverbAmount", js.FuncOf(wasmSetReverbAmount))
 	js.Global().Set("wasmProcessBlock", js.FuncOf(wasmProcessBlock))
 	js.Global().Set("wasmGetMemoryBuffer", js.FuncOf(wasmGetMemoryBuffer))
 
@@ -63,12 +80,35 @@ func wasmInit(this js.Value, args []js.Value) interface{} {
 	params.MinNote = webMinNote
 	params.MaxNote = webMaxNote
 	globalPiano = piano.NewPiano(sampleRate, 16, params)
+	initOutputEffects(float64(sampleRate))
 
 	// Pre-allocate output buffer for 128 stereo frames
 	outputBuffer = make([]float32, 128*2)
 
 	println("Piano initialized at", sampleRate, "Hz")
 	return nil
+}
+
+func initOutputEffects(sampleRate float64) {
+	for channel := range limiters {
+		limiter, err := dynamics.NewLimiter(sampleRate)
+		if err != nil {
+			println("failed to create output limiter:", err.Error())
+			continue
+		}
+		if err := limiter.SetThreshold(limiterCeilingDB); err != nil {
+			println("failed to set limiter ceiling:", err.Error())
+		}
+		if err := limiter.SetRelease(limiterReleaseMS); err != nil {
+			println("failed to set limiter release:", err.Error())
+		}
+		limiters[channel] = limiter
+
+		room := reverb.NewReverb()
+		room.SetDry(1)
+		room.SetWet(defaultReverbWet)
+		reverbs[channel] = room
+	}
 }
 
 func wasmNoteOn(this js.Value, args []js.Value) interface{} {
@@ -219,6 +259,67 @@ func wasmSetIRMix(this js.Value, args []js.Value) interface{} {
 	return true
 }
 
+func wasmSetMasterGain(this js.Value, args []js.Value) interface{} {
+	if len(args) < 1 {
+		return false
+	}
+	masterGain = float32(clamp01(args[0].Float()))
+	return true
+}
+
+func wasmSetLimiterEnabled(this js.Value, args []js.Value) interface{} {
+	if len(args) < 1 {
+		return false
+	}
+	limiterOn = args[0].Bool()
+	if !limiterOn {
+		for _, limiter := range limiters {
+			if limiter != nil {
+				limiter.Reset()
+			}
+		}
+	}
+	return true
+}
+
+func wasmSetReverbEnabled(this js.Value, args []js.Value) interface{} {
+	if len(args) < 1 {
+		return false
+	}
+	reverbOn = args[0].Bool()
+	if !reverbOn {
+		for _, room := range reverbs {
+			if room != nil {
+				room.Reset()
+			}
+		}
+	}
+	return true
+}
+
+func wasmSetReverbAmount(this js.Value, args []js.Value) interface{} {
+	if len(args) < 1 {
+		return false
+	}
+	wet := clamp01(args[0].Float())
+	for _, room := range reverbs {
+		if room != nil {
+			room.SetWet(wet)
+		}
+	}
+	return true
+}
+
+func clamp01(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
+}
+
 func wasmProcessBlock(this js.Value, args []js.Value) interface{} {
 	if len(args) < 1 || globalPiano == nil {
 		return 0
@@ -231,6 +332,7 @@ func wasmProcessBlock(this js.Value, args []js.Value) interface{} {
 
 	// Process audio
 	output := globalPiano.Process(numFrames)
+	processOutputEffects(output)
 
 	// Copy to persistent buffer
 	copy(outputBuffer, output)
@@ -238,6 +340,22 @@ func wasmProcessBlock(this js.Value, args []js.Value) interface{} {
 	// Return pointer to buffer in WASM linear memory
 	ptr := &outputBuffer[0]
 	return float64(uintptr(unsafe.Pointer(ptr)))
+}
+
+func processOutputEffects(output []float32) {
+	for i := 0; i+1 < len(output); i += 2 {
+		for channel := 0; channel < 2; channel++ {
+			sample := float64(output[i+channel])
+			if reverbOn && reverbs[channel] != nil {
+				sample = reverbs[channel].ProcessSample(sample)
+			}
+			sample *= float64(masterGain)
+			if limiterOn && limiters[channel] != nil {
+				sample = limiters[channel].ProcessSample(sample)
+			}
+			output[i+channel] = float32(sample)
+		}
+	}
 }
 
 func wasmGetMemoryBuffer(this js.Value, args []js.Value) interface{} {

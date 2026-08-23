@@ -314,13 +314,19 @@ Invalid `string_model` values are rejected (`must be one of dwg|modal`).
 - init and render: `wasmInit`, `wasmProcessBlock`
 - note and pedal control: `wasmNoteOn`, `wasmKeyDown`, `wasmNoteOff`, `wasmSetSustain`, `wasmSetSustainAmount`
 - model/coupling control: `wasmSetStringModel`, `wasmSetCouplingMode`
+- output control: `wasmSetMasterGain`, `wasmSetLimiterEnabled`, `wasmSetReverbEnabled`, `wasmSetReverbAmount`
 
 Frontend (`web/main.js`) responsibilities:
 
 - load WASM and initialize engine with browser sample rate
 - UI control wiring (keyboard, mouse, pedals, mode selectors)
 - audio callback rendering in chunks (128-frame synth chunks)
-- runtime calls for coupling/mode changes
+- runtime calls for coupling/mode and post-output effect changes
+
+The optional post-output chain uses `algo-dsp`: independent left/right
+Freeverb-style room processors feed the master gain and independent left/right
+peak limiters. Reverb and limiting default to bypass, preserving the piano's
+existing output until the user enables them.
 
 Runtime IR loading:
 

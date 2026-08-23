@@ -60,6 +60,10 @@ var wasmExportContract = []string{
 	"wasmSetStringModel",
 	"wasmLoadIR",
 	"wasmSetIRMix",
+	"wasmSetMasterGain",
+	"wasmSetLimiterEnabled",
+	"wasmSetReverbEnabled",
+	"wasmSetReverbAmount",
 	"wasmProcessBlock",
 	"wasmGetMemoryBuffer",
 }

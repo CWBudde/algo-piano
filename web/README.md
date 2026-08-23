@@ -32,6 +32,8 @@ Then open: http://localhost:8080
 - **Mouse:** Click piano keys to play notes
 - **Keyboard:** Use ASDF row for white keys, QWERTY row for black keys
 - **Sustain Pedal:** Click button or press Spacebar
+- **Output:** Adjust master volume and optionally enable the algo-dsp peak limiter
+- **Reverb:** Enable the algo-dsp room effect and set its wet amount
 
 ## Architecture
 
@@ -41,6 +43,9 @@ Then open: http://localhost:8080
 - `wasm_exec.js` - Go WASM runtime (from Go SDK)
 - `dist/piano.wasm` - Compiled Go synthesizer
 - `dist/assets/ir/` - Impulse response files
+
+The output chain runs after the piano engine's body/room convolution:
+algo-dsp reverb (optional), master gain, then the algo-dsp limiter (optional).
 
 ## Browser Requirements
 

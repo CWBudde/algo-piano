@@ -15,6 +15,10 @@ let audioReady = false;
 let sustainPedalDown = false;
 let damperEngaged = true;
 let sustainLevel = 50;
+let masterVolume = 100;
+let limiterEnabled = false;
+let reverbEnabled = false;
+let reverbAmount = 20;
 let noteVelocity = 96;
 let couplingMode = 'static';
 let stringModel = 'dwg';
@@ -324,10 +328,18 @@ function attachKeyboardListeners() {
     const sustainLevelValue = document.getElementById('sustain-level-value');
     const couplingModeSelect = document.getElementById('coupling-mode');
     const stringModelSelect = document.getElementById('string-model');
+    const masterVolumeSlider = document.getElementById('master-volume');
+    const masterVolumeValue = document.getElementById('master-volume-value');
+    const limiterButton = document.getElementById('limiter-toggle');
+    const reverbButton = document.getElementById('reverb-toggle');
+    const reverbAmountSlider = document.getElementById('reverb-amount');
+    const reverbAmountValue = document.getElementById('reverb-amount-value');
 
-    function updateSliderFill(value) {
-        const pct = `${value}%`;
-        sustainLevelSlider.style.background = `linear-gradient(90deg, rgba(222, 189, 126, 0.9) 0%, rgba(222, 189, 126, 0.42) ${pct}, rgba(31, 34, 41, 0.85) ${pct}, rgba(31, 34, 41, 0.85) 100%)`;
+    function updateSliderFill(slider, value) {
+        const min = Number(slider.min) || 0;
+        const max = Number(slider.max) || 100;
+        const pct = `${((value - min) / (max - min)) * 100}%`;
+        slider.style.background = `linear-gradient(90deg, rgba(222, 189, 126, 0.9) 0%, rgba(222, 189, 126, 0.42) ${pct}, rgba(31, 34, 41, 0.85) ${pct}, rgba(31, 34, 41, 0.85) 100%)`;
     }
 
     function syncPedalUI() {
@@ -340,6 +352,17 @@ function attachKeyboardListeners() {
         damperButton.textContent = damperEngaged ? 'ON' : 'OFF';
     }
 
+    function syncOutputUI() {
+        limiterButton.classList.toggle('active', limiterEnabled);
+        limiterButton.setAttribute('aria-pressed', String(limiterEnabled));
+        limiterButton.textContent = limiterEnabled ? 'ON' : 'OFF';
+
+        reverbButton.classList.toggle('active', reverbEnabled);
+        reverbButton.setAttribute('aria-pressed', String(reverbEnabled));
+        reverbButton.textContent = reverbEnabled ? 'ON' : 'OFF';
+        reverbAmountSlider.disabled = !reverbEnabled;
+    }
+
     function setSustainState(down) {
         sustainPedalDown = down;
         syncPedalUI();
@@ -349,6 +372,7 @@ function attachKeyboardListeners() {
     function setDamperState(on) {
         damperEngaged = on;
         syncPedalUI();
+        pushSustainToEngine();
     }
 
     // A slider at 0 parses to numeric zero, so fall back only when the value is
@@ -360,8 +384,15 @@ function attachKeyboardListeners() {
 
     sustainLevel = parseSustainLevel(sustainLevelSlider.value);
     sustainLevelValue.textContent = `${sustainLevel}%`;
-    updateSliderFill(sustainLevel);
+    updateSliderFill(sustainLevelSlider, sustainLevel);
+    masterVolume = parseSustainLevel(masterVolumeSlider.value);
+    masterVolumeValue.textContent = `${masterVolume}%`;
+    updateSliderFill(masterVolumeSlider, masterVolume);
+    reverbAmount = parseSustainLevel(reverbAmountSlider.value);
+    reverbAmountValue.textContent = `${reverbAmount}%`;
+    updateSliderFill(reverbAmountSlider, reverbAmount);
     syncPedalUI();
+    syncOutputUI();
     setCouplingMode(couplingModeSelect ? couplingModeSelect.value : couplingMode);
     setStringModel(stringModelSelect ? stringModelSelect.value : stringModel);
 
@@ -476,8 +507,34 @@ function attachKeyboardListeners() {
     sustainLevelSlider.addEventListener('input', (event) => {
         sustainLevel = parseSustainLevel(event.target.value);
         sustainLevelValue.textContent = `${sustainLevel}%`;
-        updateSliderFill(sustainLevel);
+        updateSliderFill(sustainLevelSlider, sustainLevel);
         pushSustainToEngine();
+    });
+
+    masterVolumeSlider.addEventListener('input', (event) => {
+        masterVolume = parseSustainLevel(event.target.value);
+        masterVolumeValue.textContent = `${masterVolume}%`;
+        updateSliderFill(masterVolumeSlider, masterVolume);
+        pushOutputToEngine();
+    });
+
+    limiterButton.addEventListener('click', () => {
+        limiterEnabled = !limiterEnabled;
+        syncOutputUI();
+        pushOutputToEngine();
+    });
+
+    reverbButton.addEventListener('click', () => {
+        reverbEnabled = !reverbEnabled;
+        syncOutputUI();
+        pushOutputToEngine();
+    });
+
+    reverbAmountSlider.addEventListener('input', (event) => {
+        reverbAmount = parseSustainLevel(event.target.value);
+        reverbAmountValue.textContent = `${reverbAmount}%`;
+        updateSliderFill(reverbAmountSlider, reverbAmount);
+        pushOutputToEngine();
     });
 
     if (couplingModeSelect) {
@@ -535,11 +592,30 @@ function attachKeyboardListeners() {
 function pushSustainToEngine() {
     if (!audioReady) return;
 
-    const amount = sustainPedalDown ? sustainLevel / 100 : 0;
+    const amount = damperEngaged
+        ? (sustainPedalDown ? sustainLevel / 100 : 0)
+        : 1;
     if (typeof wasmSetSustainAmount !== 'undefined') {
         wasmSetSustainAmount(amount);
     } else if (typeof wasmSetSustain !== 'undefined') {
         wasmSetSustain(sustainPedalDown);
+    }
+}
+
+function pushOutputToEngine() {
+    if (!audioReady) return;
+
+    if (typeof wasmSetMasterGain !== 'undefined') {
+        wasmSetMasterGain(masterVolume / 100);
+    }
+    if (typeof wasmSetLimiterEnabled !== 'undefined') {
+        wasmSetLimiterEnabled(limiterEnabled);
+    }
+    if (typeof wasmSetReverbEnabled !== 'undefined') {
+        wasmSetReverbEnabled(reverbEnabled);
+    }
+    if (typeof wasmSetReverbAmount !== 'undefined') {
+        wasmSetReverbAmount(reverbAmount / 100);
     }
 }
 
@@ -603,6 +679,9 @@ async function initAudio() {
                         break;
                     }
 
+                    // Go may grow WASM memory while rendering, which detaches
+                    // the ArrayBuffer captured before wasmProcessBlock.
+                    wasmMemoryBuffer = wasmMemory.buffer;
                     const interleaved = new Float32Array(
                         wasmMemoryBuffer,
                         bufferPtr,
@@ -630,6 +709,7 @@ async function initAudio() {
         setCouplingMode(couplingMode);
         setStringModel(stringModel);
         pushSustainToEngine();
+        pushOutputToEngine();
         updateStatus(`Ready! Sample rate: ${audioContext.sampleRate} Hz`);
 
         // Try to load IR
