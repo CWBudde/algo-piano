@@ -304,9 +304,9 @@ func lerp(a, b, t float64) float64 {
 
 // BodyConfig controls short mono body IR generation (soundboard coloration).
 //
-// The body IR models soundboard coloration with two decay regimes:
-// low-frequency plate-like modes (broader, longer decay) and high-frequency
-// rib-localized modes (denser, shorter decay). CrossoverHz sets the transition.
+// The body IR models soundboard coloration with configurable low- and
+// high-frequency decay regimes. CrossoverHz sets the transition; the relative
+// regime lengths are determined by LowDecayS and HighDecayS.
 //
 // Mode placement uses analytical Kirchhoff plate eigenmodes for a simply-supported
 // orthotropic rectangular plate (modeling the soundboard). The eigenfrequencies are:
@@ -314,12 +314,12 @@ func lerp(a, b, t float64) float64 {
 //	f_{mn}/f_{11} = sqrt(S·m⁴ + 2·√S·m²n²R² + n⁴R⁴) / sqrt(S + 2·√S·R² + R⁴)
 //
 // where S = StiffnessRatio (Dx/Dy), R = PlateRatio (Lx/Ly), and m,n ≥ 1 are mode
-// indices. This gives physically realistic mode clustering: denser at high frequencies
-// (2D plate density of states ∝ f), with orthotropic splitting from wood grain direction.
+// indices. This gives the plate's roughly linear cumulative mode count in
+// frequency, with orthotropic splitting from the wood-grain direction.
 //
-// Future tier (deferred):
-//   - Full: algo-pde Helmholtz eigensolve for arbitrary plate geometry with ribs,
-//     computing actual eigenmodes of the soundboard for physically-grounded IR.
+// The structural tier is available separately through BodyModalTransfer and
+// GenerateModalBody; its offline algo-pde solve supports arbitrary plate
+// geometry and ribs without changing this compatible analytical generator.
 type BodyConfig struct {
 	SampleRate     int
 	DurationS      float64 // Typically 0.02-0.3s
@@ -328,7 +328,7 @@ type BodyConfig struct {
 	Brightness     float64
 	PlateRatio     float64 // Lx/Ly aspect ratio of soundboard (~1.0-3.0)
 	StiffnessRatio float64 // Dx/Dy orthotropic stiffness ratio (~5-20 for spruce)
-	ModeWarp       float64 // Power-law warp on eigenfreq ratios; 1.0 = pure Kirchhoff, >1 clusters low, <1 spreads
+	ModeWarp       float64 // Power-law warp on eigenfreq ratios; 1.0 = pure Kirchhoff, >1 spreads, <1 compresses toward f11
 	DirectLevel    float64
 	LowDecayS      float64 // Decay time for modes below CrossoverHz
 	HighDecayS     float64 // Decay time for modes above CrossoverHz
@@ -422,7 +422,7 @@ func GenerateBody(cfg BodyConfig) ([]float32, error) {
 	freqs := plateEigenfreqs(minF, maxF, cfg.Modes, cfg.PlateRatio, cfg.StiffnessRatio)
 
 	// Apply mode warp: power-law on eigenfrequency ratios relative to fundamental.
-	// ModeWarp=1 keeps pure Kirchhoff, >1 clusters modes toward low freqs, <1 spreads them.
+	// ModeWarp=1 keeps pure Kirchhoff, >1 spreads ratios, and <1 compresses them toward f11.
 	if cfg.ModeWarp != 1.0 && len(freqs) > 1 {
 		f0 := freqs[0]
 		for i := 1; i < len(freqs); i++ {

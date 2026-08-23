@@ -175,6 +175,37 @@ gate-c4 reference="reference/c4.wav" preset="assets/presets/fitted-c4-mayfly.jso
         --release-after "$release_after" \
         --max-duration 30
 
+# Attribute the current analytical body seed against the same C4 note,
+# velocity, release time, and sample rate used by the regression gate. The
+# render itself is fixed at five seconds and explicitly disables the room.
+# Reference recordings are gitignored, so a fresh clone skips cleanly.
+audit-body-ir reference="reference/c4.wav" preset="assets/presets/fitted-c4-mayfly.json" output="out/body-ir-audit.json":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    reference_raw="{{reference}}"
+    preset_raw="{{preset}}"
+    output_raw="{{output}}"
+    reference="${reference_raw#reference=}"
+    preset="${preset_raw#preset=}"
+    output="${output_raw#output=}"
+    if [ ! -f "$reference" ]; then
+        echo "body-ir-audit: SKIP - reference \"$reference\" not found (reference WAVs are gitignored; supply one to enable the audit)"
+        exit 0
+    fi
+    mkdir -p "$(dirname "$output")"
+    GOCACHE="${GOCACHE:-/tmp/gocache}" go run ./cmd/body-ir-audit \
+        --reference "$reference" \
+        --preset "$preset" \
+        --analytical-default \
+        --note 60 \
+        --velocity 118 \
+        --sample-rate 48000 \
+        --duration 5.0 \
+        --release-after 3.5 \
+        --format json \
+        --output "$output"
+    echo "body-ir-audit: wrote $output"
+
 # Deterministic sensitivity + Pareto sweep over the sustain-pass knobs.
 #
 # Answers "is the sustain pass's decay-vs-legacy trade-off a property of the

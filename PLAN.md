@@ -126,11 +126,29 @@ Remaining non-blocking follow-ups from Phases 4, 5, 8B, 8C and 9 were moved to
   `SpectralHighRMSEDB` 2 kHz+) are reported by `piano-distance`,
   `spectral-compare` and `piano-fit`.
 
-#### 11.5 — Body IR Kirchhoff model refinements (deferred)
+#### 11.5 — Structural body modes and level attribution ✅
 
-- [ ] Full tier: algo-pde Helmholtz eigensolve for arbitrary plate geometry with ribs
-- [ ] Investigate whether the body IR is contributing to or compensating for the
-      level gap. Settled together with **15.1**, which picks the shipped body IR.
+- **Offline structural tier.** The original “Helmholtz eigensolve” wording was
+  physically too weak for an arbitrary orthotropic soundboard. `algo-pde` now
+  solves the generalized structural problem `Kφ = ω²Mφ` on caller-supplied
+  triangular geometry, with clamped/simply-supported boundaries, per-element
+  orthotropic material, consistent mass/loss matrices and rib/bridge line
+  stiffness and mass. It exports a strict, source/output-projected
+  `body-modal-transfer-v1` artifact; no eigensolve occurs in the fitting loop.
+- **Piano integration.** `irsynth` validates and renders the signed modal
+  force-to-velocity transfer deterministically, with explicit gain/loss and no
+  stochastic residue or peak normalization. `piano-fit --body-transfer` loads
+  the artifact once, searches only cheap rendering/mix controls and records
+  artifact provenance in checkpoints and the final report. The analytical
+  rectangular generator remains compatible.
+- **Level attribution.** `cmd/body-ir-audit` performs paired identity/body
+  renders with the room disabled and reports both fixed-gain and equal-RMS
+  spectral evidence. The current analytical seed raises RMS by about 26.8 dB
+  but worsens equal-RMS overall spectral error by about 5.9 dB. Its large level
+  effect and harmful coloration must not be selected unchanged as Phase 15.1's
+  default.
+  Reproduction and caveats are in
+  `docs/plans/2026-08-23-phase11-5-body-ir.md`.
 
 #### 11.6 — Re-run optimization pipeline after model fixes
 
@@ -589,10 +607,10 @@ would be chosen against the wrong signal.
 - [ ] **Ship a body IR asset** and give `assets/presets/default.json` a
       `body_ir_wav_path`. Deferred from 9.5: the dual-IR path exists and is
       fenced by `piano/radiation_test.go`, but there is no shipped body IR and
-      picking one is a separate modelling decision. **11.5** asks a related
-      question — whether the body IR contributes to or compensates for the level
-      gap — and the two are worth settling together, so 11.5's second box is
-      answered here.
+      picking one is a separate modelling decision. **11.5** found that the
+      analytical seed has a large level effect and harmful equal-RMS coloration;
+      structural artifacts must pass the same paired audit before one is chosen
+      here.
 
 ### 15.2 — Complete the `Params` schema (from Phase 8)
 
