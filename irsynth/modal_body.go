@@ -128,10 +128,13 @@ func LoadBodyModalTransfer(path string) (*BodyModalTransfer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open body modal transfer: %w", err)
 	}
-	defer f.Close()
-	transfer, err := DecodeBodyModalTransfer(f)
-	if err != nil {
-		return nil, fmt.Errorf("load %s: %w", path, err)
+	transfer, decodeErr := DecodeBodyModalTransfer(f)
+	closeErr := f.Close()
+	if decodeErr != nil {
+		return nil, fmt.Errorf("load %s: %w", path, decodeErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close body modal transfer %s: %w", path, closeErr)
 	}
 	return transfer, nil
 }
