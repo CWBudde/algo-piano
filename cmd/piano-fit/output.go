@@ -432,8 +432,15 @@ func writePresetJSON(path string, p *piano.Params) error {
 		// No omitempty: a preset that deliberately disables resonance must say
 		// so, otherwise the key vanishes and reloading falls back to the
 		// piano.Params default rather than the value that was written.
-		ResonanceEnabled           bool    `json:"resonance_enabled"`
-		ResonanceGain              float32 `json:"resonance_gain,omitempty"`
+		ResonanceEnabled bool `json:"resonance_enabled"`
+		// No omitempty either, and for the sharper version of the same reason:
+		// DefaultResonanceGain is NON-ZERO (0.00018), so zero is a meaningful
+		// value - "resonance enabled, contributing nothing". With omitempty
+		// that zero vanishes on write and reloading resurrects it as the
+		// default, so the written preset stops reproducing the candidate the
+		// fitter evaluated. cmd/piano-modal-fit has always written this field
+		// unconditionally; this serialiser was the one that disagreed.
+		ResonanceGain              float32 `json:"resonance_gain"`
 		ResonancePerNoteFilter     bool    `json:"resonance_per_note_filter,omitempty"`
 		HammerStiffnessScale       float32 `json:"hammer_stiffness_scale,omitempty"`
 		HammerExponentScale        float32 `json:"hammer_exponent_scale,omitempty"`

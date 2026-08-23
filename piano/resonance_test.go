@@ -94,3 +94,68 @@ func TestSustainPedalAloneKeepsIdleBankEmpty(t *testing.T) {
 		})
 	}
 }
+
+// TestZeroResonanceGainIsSilentNotDefault pins the behaviour that
+// Piano.NewPiano's `params.ResonanceGain > 0` test used to make unreachable: a
+// preset may say "resonance is wired, and it contributes nothing".
+//
+// Until 2026-08-23 that configuration silently received DefaultResonanceGain
+// instead, because the strict `> 0` treated a deliberate zero exactly like an
+// unset field. Nothing shipped depended on it - every preset under
+// assets/presets pins a non-zero resonance_gain - but it was one of two
+// independent mechanisms converting a deliberate zero into 0.00018. The other
+// was omitempty in cmd/piano-fit/output.go, which meant such a preset could not
+// even be written out; see TestWritePresetJSONStatesResonanceGainExplicitly.
+//
+// The assertion is bit-exactness against ResonanceEnabled=false rather than
+// "quieter than the default", because the engine at zero gain must be inert
+// rather than merely faint: injectSample returns early on injectionGain <= 0.
+func TestZeroResonanceGainIsSilentNotDefault(t *testing.T) {
+	for _, model := range []StringModel{StringModelDWG, StringModelModal} {
+		t.Run(string(model), func(t *testing.T) {
+			render := func(enabled bool, gain float32) []float32 {
+				params := NewDefaultParams()
+				params.StringModel = model
+				params.ResonanceEnabled = enabled
+				params.ResonanceGain = gain
+				params.CouplingEnabled = false
+				params.CouplingMode = CouplingModeOff
+
+				p := NewPiano(48000, 16, params)
+				p.SetSustainPedal(true)
+				p.NoteOn(60, 100)
+				out := make([]float32, 0, 64*256)
+				for i := 0; i < 64; i++ {
+					out = append(out, p.Process(128)...)
+				}
+				return out
+			}
+
+			off := render(false, 0)
+			zero := render(true, 0)
+			if len(off) != len(zero) {
+				t.Fatalf("render lengths differ: %d vs %d", len(off), len(zero))
+			}
+			for i := range off {
+				if off[i] != zero[i] {
+					t.Fatalf("resonance_gain 0 is not inert: sample %d differs, %v vs %v", i, off[i], zero[i])
+				}
+			}
+
+			// The control: the same render at the default gain must NOT match,
+			// otherwise the comparison above would pass on a build where the
+			// resonance engine does nothing at all.
+			def := render(true, DefaultResonanceGain)
+			same := true
+			for i := range off {
+				if off[i] != def[i] {
+					same = false
+					break
+				}
+			}
+			if same {
+				t.Fatalf("render at DefaultResonanceGain is bit-identical to resonance off; the probe cannot see the loop")
+			}
+		})
+	}
+}
