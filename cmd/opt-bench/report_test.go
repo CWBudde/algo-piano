@@ -362,7 +362,8 @@ func TestLoadDatasetIgnoresSummaryRowsWithoutArtifacts(t *testing.T) {
 	dir := filepath.Join(outDir, "joint-ir", "halton", "seed1")
 	summary := fmt.Sprintf(
 		`{"max_evals":600,"runs":[{"case":"joint-ir","config":"halton","seed":1,"dir":%q,"ok":true,"best_score":0.69}]}`,
-		dir)
+		dir,
+	)
 	if err := os.WriteFile(filepath.Join(outDir, "summary.json"), []byte(summary), 0o600); err != nil {
 		t.Fatalf("write summary: %v", err)
 	}

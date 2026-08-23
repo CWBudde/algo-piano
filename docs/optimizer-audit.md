@@ -129,6 +129,149 @@ conclusion about the fitting pipeline. Its job was to cut the configuration
 matrix down to what is worth spending real renders on: **warm start, round
 length, and their combination.**
 
-## Stages A and B
+## Stages A and B — real audio
 
-Pending — see [`optimizer-benchmark.md`](optimizer-benchmark.md).
+Generated tables: [`optimizer-benchmark.md`](optimizer-benchmark.md) at 600
+evaluations across all four cases, and
+[`optimizer-benchmark-2400.md`](optimizer-benchmark-2400.md) at 2400
+evaluations on `sustain` and `attack`.
+
+The second document exists because of a mistake worth recording. The first
+matrix was budgeted at 600 evaluations, chosen to match what a real
+`just fit-c4-passes` run actually spends. But a round is about 47.7 evaluations
+per iteration and the derived round length is 12 iterations, so 600 evaluations
+is _one round_. At that budget "restart every 12 iterations" and "never
+restart" are the same configuration — and three of five `sustain` seeds
+returned bit-identical scores under both, which is how it was noticed. The
+round-length question needs a budget several rounds long, hence the 2400-eval
+re-run.
+
+### Does the search beat the controls?
+
+Medians of five seeds at 600 evaluations, lower is better:
+
+| case        | knobs | `baseline` | `warm-start` |  `halton` | `random` |
+| ----------- | ----: | ---------: | -----------: | --------: | -------: |
+| `sustain`   |     5 |      0.354 |    **0.346** |     0.412 |    0.441 |
+| `attack`    |     9 |      0.443 |        0.446 | **0.437** |    0.445 |
+| `piano-mix` |    20 |  **0.537** |        0.538 |     0.561 |    0.569 |
+| `joint-ir`  |    39 |      0.513 |    **0.494** |     0.548 |    0.557 |
+
+**On three of four cases the search earns its cost comfortably**, and on
+`joint-ir` warm start beats Halton by 0.054. `attack` is the exception, and it
+is the case that matters most for interpreting the record in `PLAN.md:1016`:
+there, Halton beats every Mayfly configuration tried.
+
+The controls behaved as controls should. Halton returned bit-identical scores
+across all five seeds of every case, which is the determinism check passing.
+
+### Why `attack` is different
+
+Not because it is high-dimensional — the search wins at both 5 and 20 knobs and
+loses at 9. The proposed-score distributions say what actually happens:
+
+| `attack`, 600 evals |    min | median |   p95 |        IQR |
+| ------------------- | -----: | -----: | ----: | ---------: |
+| `halton`            | 0.4366 | 0.4729 | 0.660 | **0.0626** |
+| `random`            | 0.4452 | 0.4747 | 0.663 | **0.0612** |
+| `baseline`          | 0.4433 | 0.4470 | 0.497 | **0.0041** |
+| `warm-start`        | 0.4425 | 0.4470 | 0.498 | **0.0034** |
+
+The samplers, which probe the box evenly, see an interquartile range of ~0.062.
+Every Mayfly configuration sees ~0.004. The convergence table shows the swarm is
+already inside that band at 10% of the budget and never leaves it, while Halton
+is still improving at the halfway mark. That is premature convergence: with
+`DanceDamp 0.8` over ~12 iterations the nuptial dance is at `0.8^12 ≈ 0.07`, and
+at a one-round budget no restart ever restores diversity.
+
+The 2400-evaluation re-run adds the other half of the picture. **Halton on
+`attack` returns exactly 0.436636 at 2400 evaluations — the identical value it
+found at 600.** Four times the budget bought a space-filling sequence nothing at
+all. So `attack` is a nearly flat landscape with one good pocket that Halton
+happens to cover early and the swarm never reaches.
+
+That also disposes of the equal-wall-clock objection. Mayfly runs cost ~45% more
+wall time than the samplers at the same evaluation count, because the candidates
+it favours render longer, so at equal wall clock Halton would get ~1.45× the
+evaluations. On `sustain`, quadrupling Halton's budget moves it from 0.4118 to
+0.4096 — 0.002 against a 0.06 gap. Extra evaluations are not what the control is
+missing.
+
+### Round length and warm start on real audio
+
+At 2400 evaluations, where restart policy is finally expressible:
+
+| case      | `baseline` | `long-round` | `warm-long-round` | `halton` |
+| --------- | ---------: | -----------: | ----------------: | -------: |
+| `sustain` |     0.3438 |   **0.3386** |            0.3381 |   0.4096 |
+| `attack`  | **0.4399** |       0.4413 |            0.4438 |   0.4366 |
+
+Round length helps on `sustain` and slightly hurts on `attack`. Warm start at
+600 evaluations wins clearly on `sustain` (0.346 vs 0.354) and `joint-ir`
+(0.494 vs 0.513), and loses slightly on `attack` (0.446 vs 0.443) and
+`piano-mix` (0.538 vs 0.537).
+
+**Neither change clears the promotion rule** — beat baseline on at least three
+of four cases and regress none — so **no default changes.** Both stay behind
+their flags with the measurement recorded as the reason. This is the rule doing
+its job: on the synthetic objectives both looked like large, unambiguous wins,
+and on real audio they are case-dependent.
+
+### Finding 4b, confirmed on every case
+
+`spectral_saturated` is true for the winning candidate of every single case, and
+`piano-mix` additionally saturates `partial_level`:
+
+| case        | search profile | spectral RMSE | that profile's norm | saturated weight |
+| ----------- | -------------- | ------------: | ------------------: | ---------------: |
+| `sustain`   | `decay-v1`     |       81.8 dB |                80.0 |              10% |
+| `attack`    | `attack-v1`    |       82.0 dB |                80.0 |              20% |
+| `piano-mix` | `legacy-v1`    |       68.2 dB |                30.0 |              30% |
+
+So between a tenth and a third of the objective's weight carries no gradient at
+the current model quality. `just gate-c4` passes, but its own breakdown of the
+gated preset states the problem plainly:
+
+```
+Time RMSE        0.106971      42.8%  x0.30   -> 0.1284
+Envelope RMSE    10.9 dB       36.2%  x0.25   -> 0.0905
+Spectral RMSE    77.4 dB      100.0%  x0.30   -> 0.3000  <-- pinned
+Decay diff       3.9 dB/s       9.8%  x0.15   -> 0.0146
+Score:            0.5335
+WARNING: spectral component saturated (77.4 dB >= NormSpectral 30.0) - this component provides no gradient
+```
+
+The largest single contributor to the score, 0.3000 of 0.5335 — 56% of it — is
+a constant. An optimizer moving any knob that affects spectral RMSE sees no
+change in the objective at all.
+
+The shape matters: on the calibrated profiles the norm is exceeded by two
+decibels, not by an order of magnitude. This is model distance, not a
+normalization bug — `analysis/norms.go` already says as much about the
+attack-rise metric — and **it should be re-checked after the model work rather
+than "fixed" now.** Changing `analysis` norms is out of scope for this branch.
+
+## Verdict for PLAN.md 11.6
+
+**The optimizer is fit to run 11.6, and it is not the thing to fix first.**
+
+At an equal evaluation budget the search beats both trivial controls on three of
+four cases, decisively on the widest one. The one case it loses is a nearly flat
+landscape where 2400 Halton evaluations find nothing better than 600 do, so no
+optimizer would have distinguished itself there.
+
+What should be checked before 11.6 is the objective, not the search. A fifth of
+the `attack` profile's weight and a third of `legacy-v1`'s is pinned at the
+clamp, which is a consequence of the model still sitting far from the reference.
+Re-measure saturation once the model fixes land; if the spectral term comes back
+inside its norm, the search has more signal to work with than anything measured
+here.
+
+Two smaller items are worth carrying forward:
+
+- The evaluation accounting is wrong by 2.38×, so `--mayfly-round-evals` does
+  not mean what it says and rounds are truncated. Fixing the derivation is a
+  one-line change, but it changes the search's behaviour, so it belongs to a
+  branch that can re-run the matrix rather than this one.
+- `--mayfly-warm-start` is worth trying on the joint IR fit specifically, where
+  it was the largest single improvement measured (0.513 → 0.494).

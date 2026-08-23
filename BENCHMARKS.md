@@ -922,7 +922,15 @@ benchstat old=old.txt new=new.txt
 
 ## Optimizer benchmark
 
-Search-strategy results for `cmd/piano-fit` (Mayfly against the random and
-Halton controls at an equal evaluation budget) live in
-[docs/optimizer-benchmark.md](docs/optimizer-benchmark.md); regenerate them
-with `just opt-bench` followed by `just opt-bench-report`.
+Whether `cmd/piano-fit`'s Mayfly search earns its cost against trivial
+controls, and what that means for the PLAN.md 11.6 pipeline re-run:
+[docs/optimizer-audit.md](docs/optimizer-audit.md) is the write-up and the
+verdict. Its tables are generated, not transcribed:
+
+- [docs/optimizer-screening.md](docs/optimizer-screening.md) — render-free
+  screening over closed-form objectives (`just opt-screen`).
+- [docs/optimizer-benchmark.md](docs/optimizer-benchmark.md) — the real-audio
+  matrix at 600 evaluations (`just opt-bench`, then `just opt-bench-report`).
+- [docs/optimizer-benchmark-2400.md](docs/optimizer-benchmark-2400.md) — the
+  round-length re-run at 2400 evaluations, which is the smallest budget that
+  spans more than one Mayfly round.

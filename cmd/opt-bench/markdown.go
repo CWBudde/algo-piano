@@ -219,7 +219,14 @@ func fmtSeconds(v float64) string {
 func renderMarkdown(doc benchDoc) string {
 	var b strings.Builder
 
-	b.WriteString("# Optimizer benchmark\n\n")
+	// The budget belongs in the title: the audit produces more than one of
+	// these documents, and two tables that differ only in evaluation budget are
+	// not comparable to each other.
+	if doc.MaxEvals > 0 {
+		fmt.Fprintf(&b, "# Optimizer benchmark (%d evaluations)\n\n", doc.MaxEvals)
+	} else {
+		b.WriteString("# Optimizer benchmark\n\n")
+	}
 	b.WriteString("<!-- GENERATED FILE - DO NOT EDIT BY HAND. -->\n")
 	fmt.Fprintf(&b, "<!-- Regenerate with: %s -->\n\n", doc.Command)
 	outDir := doc.OutDir
@@ -326,7 +333,13 @@ func renderMethod(b *strings.Builder, doc benchDoc) {
 	fmt.Fprintf(b, "- **Seeds:** %s (one independent piano-fit process each; all statistics are medians over these, never a mean of one repeated run).\n",
 		formatSeeds(doc.Seeds))
 	fmt.Fprintf(b, "- **piano-fit workers:** `--workers %d`. One worker keeps a run a single search rather than a portfolio of independent Mayfly rounds.\n", doc.Workers)
-	fmt.Fprintf(b, "- **Driver parallelism:** %d concurrent runs.\n", doc.Jobs)
+	// Qualified, because an artifact tree can be assembled over several driver
+	// invocations — a re-run of one case, a follow-up at another budget — and
+	// summary.json only records the most recent one. Stating a single number
+	// flatly would be a claim about cells it never covered.
+	fmt.Fprintf(b, "- **Driver parallelism:** %d concurrent runs in the most recent driver invocation. "+
+		"A tree assembled over several invocations may have used other values; parallelism affects wall "+
+		"time only, never the eval-budgeted scores.\n", doc.Jobs)
 	fmt.Fprintf(b, "- **Binary:** `go build -tags %s -buildvcs=false -o <work>/piano-fit ./cmd/piano-fit`.\n", doc.BuildTags)
 	if doc.Reference != "" {
 		fmt.Fprintf(b, "- **Reference:** `%s`.\n", doc.Reference)
