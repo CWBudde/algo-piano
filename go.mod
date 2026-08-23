@@ -14,7 +14,7 @@ require (
 )
 
 require (
-	github.com/cwbudde/qmc v0.1.1
+	github.com/cwbudde/qmc v0.1.2
 	github.com/go-audio/riff v1.0.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 )
