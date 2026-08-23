@@ -152,23 +152,13 @@ Remaining non-blocking follow-ups from Phases 4, 5, 8B, 8C and 9 were moved to
   Reproduction and caveats are in
   `docs/plans/2026-08-23-phase11-5-body-ir.md`.
 
-#### 11.6 — Re-run optimization pipeline after model fixes
+#### 11.7 — Optimizer audit ✅ (prerequisite for Phase 17.8)
 
-Runs as part of **Phase 17**, not before it: Phases 14–15 still change the
-renderer, so a pipeline run before them would have to be repeated.
-
-- [ ] Stage 1: piano,mix with new hammer noise + level fix
-- [ ] Stage 2: body-ir,mix with Kirchhoff plate modes
-- [ ] Stage 3: piano,mix re-tune
-- [ ] Stage 4: joint optimization
-- [ ] Target: score < 0.25 (currently 0.39), spectral RMSE < 10 dB (currently 20 dB)
-
-#### 11.7 — Optimizer audit ✅ (prerequisite for 11.6)
-
-11.6 spends hours of fitting. Before spending them, the search itself was
+Phase 17.8 spends hours of fitting. Before spending them, the search itself was
 measured against trivial controls at equal evaluation budgets, so an optimizer
 failure could not be mistaken for a model failure. **Verdict: the optimizer is
-fit to run 11.6, and the objective — not the search — is what to fix first.**
+fit to run Phase 17.8, and the objective — not the search — is what to fix
+first.**
 Method, matrix and numbers: `docs/optimizer-audit.md`.
 
 - [x] Benchmark harness `cmd/opt-bench`, four cases (5/9/20/39 knobs), five
@@ -193,7 +183,7 @@ Method, matrix and numbers: `docs/optimizer-audit.md`.
       keeps the plain sequence by default (`--sweep-joint-scramble` opts in) so
       recorded sweep reports still reproduce bit-for-bit.
 - [ ] Re-measure saturation once the 11.1–11.4 model fixes land (in **Phase 17**,
-      alongside 11.6). If the spectral
+      alongside 17.8). If the spectral
       term comes back inside its norm, the search has more signal than anything
       measured here, and the round-length and warm-start items are worth
       re-testing against it.
@@ -690,13 +680,12 @@ that do not contradict each other, and the v1 core is chosen.
 
 ## Phase 17 — Fitting pipeline against the corrected renderer
 
-Open work carried out of Phases 8B, 8C, 9.6 and 12.4.
+Open work carried out of Phases 8B, 8C, 9.6, former 11.6 and 12.4.
 
 **Everything here is invalidated if any of Phases 14–16 lands afterwards**, which
-is the whole reason for this ordering. Two items that stay written under Phase 11
-also execute at this point, not earlier: **11.6** (re-run the optimization
-pipeline, stages 1–4) and the last open box of **11.7** (re-measure spectral
-saturation once the 11.1–11.4 model fixes have settled).
+is the whole reason for this ordering. The last open box of **11.7** also
+executes here: re-measure spectral saturation once the 11.1–11.4 model fixes
+have settled.
 
 ### 17.1 — Re-fit `assets/presets/modal-calibrated.json` (from 12.4)
 
@@ -785,12 +774,25 @@ re-fit", "Constraining what the gate measures"), and it stands as follows:
 - [ ] CLI entrypoint wiring both helpers with reproducible output artifacts
 - [ ] Document the workflow alongside the existing fitting tools
 
+### 17.8 — Re-run the full optimization pipeline (from former 11.6)
+
+This is deliberately the last fitting step. Running it before the renderer,
+parameter surface, core profile, individual passes, body-IR selection and
+coupling calibration above are settled would produce presets that immediately
+need another full run.
+
+- [ ] Stage 1: piano,mix with new hammer noise + level fix
+- [ ] Stage 2: body-ir,mix with Kirchhoff plate modes
+- [ ] Stage 3: piano,mix re-tune
+- [ ] Stage 4: joint optimization
+- [ ] Target: score < 0.25 (currently 0.39), spectral RMSE < 10 dB (currently 20 dB)
+
 **Done when:** `modal-calibrated.json` is re-fitted with the norm corpus
 re-derived alongside it, the sustain pass either ships behind the gate or is
 retired on evidence, the inharmonicity pass has leverage or is retired, a default
 synthetic IR is selected on multi-note validation, and coupling strength can be
-calibrated from multi-note recordings — with C4 distance and its sub-metrics
-stable across the changes.
+calibrated from multi-note recordings, then the four-stage pipeline has been
+re-run — with C4 distance and its sub-metrics stable across the changes.
 
 ---
 
