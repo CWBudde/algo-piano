@@ -31,6 +31,14 @@ type configStats struct {
 	// MedianCheckpoints is the median-over-seeds incumbent at each
 	// checkpointFractions entry.
 	MedianCheckpoints []float64
+	// Spread* are medians over seeds of the per-run trace spread. They report
+	// what the search proposed rather than what it kept, which is what
+	// separates "the search is weak" from "the objective is flat".
+	SpreadMin    float64
+	SpreadP05    float64
+	SpreadMedian float64
+	SpreadP95    float64
+	SpreadIQR    float64
 }
 
 // caseReport is one case's block of the document.
@@ -126,6 +134,7 @@ func aggregateConfig(name string, recs []runRecord) configStats {
 	cs := configStats{Config: name, MedianBest: math.NaN(), MinBest: math.NaN(), MaxBest: math.NaN(), MedianWall: math.NaN()}
 	scores := make([]float64, 0, len(recs))
 	walls := make([]float64, 0, len(recs))
+	var sMin, sP05, sMed, sP95, sIQR []float64
 	perCheckpoint := make([][]float64, len(checkpointFractions))
 	for _, rec := range recs {
 		if !rec.OK {
@@ -141,7 +150,16 @@ func aggregateConfig(name string, recs []runRecord) configStats {
 				perCheckpoint[i] = append(perCheckpoint[i], rec.Checkpoints[i])
 			}
 		}
+		if rec.Spread.Valid {
+			sMin = append(sMin, rec.Spread.Min)
+			sP05 = append(sP05, rec.Spread.P05)
+			sMed = append(sMed, rec.Spread.Median)
+			sP95 = append(sP95, rec.Spread.P95)
+			sIQR = append(sIQR, rec.Spread.IQR)
+		}
 	}
+	cs.SpreadMin, cs.SpreadP05 = median(sMin), median(sP05)
+	cs.SpreadMedian, cs.SpreadP95, cs.SpreadIQR = median(sMed), median(sP95), median(sIQR)
 	cs.MedianBest = median(scores)
 	cs.MinBest, cs.MaxBest = minMax(scores)
 	cs.MedianWall = median(walls)
@@ -239,7 +257,33 @@ func renderCases(b *strings.Builder, doc benchDoc) {
 		fmt.Fprintf(b, "\n%s\n\n", cr.Verdict)
 
 		renderConvergence(b, cr)
+		renderSpread(b, cr)
 	}
+}
+
+// renderSpread writes the distribution of proposed objective values.
+//
+// It answers a question the best-score table cannot. Compare the `halton` row,
+// which probes the box evenly and therefore measures the objective's own
+// dynamic range, against the `baseline` row, which measures where the swarm
+// ended up. A flat `halton` row means the knobs barely move the score, and no
+// optimizer can beat a space-filling sequence on a landscape that flat. A
+// `baseline` IQR far below halton's means the swarm concentrated — which is
+// the goal when it concentrates on a good region and premature convergence
+// when it does not.
+func renderSpread(b *strings.Builder, cr caseReport) {
+	fmt.Fprintf(b, "### Proposed-score distribution (`%s`)\n\n", cr.Case)
+	b.WriteString("Median over seeds of each run's own trace quantiles, over every score the run proposed " +
+		"(not just the one it kept). Penalty scores, which report the budget rather than the landscape, " +
+		"are excluded.\n\n")
+	b.WriteString("| Config | min | p05 | median | p95 | IQR |\n")
+	b.WriteString("| ------ | --- | --- | ------ | --- | --- |\n")
+	for _, cs := range cr.Configs {
+		fmt.Fprintf(b, "| `%s` | %s | %s | %s | %s | %s |\n",
+			cs.Config, fmtScore(cs.SpreadMin), fmtScore(cs.SpreadP05), fmtScore(cs.SpreadMedian),
+			fmtScore(cs.SpreadP95), fmtScore(cs.SpreadIQR))
+	}
+	b.WriteString("\n")
 }
 
 // renderConvergence writes the median-over-seeds incumbent at each checkpoint.

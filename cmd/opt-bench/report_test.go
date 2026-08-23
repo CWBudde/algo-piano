@@ -279,3 +279,43 @@ func TestLoadDatasetAcceptsSummaryAsCompletion(t *testing.T) {
 		t.Fatalf("summary-attested run must count as an observation: %+v", ds.Records)
 	}
 }
+
+// TestTraceSpreadExcludesPenaltyScores pins that the spread describes the
+// landscape rather than the budget. piano-fit answers an exhausted budget with
+// "current best + 0.8" instead of a real score, and a run's trace ends in a
+// burst of those; counting them would make every objective look wide.
+func TestTraceSpreadExcludesPenaltyScores(t *testing.T) {
+	recs := make([]traceRecord, 0, 120)
+	for i := range 100 {
+		recs = append(recs, traceRecord{Eval: int64(i + 1), Aggregate: 0.40 + float64(i)*0.001})
+	}
+	for i := range 20 {
+		recs = append(recs, traceRecord{Eval: int64(101 + i), Aggregate: 1.2})
+	}
+
+	got := traceSpread(recs)
+	if !got.Valid {
+		t.Fatal("spread must be valid for a non-empty trace")
+	}
+	if got.P95 > penaltyFloor {
+		t.Errorf("p95 = %v, want the penalty tail excluded (below %v)", got.P95, penaltyFloor)
+	}
+	if got.IQR <= 0 || got.IQR > 0.1 {
+		t.Errorf("IQR = %v, want the real landscape's ~0.05", got.IQR)
+	}
+}
+
+// TestTraceSpreadKeepsLandscapesAboveTheFloor guards the trim: a case whose
+// genuine scores sit above the penalty floor must not have its landscape
+// discarded as if it were all penalties.
+func TestTraceSpreadKeepsLandscapesAboveTheFloor(t *testing.T) {
+	recs := make([]traceRecord, 0, 100)
+	for i := range 100 {
+		recs = append(recs, traceRecord{Eval: int64(i + 1), Aggregate: 0.80 + float64(i)*0.001})
+	}
+
+	got := traceSpread(recs)
+	if !got.Valid || got.Median < penaltyFloor {
+		t.Fatalf("spread %+v discarded a landscape that genuinely lives above %v", got, penaltyFloor)
+	}
+}

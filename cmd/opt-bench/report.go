@@ -42,6 +42,28 @@ type runRecord struct {
 	// Checkpoints holds the incumbent at each checkpointFractions entry, NaN
 	// where the trace has no record that early (or no trace at all).
 	Checkpoints []float64
+	// Spread describes the distribution of what this run actually proposed,
+	// as opposed to what it kept. See spreadStats.
+	Spread spreadStats
+}
+
+// spreadStats summarises the objective values a run proposed across its whole
+// trace, which is the diagnostic that separates two very different failures.
+//
+// A wide spread under the Halton control says the objective has dynamic range
+// for a search to exploit; a narrow one says the knobs barely move the score,
+// and no optimizer can beat a space-filling sequence on a landscape that flat.
+// A narrow IQR under the real search says the swarm has concentrated — useful
+// when it concentrates somewhere good, premature convergence when it does not.
+// Neither is visible in the best-score tables, which report only the single
+// value each run kept.
+type spreadStats struct {
+	Valid  bool
+	Min    float64
+	P05    float64
+	Median float64
+	P95    float64
+	IQR    float64
 }
 
 // dataset is every observation plus the run parameters the Method section
@@ -154,6 +176,46 @@ func traceCheckpoints(recs []traceRecord, budget int, fracs []float64) []float64
 
 // readTrace parses a JSONL trace. A missing file is not an error: tracing is
 // opt-in on the piano-fit side and an older artifact tree may predate it.
+// penaltyFloor is the smallest aggregate the objective's own penalty paths can
+// return. piano-fit answers an over-budget or failed evaluation with
+// "current best + 0.8" rather than a real score, so those records describe the
+// budget, not the landscape, and would inflate every spread statistic.
+const penaltyFloor = 0.75
+
+// traceSpread summarises the proposed objective values in a trace.
+func traceSpread(recs []traceRecord) spreadStats {
+	vals := make([]float64, 0, len(recs))
+	for _, r := range recs {
+		if math.IsNaN(r.Aggregate) || math.IsInf(r.Aggregate, 0) {
+			continue
+		}
+		vals = append(vals, r.Aggregate)
+	}
+	if len(vals) == 0 {
+		return spreadStats{}
+	}
+	sort.Float64s(vals)
+	// Trim the penalty tail only when it is a tail: on a case whose real
+	// scores live above the floor, dropping everything above it would discard
+	// the landscape itself.
+	if trimmed := trimPenaltyTail(vals); len(trimmed) > len(vals)/2 {
+		vals = trimmed
+	}
+	q := func(f float64) float64 { return vals[int(f*float64(len(vals)-1))] }
+
+	return spreadStats{
+		Valid: true, Min: vals[0], P05: q(0.05), Median: q(0.5), P95: q(0.95),
+		IQR: q(0.75) - q(0.25),
+	}
+}
+
+// trimPenaltyTail drops the sorted values at or above the penalty floor.
+func trimPenaltyTail(sorted []float64) []float64 {
+	cut := sort.SearchFloat64s(sorted, penaltyFloor)
+
+	return sorted[:cut]
+}
+
 func readTrace(path string) ([]traceRecord, error) {
 	file, err := os.Open(path) //nolint:gosec // path is driver-constructed
 	if err != nil {
@@ -290,6 +352,7 @@ func loadDataset(outDir string, fallback dataset) (dataset, error) {
 		if rec.OK {
 			recs, _ := readTrace(filepath.Join(rec.Dir, "trace.jsonl"))
 			rec.Checkpoints = traceCheckpoints(recs, ds.MaxEvals, checkpointFractions)
+			rec.Spread = traceSpread(recs)
 		}
 		ds.Records = append(ds.Records, *rec)
 	}
