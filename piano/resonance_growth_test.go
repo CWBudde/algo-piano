@@ -13,9 +13,24 @@ import (
 // Until 2026-08-23 neither of them did, and this file recorded that as a fence
 // on a known-bad number rather than as a decay assertion:
 //
-//	                                     before    after
-//	resonance off                        1.2122x   0.1270x
-//	resonance on, gain 0.00025           5.0558x   0.1331x
+//	                                   before    after     2026-08-23b
+//	resonance off                      1.2122x   0.1270x   0.1322x
+//	resonance on, gain 0.00025         5.0558x   0.1331x   0.1392x
+//
+// The third column is a re-measurement on the renderer PLAN.md 14.2 left behind:
+// bridge coupling shipped at a default of 0.035 into NewDefaultParams(), which
+// these renders use, and neither fence was re-measured at the time. Both bounds
+// are unchanged - see maxBankDecayWithoutResonance - and both rows still pass.
+//
+// The ratio got WORSE while the render got quieter everywhere, which reads as a
+// regression and is not one. Bridge coupling is gated out of single-string
+// groups (bridge_coupling.go), so of growthNotes only 45/52/60/72 are damped by
+// it and 33/36 are bit-identical. It drains the multi-string notes hardest early,
+// which pulls the 25-30 s REFERENCE window down more than it pulls down a
+// 115-120 s tail that is already single-string-dominated, and last/reference
+// rises. A ratio is not a decay rate; see the sigma table on maxResonanceGain
+// for the same renders measured as dB/s, where every arm is strictly more
+// negative than before.
 //
 // The cause was the unison bridge coupling, which fed each string's own output
 // back into itself with no subtraction and no loss - see the measurements on
@@ -61,6 +76,12 @@ func measureSustainedGrowth(t *testing.T, gain float32, seconds int) (reference,
 	params.CouplingMode = CouplingModeOff
 
 	p := NewPiano(48000, 128, params)
+	// Same bypass as newResonanceProbeBank, for the same reason: the gain sweep
+	// recorded on divergingResonanceGain runs to 0.005, far past
+	// maxResonanceGain, and a clamped render would reproduce none of it.
+	if p.resonance != nil {
+		p.resonance.injectionGain = gain
+	}
 	p.SetSustainPedal(true)
 	for _, note := range growthNotes {
 		p.NoteOn(note, 100)
@@ -90,7 +111,13 @@ func measureSustainedGrowth(t *testing.T, gain float32, seconds int) (reference,
 }
 
 // maxBankDecayWithoutResonance is the recorded ratio plus the 8% headroom this
-// repo fences with. Measured 2026-08-23: 0.1270.
+// repo fences with. Measured 2026-08-23: 0.1270, re-measured after the bridge
+// coupling landed: 0.1322, which is 96% of this bound.
+//
+// The bound is deliberately NOT re-derived from the new measurement. The 8%
+// convention would give 0.1428 and that is a LOOSENING, which the rule recorded
+// in assets/thresholds/c4.json outranks the convention on. It stays at 0.138
+// until a change genuinely improves the number.
 const maxBankDecayWithoutResonance = 0.138
 
 // TestDWGSustainedBankDecaysWithoutResonance is the plant on its own: six notes
@@ -119,19 +146,33 @@ func TestDWGSustainedBankDecaysWithoutResonance(t *testing.T) {
 }
 
 // maxDWGResonanceSustainedDecay is the same, with the sympathetic loop on.
-// Measured 2026-08-23: 0.1331.
+// Measured 2026-08-23: 0.1331, re-measured after the bridge coupling landed:
+// 0.1392, which is 96% of this bound. Not re-derived, for the same reason as
+// the bound above: 8% would give 0.1503 and that is a loosening.
 const maxDWGResonanceSustainedDecay = 0.145
 
 // shippedResonanceGain is the resonance_gain every preset under assets/presets
-// carries. The Params default is lower (DefaultResonanceGain, 0.00018), so
-// fencing the default would fence a configuration nothing actually ships.
+// carries.
+//
+// It used to be worth saying that the Params default was LOWER than this, so
+// fencing the default would fence a configuration nothing shipped. That gap
+// closed on 2026-08-23: the PLAN.md 14.3 margin study raised
+// DefaultResonanceGain to this same 0.00025, so the constant and the default now
+// agree and this fence covers both. It is kept as its own name because the two
+// are independently reachable - a preset pins this, a bare NewDefaultParams()
+// gets the other - and a future re-voicing may separate them again.
 const shippedResonanceGain = 0.00025
 
 // TestDWGResonanceSustainedDecayIsFenced pins what the sympathetic loop costs on
-// top of the decay above: 0.1270 -> 0.1331, i.e. the loop slows the decay by
-// about 5% of the ratio and the render still ends 17 dB below its own reference
-// window. That is what an audible sympathetic path on a stable plant should look
-// like.
+// top of the decay above: 0.1322 -> 0.1392 as re-measured on 2026-08-23 after
+// the bridge coupling (0.1270 -> 0.1331 before it), i.e. the loop slows the
+// decay by about 5% of the ratio and the render still ends 17 dB below its own
+// reference window. That is what an audible sympathetic path on a stable plant
+// should look like.
+//
+// As a decay RATE, which is the coordinate the stability margin is actually
+// expressed in, the same pair is -0.1946 dB/s against -0.1847 dB/s: the loop
+// costs 5.1% of the plant's own decay at the shipped gain. See maxResonanceGain.
 //
 // Before the unison coupling was made dissipative this same comparison read
 // 1.2122 against 5.0558, and the difference was read - wrongly - as the

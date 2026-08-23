@@ -96,6 +96,15 @@ func resonanceProbeParamSets() []resonanceProbeParams {
 func newResonanceProbeBank(params *Params, sampleRate int) (*StringBank, *ResonanceEngine) {
 	sb := NewStringBank(sampleRate, params)
 	res := NewResonanceEngine(sampleRate, params.ResonanceGain, params.ResonancePerNoteFilter)
+	// The gain is written to the field rather than trusted through the
+	// constructor, which clamps at maxResonanceGain. These probes deliberately
+	// run past that bound - TestResonanceProbeSeesKnownDivergingLoop calibrates
+	// against a gain the renderer is KNOWN to diverge at, and a clamped probe
+	// would quietly stop diverging and report the calibration as passing. Same
+	// reason and same shape as bridgeRenderEnergy writing sb.bridgeCoupling
+	// directly. It is a no-op at every gain at or under the clamp, so the
+	// bounded rows are unaffected.
+	res.injectionGain = params.ResonanceGain
 	// Wire the engine the way Piano does, so the probe runs the production
 	// per-sample injection path. Where a probe needs the loop BROKEN it passes a
 	// drive slice to processWithBridge rather than skipping the wiring, which is
@@ -430,6 +439,31 @@ var resonanceProbeNotes = []int{21, 33, 36, 48, 60, 72, 84}
 //	default            dwg     0.165995       36    0.174449     36    no
 //	modal-calibrated   modal   0.002396       48    0.004234     60    yes, 3.00 s
 //
+// Re-measured 2026-08-23 after PLAN.md 14.2 (bridge coupling) and 14.3
+// (DefaultResonanceGain 0.00018 -> 0.00025). The "default" rows carry both
+// changes, the "modal-calibrated" rows only the first because that preset pins
+// resonance_gain:
+//
+//	params             core    hottest    note  settled?
+//	default            modal   0.000169   36    yes, 2.75 s
+//	default            dwg     0.242290   36    no
+//	modal-calibrated   modal   0.002354   36    yes, 3.50 s
+//
+// TWO RECORDED CLAIMS ABOVE ARE NOW FALSE and are kept only for the contrast.
+// The modal per-note ranking no longer "rises monotonically with pitch": it
+// reads 21: 0.000068, 33: 0.000145, 36: 0.000169, 48: 0.000039, 60: 0.000073,
+// 72: 0.000109, 84: 0.000168, so it peaks at 36, collapses at 48 and climbs
+// again. The modal hot register has therefore moved back DOWN to 36, undoing
+// the move up the interleave produced.
+//
+// The cause is 14.1 and 14.2, and it is visible in which notes moved. Notes 21,
+// 33 and 36 are single-string, so both coupling terms are gated out of them and
+// their readings are bit-identical to the interleaved column. Notes 48 and above
+// are multi-string and every one of them fell. The DWG rows are untouched by the
+// same gating - dwg note 36 is 0.174449 before the default changed, to the
+// digit - so 14.2 did not move the DWG ceiling at all, which is what the
+// margin study in maxResonanceGain rests on.
+//
 // Both modal rows settle inside the budget, so those two numbers are the loop
 // gain and not a bound on it. The DWG row does not settle: 0.174 is a lower
 // bound, standing for a settled gain near 0.24.
@@ -515,6 +549,29 @@ func TestResonanceLoopGainIsBoundedAcrossCores(t *testing.T) {
 //	default            dwg     false          0.155013       0.043302     21    no           decays
 //	modal-calibrated   dwg     true           0.199527       0.241305     36    no           decays
 //	modal-calibrated   dwg     false          0.215297       0.060142     21    no           decays
+//
+// Re-measured 2026-08-23 after PLAN.md 14.2 and the 14.3 default raise:
+//
+//	params             core    perNoteFilter  now       note  settled?     closed loop
+//	default            modal   true           0.000261  21    no           decays
+//	default            modal   false          0.000250  36    yes, 2.75 s  decays
+//	modal-calibrated   modal   true           0.001814  36    yes, 3.50 s  decays
+//	modal-calibrated   modal   false          0.001871  36    yes, 3.75 s  decays
+//	default            dwg     true           0.241341  36    no           decays
+//	default            dwg     false          0.055737  21    no           decays
+//	modal-calibrated   dwg     true           0.241341  36    no           decays
+//	modal-calibrated   dwg     false          0.055737  21    no           decays
+//
+// The two DWG blocks are now identical BY CONSTRUCTION rather than by accident:
+// DefaultResonanceGain was raised to the 0.00025 modal-calibrated.json pins, so
+// "default" and that preset are the same configuration as far as this loop is
+// concerned. The default rows scale from the interleaved column by exactly
+// 0.00025/0.00018 = 1.3889 - 0.173739 -> 0.241341 to the digit - because the
+// loop is linear in the gain, which is the property the margin study exploits.
+//
+// The hottest row is unchanged at 0.2413 against the 0.5 bound, so the bound
+// keeps 2.07x. What DID change is that the hottest row is no longer a preset
+// nothing ships: it is now also what a bare NewDefaultParams() produces.
 //
 // The four DWG rows are lower bounds: 24 s of drive does not settle them.
 // Divided by resonanceProbeSettleFraction the hottest of them (0.2413) stands
